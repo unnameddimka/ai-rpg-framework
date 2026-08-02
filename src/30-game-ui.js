@@ -118,8 +118,14 @@
         view.location.description.forEach(function (paragraph) {
             appendTextElement(root, "p", paragraph);
         });
+        view.location.sublocations.forEach(function (sublocation) {
+            if (sublocation.public_text) {
+                appendTextElement(root, "p", sublocation.public_text, "framework-furniture-text");
+            }
+        });
+        appendTextElement(root, "p", view.self.position_text, "framework-position-text");
         view.location.characters.forEach(function (character) {
-            appendTextElement(root, "p", character.presence_text);
+            appendTextElement(root, "p", `${character.presence_text} ${character.position_text}`);
         });
 
         if (view.location.characters.length > 0) {
@@ -147,6 +153,74 @@
             });
         });
         root.appendChild(movement);
+
+        const internalMovement = document.createElement("div");
+        internalMovement.className = "framework-location-links";
+        const internalDestinationIds = view.available_actions.move_within_location.options.destination_ids;
+        internalDestinationIds.forEach(function (destinationId) {
+            const destination = view.location.sublocations.find(function (candidate) {
+                return candidate.id === destinationId;
+            });
+            if (!destination) {
+                return;
+            }
+            const button = appendTextElement(internalMovement, "button", destination.enter_label);
+            button.type = "button";
+            button.addEventListener("click", function () {
+                runAction({ type: "move_within_location", destination_id: destination.id });
+            });
+        });
+        root.appendChild(internalMovement);
+
+        if (view.available_actions.pour_ale.options.available) {
+            const capabilities = document.createElement("div");
+            capabilities.className = "framework-location-links";
+            const pourButton = appendTextElement(capabilities, "button", "Pour a mug of ale");
+            pourButton.type = "button";
+            pourButton.addEventListener("click", function () {
+                runAction({ type: "pour_ale" });
+            });
+            root.appendChild(capabilities);
+        }
+
+        view.accessible_inventories.forEach(function (inventory) {
+            if (inventory.items.length === 0) {
+                return;
+            }
+            const surface = document.createElement("section");
+            surface.className = "framework-surface-panel";
+            appendTextElement(surface, "h3", inventory.name);
+            inventory.items.forEach(function (item) {
+                const button = appendTextElement(surface, "button", `Take ${item.name}`);
+                button.type = "button";
+                button.addEventListener("click", function () {
+                    runAction({ type: "take_item", item_id: item.id });
+                });
+            });
+            root.appendChild(surface);
+        });
+
+        const placementTargets = view.available_actions.place_item.options.target_inventory_ids;
+        if (placementTargets.length > 0 && view.self.inventory.length > 0) {
+            const placement = document.createElement("section");
+            placement.className = "framework-surface-panel";
+            const targetInventory = view.accessible_inventories.find(function (inventory) {
+                return inventory.id === placementTargets[0];
+            });
+            appendTextElement(placement, "h3", `Place on ${targetInventory.name}`);
+            view.self.inventory.forEach(function (item) {
+                const button = appendTextElement(placement, "button", `Place ${item.name}`);
+                button.type = "button";
+                button.addEventListener("click", function () {
+                    runAction({
+                        type: "place_item",
+                        item_id: item.id,
+                        target_inventory_id: targetInventory.id
+                    });
+                });
+            });
+            root.appendChild(placement);
+        }
 
         renderInteractionView(root, view);
     }
@@ -180,6 +254,7 @@
                 <strong>${escapeHtml(actor.name)}</strong><br>
                 Controller: human<br>
                 Location: ${escapeHtml(location.name)}<br>
+                Position: ${escapeHtml(setup.CharacterAPI.getView(humanId).self.position_text)}<br>
                 Gold: ${escapeHtml(actor.wallet)}<br>
                 Inventory: ${setup.CharacterAPI.getView(humanId).self.inventory
                     .map(function (item) { return escapeHtml(item.name); }).join(", ") || "empty"}
@@ -261,10 +336,25 @@
         actionRoot.className = "framework-panel";
 
         const moveOptions = view.location.exits;
-        const takeOptions = view.location.items;
+        const takeOptions = view.accessible_inventories.flatMap(function (inventory) {
+            return inventory.items;
+        });
         const ownedItems = view.self.inventory;
-        const targets = view.location.characters;
+        const visibleTargets = view.location.characters;
+        const reachableTargetIds = view.available_actions.give_item.options.target_ids;
+        const reachableTargets = visibleTargets.filter(function (target) {
+            return reachableTargetIds.includes(target.id);
+        });
         const recentEvents = world.events.slice(-12);
+        const internalDestinations = view.available_actions.move_within_location.options.destination_ids
+            .map(function (id) {
+                const position = view.location.sublocations.find(function (candidate) { return candidate.id === id; });
+                return position ? { id: position.id, name: position.name } : null;
+            }).filter(Boolean);
+        const placementInventoryIds = view.available_actions.place_item.options.target_inventory_ids;
+        const placementInventories = view.accessible_inventories.filter(function (inventory) {
+            return placementInventoryIds.includes(inventory.id);
+        });
 
         actionRoot.innerHTML = `
             <h3>Framework controls &mdash; acting as ${escapeHtml(view.self.name)}</h3>
@@ -277,6 +367,14 @@
                         ${optionMarkup(moveOptions, "No connected locations")}
                     </select>
                     <button id="action-move">Move</button>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Move within location</legend>
+                    <select id="action-move-within-destination">
+                        ${optionMarkup(internalDestinations, "No internal destination")}
+                    </select>
+                    <button id="action-move-within">Move within</button>
                 </fieldset>
 
                 <fieldset>
@@ -301,7 +399,7 @@
                         ${optionMarkup(ownedItems, "Inventory is empty")}
                     </select>
                     <select id="action-give-item-target">
-                        ${optionMarkup(targets, "Nobody nearby")}
+                        ${optionMarkup(reachableTargets, "Nobody reachable")}
                     </select>
                     <button id="action-give-item-button">Give</button>
                 </fieldset>
@@ -310,9 +408,25 @@
                     <legend>Give money</legend>
                     <input id="action-money-amount" type="number" min="1" step="1" value="1">
                     <select id="action-money-target">
-                        ${optionMarkup(targets, "Nobody nearby")}
+                        ${optionMarkup(reachableTargets, "Nobody reachable")}
                     </select>
                     <button id="action-give-money">Give</button>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Place item</legend>
+                    <select id="action-place-item">
+                        ${optionMarkup(ownedItems, "Inventory is empty")}
+                    </select>
+                    <select id="action-place-inventory">
+                        ${optionMarkup(placementInventories, "No accessible surface")}
+                    </select>
+                    <button id="action-place">Place</button>
+                </fieldset>
+
+                <fieldset>
+                    <legend>Pour ale</legend>
+                    <button id="action-pour-ale">Pour a mug of ale</button>
                 </fieldset>
 
                 <fieldset>
@@ -320,7 +434,7 @@
                     <textarea id="action-narrative-text" rows="3" placeholder="Speech outside *asterisks*, actions inside them."></textarea>
                     <select id="action-narrative-target">
                         <option value="">No addressee</option>
-                        ${targets.map(function (target) {
+                        ${visibleTargets.map(function (target) {
                             return `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`;
                         }).join("")}
                     </select>
@@ -348,7 +462,7 @@
         passage.appendChild(actionRoot);
 
         const selectedTargetId = getUIState().interactionTargetId;
-        if (targets.some(function (target) { return target.id === selectedTargetId; })) {
+        if (visibleTargets.some(function (target) { return target.id === selectedTargetId; })) {
             $("#action-give-item-target").val(selectedTargetId);
             $("#action-money-target").val(selectedTargetId);
             $("#action-narrative-target").val(selectedTargetId);
@@ -359,6 +473,13 @@
                 type: "move",
                 destination_id: $("#action-move-destination").val()
             }, true);
+        });
+
+        $("#action-move-within").prop("disabled", internalDestinations.length === 0).on("click", function () {
+            runAction({
+                type: "move_within_location",
+                destination_id: $("#action-move-within-destination").val()
+            });
         });
 
         $("#action-take").prop("disabled", takeOptions.length === 0).on("click", function () {
@@ -376,7 +497,7 @@
         });
 
         $("#action-give-item-button")
-            .prop("disabled", ownedItems.length === 0 || targets.length === 0)
+            .prop("disabled", ownedItems.length === 0 || reachableTargets.length === 0)
             .on("click", function () {
                 runAction({
                     type: "give_item",
@@ -385,13 +506,29 @@
                 });
             });
 
-        $("#action-give-money").prop("disabled", targets.length === 0).on("click", function () {
+        $("#action-give-money").prop("disabled", reachableTargets.length === 0).on("click", function () {
             runAction({
                 type: "give_money",
                 target_id: $("#action-money-target").val(),
                 amount: Number($("#action-money-amount").val())
             });
         });
+
+        $("#action-place")
+            .prop("disabled", ownedItems.length === 0 || placementInventories.length === 0)
+            .on("click", function () {
+                runAction({
+                    type: "place_item",
+                    item_id: $("#action-place-item").val(),
+                    target_inventory_id: $("#action-place-inventory").val()
+                });
+            });
+
+        $("#action-pour-ale")
+            .prop("disabled", !view.available_actions.pour_ale.options.available)
+            .on("click", function () {
+                runAction({ type: "pour_ale" });
+            });
 
         $("#action-narrate").on("click", function () {
             const result = setup.CharacterAPI.narrate(actorId, {

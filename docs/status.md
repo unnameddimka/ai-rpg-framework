@@ -24,6 +24,13 @@
 - Dynamic location descriptions, nearby-character presence, interaction controls, and movement controls.
 - Inline character interaction panel with validated, JSON-serializable target UI state.
 - Public `presenceText` and interaction labels for the player, innkeeper, and hooded woman.
+- Major physical passages backed by dynamic world-state rendering.
+- Internal sublocations with capacity, explicit reachability, and first/third-person position prose.
+- Behind-bar ale pouring with unique generated mug entities.
+- Two independently inventoried common-room tables with engine-enforced access.
+- `move_within_location`, `place_item`, and `pour_ale` registered actions.
+- Major movement resets characters to each destination's default sublocation.
+- Public events remain visible throughout the major location regardless of sublocation.
 - Node tests.
 
 ## Not implemented

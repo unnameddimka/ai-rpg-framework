@@ -1,7 +1,7 @@
 (function () {
     "use strict";
 
-    const WORLD_VERSION = 2;
+    const WORLD_VERSION = 3;
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
 
     function clone(value) {
@@ -29,9 +29,10 @@
                     type: "character",
                     name: "You",
                     locationId: "tavernEntrance",
+                    sublocationId: "tavernEntranceFloor",
                     inventoryId: "inventory_player",
                     wallet: 10,
-                    presenceText: "A rain-soaked traveller stands nearby, taking in the room.",
+                    presenceText: "A rain-soaked traveller takes in the surroundings.",
                     interactionLabel: "Speak with the traveller",
                     defaultControllerId: "dummy"
                 },
@@ -41,9 +42,10 @@
                     type: "character",
                     name: "Hooded woman",
                     locationId: "commonRoom",
+                    sublocationId: "commonRoomTableOne",
                     inventoryId: "inventory_hoodedWoman",
                     wallet: 8,
-                    presenceText: "A hooded woman sits near the fire, watching the room from beneath the edge of her hood.",
+                    presenceText: "A hooded woman watches the room from beneath the edge of her hood.",
                     interactionLabel: "Speak with the hooded woman",
                     defaultControllerId: "dummy"
                 },
@@ -53,9 +55,10 @@
                     type: "character",
                     name: "Innkeeper",
                     locationId: "bar",
+                    sublocationId: "barBehindCounter",
                     inventoryId: "inventory_innkeeper",
                     wallet: 25,
-                    presenceText: "The innkeeper stands behind the counter, wiping a wooden mug with a worn cloth.",
+                    presenceText: "The innkeeper wipes a wooden mug with a worn cloth.",
                     interactionLabel: "Speak with the innkeeper",
                     defaultControllerId: "dummy"
                 },
@@ -64,7 +67,8 @@
                     id: "tavernEntrance",
                     type: "location",
                     name: "Tavern entrance",
-                    passage: "Location",
+                    passage: "The Tavern",
+                    defaultSublocationId: "tavernEntranceFloor",
                     description: [
                         "You stand in the entrance of a modest roadside tavern.",
                         "The room smells of smoke, spilled ale, and wet wool."
@@ -81,7 +85,8 @@
                     id: "bar",
                     type: "location",
                     name: "The bar",
-                    passage: "Location",
+                    passage: "The Bar",
+                    defaultSublocationId: "barPublicSide",
                     description: [
                         "The bar counter is dark with age and spilled ale.",
                         "Shelves of mismatched bottles line the wall behind it."
@@ -96,7 +101,8 @@
                     id: "commonRoom",
                     type: "location",
                     name: "The common room",
-                    passage: "Location",
+                    passage: "The Common Room",
+                    defaultSublocationId: "commonRoomFloor",
                     description: [
                         "Several travellers sit near the fire while two merchants argue quietly over a map.",
                         "Smoke gathers beneath the rafters above scarred tables and mismatched chairs."
@@ -111,7 +117,8 @@
                     id: "street",
                     type: "location",
                     name: "The street",
-                    passage: "Location",
+                    passage: "The Street",
+                    defaultSublocationId: "streetCenter",
                     description: [
                         "Cold rain falls upon the empty village street.",
                         "The tavern's windows glow warmly behind you."
@@ -120,6 +127,97 @@
                     exits: {
                         tavernEntrance: "tavernEntrance"
                     }
+                },
+
+                tavernEntranceFloor: {
+                    id: "tavernEntranceFloor",
+                    type: "sublocation",
+                    locationId: "tavernEntrance",
+                    name: "Tavern floor",
+                    enterLabel: "Stand by the tavern entrance",
+                    selfText: "You are standing near the tavern entrance.",
+                    occupantTemplate: "{name} stands near the tavern entrance.",
+                    capacity: 20,
+                    reachableSublocationIds: ["tavernEntranceFloor"]
+                },
+
+                barPublicSide: {
+                    id: "barPublicSide",
+                    type: "sublocation",
+                    locationId: "bar",
+                    name: "Public side of the bar",
+                    publicText: "The public side of the counter is worn smooth by years of elbows and spilled drink.",
+                    enterLabel: "Step to the public side of the bar",
+                    selfText: "You are standing on the public side of the counter.",
+                    occupantTemplate: "{name} stands on the public side of the counter.",
+                    capacity: 20,
+                    reachableSublocationIds: ["barPublicSide", "barBehindCounter"]
+                },
+
+                barBehindCounter: {
+                    id: "barBehindCounter",
+                    type: "sublocation",
+                    locationId: "bar",
+                    name: "Behind the bar",
+                    publicText: "A narrow working space behind the counter holds taps, bottles, and clean mugs.",
+                    enterLabel: "Step behind the bar",
+                    selfText: "You are standing behind the bar.",
+                    occupantTemplate: "{name} stands behind the bar.",
+                    capacity: 2,
+                    capabilities: ["pour_ale"],
+                    reachableSublocationIds: ["barBehindCounter", "barPublicSide"]
+                },
+
+                commonRoomFloor: {
+                    id: "commonRoomFloor",
+                    type: "sublocation",
+                    locationId: "commonRoom",
+                    name: "Common-room floor",
+                    enterLabel: "Stand in the common room",
+                    selfText: "You are standing in the common room.",
+                    occupantTemplate: "{name} stands in the common room.",
+                    capacity: 20,
+                    reachableSublocationIds: ["commonRoomFloor", "commonRoomTableOne", "commonRoomTableTwo"]
+                },
+
+                commonRoomTableOne: {
+                    id: "commonRoomTableOne",
+                    type: "sublocation",
+                    locationId: "commonRoom",
+                    name: "First table",
+                    publicText: "The first table stands close to the fire.",
+                    enterLabel: "Sit at the first table",
+                    selfText: "You are sitting at the first table.",
+                    occupantTemplate: "{name} sits at the first table.",
+                    capacity: 4,
+                    inventoryId: "inventory_commonRoomTableOne",
+                    reachableSublocationIds: ["commonRoomTableOne", "commonRoomFloor"]
+                },
+
+                commonRoomTableTwo: {
+                    id: "commonRoomTableTwo",
+                    type: "sublocation",
+                    locationId: "commonRoom",
+                    name: "Second table",
+                    publicText: "The second table sits nearer the shadowed wall.",
+                    enterLabel: "Sit at the second table",
+                    selfText: "You are sitting at the second table.",
+                    occupantTemplate: "{name} sits at the second table.",
+                    capacity: 4,
+                    inventoryId: "inventory_commonRoomTableTwo",
+                    reachableSublocationIds: ["commonRoomTableTwo", "commonRoomFloor"]
+                },
+
+                streetCenter: {
+                    id: "streetCenter",
+                    type: "sublocation",
+                    locationId: "street",
+                    name: "Village street",
+                    enterLabel: "Stand in the street",
+                    selfText: "You are standing in the village street.",
+                    occupantTemplate: "{name} stands in the village street.",
+                    capacity: 20,
+                    reachableSublocationIds: ["streetCenter"]
                 },
 
                 beerMug: {
@@ -172,6 +270,16 @@
                     id: "inventory_street",
                     ownerId: "street",
                     itemIds: []
+                },
+                inventory_commonRoomTableOne: {
+                    id: "inventory_commonRoomTableOne",
+                    ownerId: "commonRoomTableOne",
+                    itemIds: []
+                },
+                inventory_commonRoomTableTwo: {
+                    id: "inventory_commonRoomTableTwo",
+                    ownerId: "commonRoomTableTwo",
+                    itemIds: []
                 }
             },
 
@@ -185,6 +293,7 @@
 
             events: [],
             nextEventId: 1,
+            nextGeneratedItemId: 1,
 
             debug: {
                 lastActionResult: null,
@@ -212,6 +321,51 @@
     function getLocation(locationId, world) {
         const entity = world.entities[locationId];
         return entity && entity.type === "location" ? entity : null;
+    }
+
+    function getSublocation(sublocationId, world) {
+        const entity = world.entities[sublocationId];
+        return entity && entity.type === "sublocation" ? entity : null;
+    }
+
+    function getSublocations(locationId, world) {
+        return Object.values(world.entities).filter(function (entity) {
+            return entity.type === "sublocation" && entity.locationId === locationId;
+        });
+    }
+
+    function sublocationOccupants(sublocationId, world, excludedCharacterId) {
+        return getCharacters(world).filter(function (character) {
+            return character.id !== excludedCharacterId && character.sublocationId === sublocationId;
+        });
+    }
+
+    function accessibleInventories(actor, world) {
+        const location = getLocation(actor.locationId, world);
+        const sublocation = getSublocation(actor.sublocationId, world);
+        const inventoryIds = [location.inventoryId];
+        if (sublocation.inventoryId) {
+            inventoryIds.push(sublocation.inventoryId);
+        }
+        return inventoryIds.map(function (inventoryId) {
+            return world.inventories[inventoryId];
+        }).filter(Boolean);
+    }
+
+    function canReachCharacter(actor, target, world) {
+        if (!actor || !target || actor.locationId !== target.locationId) {
+            return false;
+        }
+        const actorPosition = getSublocation(actor.sublocationId, world);
+        return Boolean(actorPosition &&
+            (actor.sublocationId === target.sublocationId ||
+                (actorPosition.reachableSublocationIds || []).includes(target.sublocationId)));
+    }
+
+    function positionText(character, world) {
+        const sublocation = getSublocation(character.sublocationId, world);
+        return (sublocation.occupantTemplate || "{name} is here.")
+            .replace("{name}", character.name);
     }
 
     function pushDebugLog(world, entry) {
@@ -305,6 +459,10 @@
 
         for (const inventory of Object.values(world.inventories)) {
             for (const itemId of inventory.itemIds) {
+                const item = world.entities[itemId];
+                if (!item || item.type !== "item") {
+                    return fail("INVENTORY_ITEM_INVALID", `Inventory ${inventory.id} contains invalid item ${itemId}.`);
+                }
                 if (itemMembership[itemId]) {
                     return fail(
                         "ITEM_IN_MULTIPLE_INVENTORIES",
@@ -331,6 +489,72 @@
         return ok();
     }
 
+    function validateSpatialInvariants(world) {
+        const entityIds = new Set();
+        for (const [key, entity] of Object.entries(world.entities)) {
+            if (!entity.id || entity.id !== key || entityIds.has(entity.id)) {
+                return fail("ENTITY_ID_INVALID", `Entity key ${key} does not have a unique matching ID.`);
+            }
+            entityIds.add(entity.id);
+        }
+        const locations = Object.values(world.entities).filter(function (entity) {
+            return entity.type === "location";
+        });
+        const sublocations = Object.values(world.entities).filter(function (entity) {
+            return entity.type === "sublocation";
+        });
+
+        for (const location of locations) {
+            const defaultPosition = getSublocation(location.defaultSublocationId, world);
+            if (!defaultPosition || defaultPosition.locationId !== location.id) {
+                return fail("INVALID_DEFAULT_SUBLOCATION", `Location ${location.id} has an invalid default sublocation.`);
+            }
+            if (!world.inventories[location.inventoryId] ||
+                    world.inventories[location.inventoryId].ownerId !== location.id) {
+                return fail("LOCATION_INVENTORY_INVALID", `Location ${location.id} has an invalid inventory.`);
+            }
+        }
+
+        for (const sublocation of sublocations) {
+            if (!getLocation(sublocation.locationId, world)) {
+                return fail("INVALID_SUBLOCATION_PARENT", `Sublocation ${sublocation.id} has an invalid parent location.`);
+            }
+            if (!Number.isInteger(sublocation.capacity) || sublocation.capacity < 1) {
+                return fail("INVALID_SUBLOCATION_CAPACITY", `Sublocation ${sublocation.id} has invalid capacity.`);
+            }
+            if (sublocation.inventoryId && (!world.inventories[sublocation.inventoryId] ||
+                    world.inventories[sublocation.inventoryId].ownerId !== sublocation.id)) {
+                return fail("SUBLOCATION_INVENTORY_MISSING", `Sublocation ${sublocation.id} has no valid inventory.`);
+            }
+            for (const reachableId of sublocation.reachableSublocationIds || []) {
+                const reachable = getSublocation(reachableId, world);
+                if (!reachable || reachable.locationId !== sublocation.locationId) {
+                    return fail("INVALID_REACHABLE_SUBLOCATION", `Sublocation ${sublocation.id} has an invalid reachability reference.`);
+                }
+            }
+            if (sublocationOccupants(sublocation.id, world).length > sublocation.capacity) {
+                return fail("SUBLOCATION_CAPACITY_EXCEEDED", `Sublocation ${sublocation.id} exceeds capacity.`);
+            }
+        }
+
+        for (const character of getCharacters(world)) {
+            const location = getLocation(character.locationId, world);
+            const sublocation = getSublocation(character.sublocationId, world);
+            if (!location) {
+                return fail("CHARACTER_LOCATION_INVALID", `Character ${character.id} has an invalid location.`);
+            }
+            if (!sublocation || sublocation.locationId !== location.id) {
+                return fail("CHARACTER_SUBLOCATION_INVALID", `Character ${character.id} has an invalid sublocation.`);
+            }
+            if (!world.inventories[character.inventoryId] ||
+                    world.inventories[character.inventoryId].ownerId !== character.id) {
+                return fail("CHARACTER_INVENTORY_MISSING", `Character ${character.id} has no valid inventory.`);
+            }
+        }
+
+        return ok();
+    }
+
     function validateWorld(world) {
         if (!world || typeof world !== "object") {
             return fail("WORLD_MISSING", "World state does not exist.");
@@ -347,7 +571,8 @@
             return controlResult;
         }
 
-        return validateItemInvariants(world);
+        const spatialResult = validateSpatialInvariants(world);
+        return spatialResult.ok ? validateItemInvariants(world) : spatialResult;
     }
 
     function ensureWorld() {
@@ -620,18 +845,92 @@
                     );
                 }
 
+                const defaultPosition = getSublocation(destination.defaultSublocationId, world);
+                if (!defaultPosition) {
+                    return fail("DESTINATION_SUBLOCATION_INVALID", "Destination has no valid default position.");
+                }
+                if (sublocationOccupants(defaultPosition.id, world, actor.id).length >= defaultPosition.capacity) {
+                    return fail("SUBLOCATION_FULL", "The destination's default position is full.");
+                }
+
                 return ok();
             },
-            execute: function (actor, action) {
+            execute: function (actor, action, world) {
                 const fromLocationId = actor.locationId;
+                const fromSublocationId = actor.sublocationId;
+                const destination = getLocation(action.destination_id, world);
                 actor.locationId = action.destination_id;
+                actor.sublocationId = destination.defaultSublocationId;
                 return [{
-                    type: "character_moved",
+                    type: "character_left_location",
+                    actorId: actor.id,
+                    locationId: fromLocationId,
+                    fromLocationId: fromLocationId,
+                    toLocationId: action.destination_id,
+                    fromSublocationId: fromSublocationId,
+                    text: `${actor.name} left ${fromLocationId}.`
+                }, {
+                    type: "character_entered_location",
                     actorId: actor.id,
                     locationId: action.destination_id,
                     fromLocationId: fromLocationId,
                     toLocationId: action.destination_id,
-                    text: `${actor.name} moved to ${action.destination_id}.`
+                    toSublocationId: actor.sublocationId,
+                    text: `${actor.name} entered ${destination.name}.`
+                }];
+            }
+        },
+
+        move_within_location: {
+            description: "Move to another position within the current location.",
+            schema: {
+                type: "object",
+                properties: {
+                    type: { const: "move_within_location" },
+                    destination_id: { type: "string" }
+                },
+                required: ["type", "destination_id"]
+            },
+            getOptions: function (actor, world) {
+                const current = getSublocation(actor.sublocationId, world);
+                return {
+                    destination_ids: (current.reachableSublocationIds || []).filter(function (id) {
+                        const destination = getSublocation(id, world);
+                        return id !== actor.sublocationId && destination &&
+                            sublocationOccupants(id, world, actor.id).length < destination.capacity;
+                    })
+                };
+            },
+            validate: function (actor, action, world) {
+                const current = getSublocation(actor.sublocationId, world);
+                const destination = getSublocation(action.destination_id, world);
+                if (!destination) {
+                    return fail("SUBLOCATION_NOT_FOUND", "Destination position does not exist.");
+                }
+                if (destination.locationId !== actor.locationId) {
+                    return fail("SUBLOCATION_WRONG_LOCATION", "Destination position is in another major location.");
+                }
+                if (destination.id === actor.sublocationId) {
+                    return fail("ALREADY_AT_SUBLOCATION", "Actor is already at that position.");
+                }
+                if (!(current.reachableSublocationIds || []).includes(destination.id)) {
+                    return fail("SUBLOCATION_NOT_REACHABLE", "Destination position is not reachable from here.");
+                }
+                if (sublocationOccupants(destination.id, world, actor.id).length >= destination.capacity) {
+                    return fail("SUBLOCATION_FULL", "Destination position is full.");
+                }
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const fromSublocationId = actor.sublocationId;
+                actor.sublocationId = action.destination_id;
+                return [{
+                    type: "character_changed_sublocation",
+                    actorId: actor.id,
+                    locationId: actor.locationId,
+                    fromSublocationId: fromSublocationId,
+                    toSublocationId: action.destination_id,
+                    text: positionText(actor, world)
                 }];
             }
         },
@@ -647,34 +946,35 @@
                 required: ["type", "item_id"]
             },
             getOptions: function (actor, world) {
-                const location = getLocation(actor.locationId, world);
                 return {
-                    item_ids: world.inventories[location.inventoryId].itemIds.slice()
+                    item_ids: accessibleInventories(actor, world).flatMap(function (inventory) {
+                        return inventory.itemIds;
+                    })
                 };
             },
             validate: function (actor, action, world) {
                 const item = world.entities[action.item_id];
-                const location = getLocation(actor.locationId, world);
-                const inventory = world.inventories[location.inventoryId];
 
                 if (!item || item.type !== "item") {
                     return fail("ITEM_NOT_FOUND", "Item does not exist.");
                 }
 
-                if (!inventory.itemIds.includes(item.id)) {
+                if (!accessibleInventories(actor, world).some(function (inventory) {
+                    return inventory.itemIds.includes(item.id);
+                })) {
                     return fail(
-                        "ITEM_NOT_IN_LOCATION",
-                        "Item is not in the current location."
+                        "ITEM_NOT_ACCESSIBLE",
+                        "Item is not in an inventory accessible from the current position."
                     );
                 }
 
                 return ok();
             },
             execute: function (actor, action, world) {
-                const location = getLocation(actor.locationId, world);
+                const sourceInventory = world.inventories[world.entities[action.item_id].containerId];
                 transferItem(
                     action.item_id,
-                    world.inventories[location.inventoryId],
+                    sourceInventory,
                     world.inventories[actor.inventoryId],
                     world
                 );
@@ -683,7 +983,8 @@
                     type: "item_taken",
                     actorId: actor.id,
                     itemId: action.item_id,
-                    locationId: location.id,
+                    locationId: actor.locationId,
+                    sublocationId: actor.sublocationId,
                     text: `${actor.name} took ${world.entities[action.item_id].name}.`
                 }];
             }
@@ -742,7 +1043,9 @@
             },
             getOptions: function (actor, world) {
                 return {
-                    target_ids: nearbyCharacters(actor, world).map(function (character) {
+                    target_ids: nearbyCharacters(actor, world).filter(function (character) {
+                        return canReachCharacter(actor, character, world);
+                    }).map(function (character) {
                         return character.id;
                     }),
                     item_ids: world.inventories[actor.inventoryId].itemIds.slice()
@@ -759,8 +1062,8 @@
                     return fail("INVALID_TARGET", "A character cannot give to itself.");
                 }
 
-                if (target.locationId !== actor.locationId) {
-                    return fail("TARGET_NOT_NEARBY", "Target is in another location.");
+                if (!canReachCharacter(actor, target, world)) {
+                    return fail("TARGET_NOT_REACHABLE", "Target cannot be reached from the actor's current position.");
                 }
 
                 if (!world.inventories[actor.inventoryId].itemIds.includes(action.item_id)) {
@@ -802,7 +1105,9 @@
             },
             getOptions: function (actor, world) {
                 return {
-                    target_ids: nearbyCharacters(actor, world).map(function (character) {
+                    target_ids: nearbyCharacters(actor, world).filter(function (character) {
+                        return canReachCharacter(actor, character, world);
+                    }).map(function (character) {
                         return character.id;
                     }),
                     maximum_amount: actor.wallet
@@ -819,8 +1124,8 @@
                     return fail("INVALID_TARGET", "A character cannot give to itself.");
                 }
 
-                if (target.locationId !== actor.locationId) {
-                    return fail("TARGET_NOT_NEARBY", "Target is in another location.");
+                if (!canReachCharacter(actor, target, world)) {
+                    return fail("TARGET_NOT_REACHABLE", "Target cannot be reached from the actor's current position.");
                 }
 
                 if (!Number.isInteger(action.amount) || action.amount <= 0) {
@@ -845,6 +1150,104 @@
                     amount: action.amount,
                     locationId: actor.locationId,
                     text: `${actor.name} gave ${action.amount} gold to ${target.name}.`
+                }];
+            }
+        },
+
+        place_item: {
+            description: "Place an owned item on an accessible surface.",
+            schema: {
+                type: "object",
+                properties: {
+                    type: { const: "place_item" },
+                    item_id: { type: "string" },
+                    target_inventory_id: { type: "string" }
+                },
+                required: ["type", "item_id", "target_inventory_id"]
+            },
+            getOptions: function (actor, world) {
+                const sublocation = getSublocation(actor.sublocationId, world);
+                return {
+                    item_ids: world.inventories[actor.inventoryId].itemIds.slice(),
+                    target_inventory_ids: sublocation.inventoryId ? [sublocation.inventoryId] : []
+                };
+            },
+            validate: function (actor, action, world) {
+                if (!world.inventories[actor.inventoryId].itemIds.includes(action.item_id)) {
+                    return fail("ITEM_NOT_OWNED", "Actor does not possess this item.");
+                }
+                const sublocation = getSublocation(actor.sublocationId, world);
+                if (!sublocation.inventoryId || action.target_inventory_id !== sublocation.inventoryId) {
+                    return fail("INVENTORY_NOT_ACCESSIBLE", "Target surface is not accessible from the current position.");
+                }
+                if (!world.inventories[action.target_inventory_id]) {
+                    return fail("INVENTORY_NOT_FOUND", "Target inventory does not exist.");
+                }
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                transferItem(
+                    action.item_id,
+                    world.inventories[actor.inventoryId],
+                    world.inventories[action.target_inventory_id],
+                    world
+                );
+                return [{
+                    type: "item_placed",
+                    actorId: actor.id,
+                    itemId: action.item_id,
+                    targetInventoryId: action.target_inventory_id,
+                    locationId: actor.locationId,
+                    sublocationId: actor.sublocationId,
+                    text: `${actor.name} placed ${world.entities[action.item_id].name} on ${getSublocation(actor.sublocationId, world).name}.`
+                }];
+            }
+        },
+
+        pour_ale: {
+            description: "Pour a fresh mug of ale.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "pour_ale" } },
+                required: ["type"]
+            },
+            getOptions: function (actor, world) {
+                const sublocation = getSublocation(actor.sublocationId, world);
+                return {
+                    available: (sublocation.capabilities || []).includes("pour_ale")
+                };
+            },
+            validate: function (actor, action, world) {
+                const sublocation = getSublocation(actor.sublocationId, world);
+                if (!(sublocation.capabilities || []).includes("pour_ale")) {
+                    return fail("CAPABILITY_REQUIRED", "Ale can be poured only from behind the bar.");
+                }
+                if (!world.inventories[actor.inventoryId]) {
+                    return fail("ACTOR_INVENTORY_MISSING", "Actor has no valid inventory.");
+                }
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                let itemId;
+                do {
+                    itemId = `mugOfAle_${world.nextGeneratedItemId++}`;
+                } while (world.entities[itemId]);
+
+                world.entities[itemId] = {
+                    id: itemId,
+                    type: "item",
+                    templateId: "mugOfAle",
+                    name: "Mug of ale",
+                    containerId: actor.inventoryId
+                };
+                world.inventories[actor.inventoryId].itemIds.push(itemId);
+                return [{
+                    type: "ale_poured",
+                    actorId: actor.id,
+                    itemId: itemId,
+                    locationId: actor.locationId,
+                    sublocationId: actor.sublocationId,
+                    text: `${actor.name} poured a mug of ale.`
                 }];
             }
         }
@@ -887,6 +1290,8 @@
                 name: actor.name,
                 controller_id: world.control.assignments[actor.id],
                 location_id: actor.locationId,
+                sublocation_id: actor.sublocationId,
+                position_text: getSublocation(actor.sublocationId, world).selfText,
                 wallet: actor.wallet,
                 inventory: inventoryItems(actor.inventoryId, world)
             },
@@ -899,16 +1304,37 @@
                         id: character.id,
                         name: character.name,
                         presence_text: character.presenceText || `${character.name} is here.`,
-                        interaction_label: character.interactionLabel || `Speak with ${character.name}`
+                        interaction_label: character.interactionLabel || `Speak with ${character.name}`,
+                        sublocation_id: character.sublocationId,
+                        position_text: positionText(character, world),
+                        reachable: canReachCharacter(actor, character, world)
                     };
                 }),
                 description: clone(location.description || []),
+                sublocations: getSublocations(location.id, world).map(function (sublocation) {
+                    return {
+                        id: sublocation.id,
+                        name: sublocation.name,
+                        enter_label: sublocation.enterLabel,
+                        public_text: sublocation.publicText || "",
+                        capacity: sublocation.capacity
+                    };
+                }),
                 items: inventoryItems(location.inventoryId, world),
                 exits: Object.values(location.exits || {}).map(function (locationId) {
                     const destination = getLocation(locationId, world);
                     return { id: destination.id, name: destination.name };
                 })
             },
+            accessible_inventories: accessibleInventories(actor, world).map(function (inventory) {
+                const owner = world.entities[inventory.ownerId];
+                return {
+                    id: inventory.id,
+                    owner_id: inventory.ownerId,
+                    name: owner ? owner.name : inventory.id,
+                    items: inventoryItems(inventory.id, world)
+                };
+            }),
             available_actions: getAvailableActions(actorId)
         };
     }
@@ -943,7 +1369,7 @@
 
         try {
             const rawEvents = definition.execute(actor, action, world);
-            const invariantResult = validateItemInvariants(world);
+            const invariantResult = validateWorld(world);
 
             if (!invariantResult.ok) {
                 throw new Error(invariantResult.error.message);
@@ -1043,6 +1469,14 @@
         assignNonHumanController: assignNonHumanController,
         acknowledgeEvent: acknowledgeEvent,
         getPendingEventsFor: getPendingEventsFor,
+        canReachCharacter: function (actorId, targetId) {
+            const world = ensureWorld();
+            return canReachCharacter(
+                getCharacter(actorId, world),
+                getCharacter(targetId, world),
+                world
+            );
+        },
         logController: function (entry) {
             pushDebugLog(ensureWorld(), entry);
         }

@@ -7,7 +7,7 @@ AI RPG Framework POC
   "ifid": "7A96C8DB-CDD6-4B5C-A486-4EF8A4DB12BB",
   "format": "SugarCube",
   "format-version": "2.37.3",
-  "start": "Location",
+  "start": "The Tavern",
   "zoom": 1
 }
 
@@ -23,5 +23,17 @@ AI RPG Framework POC
 <div id="framework-sidebar"></div>
 
 
-:: Location
+:: The Tavern
+<div id="location-view"></div>
+
+
+:: The Bar
+<div id="location-view"></div>
+
+
+:: The Common Room
+<div id="location-view"></div>
+
+
+:: The Street
 <div id="location-view"></div>

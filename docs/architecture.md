@@ -336,6 +336,35 @@ Possible later systems:
 
 ## 15. Final summary
 
+### Sublocation spatial layer
+
+Major locations remain the four physical SugarCube passages. Characters also carry a
+`sublocationId`, which identifies their objective position within the major location.
+
+Stable sublocation IDs:
+
+- `tavernEntranceFloor`
+- `barPublicSide`
+- `barBehindCounter`
+- `commonRoomFloor`
+- `commonRoomTableOne`
+- `commonRoomTableTwo`
+- `streetCenter`
+
+Sublocations declare capacity, legal/reachable neighboring positions, presentation text,
+optional inventories, and optional capabilities. The behind-bar position supplies
+`pour_ale`; both common-room tables own distinct inventories.
+
+`move` changes major location and assigns its default sublocation. It emits separate
+`character_left_location` and `character_entered_location` events so perception is scoped
+to the correct origin and destination. `move_within_location` changes only sublocation and
+does not navigate to another passage.
+
+`drop_item` places an item in the general major-location inventory. `place_item` places an
+item on the accessible surface at the actor's current sublocation. Public perception is
+major-location-wide, while physical transfers and surface access obey sublocation
+reachability.
+
 ```text
                     World State
        characters, locations, items, money
