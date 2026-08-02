@@ -26,6 +26,16 @@ Exactly one character must use `HumanController` at all times.
 - Generic controller assignment must reject attempts to create zero or multiple human-controlled characters.
 - Loading or initialization must validate the invariant and repair invalid legacy/debug state to one human-controlled character.
 
+## Dynamic player-facing UI
+
+- Physical location prose, nearby-character presence, interaction links, and exit links must be derived from the current restricted character view and `World` state.
+- Do not hard-code physical exits or NPC-specific interaction links in `story.twee`.
+- Normal movement UI must call the registered `move` action through `setup.CharacterAPI.perform()` or a wrapper that does exactly that.
+- Never assume the human-controlled actor ID is `player`; always use `setup.Game.getHumanCharacterId()`.
+- Never show the controlled character as a nearby character or interaction target.
+- Keep the API/action table as a debug interface below the player-facing dynamic view.
+- Use one generic physical-location passage and one generic interaction surface unless a later architecture decision explicitly changes this.
+
 ## Current scope
 
 Implement and preserve:

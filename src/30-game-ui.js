@@ -3,12 +3,31 @@
 
     function optionMarkup(items, emptyLabel) {
         if (!items || items.length === 0) {
-            return `<option value="">${emptyLabel}</option>`;
+            return `<option value="">${escapeHtml(emptyLabel)}</option>`;
         }
 
         return items.map(function (item) {
-            return `<option value="${item.id}">${item.name}</option>`;
+            return `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`;
         }).join("");
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    }
+
+    function getUIState() {
+        if (!State.variables.frameworkUI) {
+            State.variables.frameworkUI = {
+                interactionTargetId: "",
+                locationStatus: ""
+            };
+        }
+        return State.variables.frameworkUI;
     }
 
     function formatResult(result) {
@@ -32,6 +51,106 @@
         }
     }
 
+    function appendTextElement(parent, tagName, value, className) {
+        const element = document.createElement(tagName);
+        element.textContent = value;
+        if (className) {
+            element.className = className;
+        }
+        parent.appendChild(element);
+        return element;
+    }
+
+    function renderInteractionView(root, view) {
+        const uiState = getUIState();
+        if (!uiState.interactionTargetId) {
+            return;
+        }
+
+        const target = view.location.characters.find(function (character) {
+            return character.id === uiState.interactionTargetId;
+        });
+
+        if (!target) {
+            uiState.interactionTargetId = "";
+            const message = "That character is no longer nearby.";
+            uiState.locationStatus = message;
+            const status = document.getElementById("location-status");
+            if (status) {
+                status.textContent = message;
+                uiState.locationStatus = "";
+            }
+            return;
+        }
+
+        const panel = document.createElement("section");
+        panel.className = "framework-interaction-panel";
+        appendTextElement(panel, "h3", target.name);
+        appendTextElement(panel, "p", target.presence_text);
+        appendTextElement(panel, "p", "Use the narrative or formal-action controls below to interact with this character.");
+
+        const closeButton = appendTextElement(panel, "button", "Back to location");
+        closeButton.type = "button";
+        closeButton.addEventListener("click", function () {
+            uiState.interactionTargetId = "";
+            renderLocationView();
+            renderActionPanel();
+        });
+        root.appendChild(panel);
+    }
+
+    function renderLocationView() {
+        const root = document.getElementById("location-view");
+        if (!root) {
+            return;
+        }
+
+        const actorId = setup.Game.getHumanCharacterId();
+        const view = setup.CharacterAPI.getView(actorId);
+        const uiState = getUIState();
+        root.replaceChildren();
+
+        appendTextElement(root, "h2", view.location.name);
+        const status = appendTextElement(root, "div", uiState.locationStatus, "framework-status");
+        status.id = "location-status";
+        uiState.locationStatus = "";
+
+        view.location.description.forEach(function (paragraph) {
+            appendTextElement(root, "p", paragraph);
+        });
+        view.location.characters.forEach(function (character) {
+            appendTextElement(root, "p", character.presence_text);
+        });
+
+        if (view.location.characters.length > 0) {
+            const interactions = document.createElement("div");
+            interactions.className = "framework-location-links";
+            view.location.characters.forEach(function (character) {
+                const button = appendTextElement(interactions, "button", character.interaction_label);
+                button.type = "button";
+                button.dataset.characterId = character.id;
+                button.addEventListener("click", function () {
+                    setup.GameUI.openInteraction(character.id);
+                });
+            });
+            root.appendChild(interactions);
+        }
+
+        const movement = document.createElement("div");
+        movement.className = "framework-location-links";
+        view.location.exits.forEach(function (destination) {
+            const button = appendTextElement(movement, "button", `Go to ${destination.name}`);
+            button.type = "button";
+            button.dataset.destinationId = destination.id;
+            button.addEventListener("click", function () {
+                setup.GameUI.moveHuman(destination.id);
+            });
+        });
+        root.appendChild(movement);
+
+        renderInteractionView(root, view);
+    }
+
     function renderSidebar() {
         const root = document.getElementById("framework-sidebar");
         if (!root) {
@@ -52,18 +171,18 @@
                 <select id="human-character-select">
                     ${characters.map(function (character) {
                         const selected = character.id === humanId ? " selected" : "";
-                        return `<option value="${character.id}"${selected}>${character.name}</option>`;
+                        return `<option value="${escapeHtml(character.id)}"${selected}>${escapeHtml(character.name)}</option>`;
                     }).join("")}
                 </select>
                 <button id="take-control-button">Take control</button>
             </div>
             <div class="framework-sidebar-block">
-                <strong>${actor.name}</strong><br>
+                <strong>${escapeHtml(actor.name)}</strong><br>
                 Controller: human<br>
-                Location: ${location.name}<br>
-                Gold: ${actor.wallet}<br>
+                Location: ${escapeHtml(location.name)}<br>
+                Gold: ${escapeHtml(actor.wallet)}<br>
                 Inventory: ${setup.CharacterAPI.getView(humanId).self.inventory
-                    .map(function (item) { return item.name; }).join(", ") || "empty"}
+                    .map(function (item) { return escapeHtml(item.name); }).join(", ") || "empty"}
             </div>
             <div class="framework-sidebar-block">
                 <button id="validate-world-button">Validate world</button>
@@ -82,6 +201,7 @@
                 return;
             }
 
+            getUIState().interactionTargetId = "";
             const passage = currentPassageForHuman();
             Engine.play(passage);
         });
@@ -97,6 +217,7 @@
             }
 
             setup.Game.resetWorld();
+            delete State.variables.frameworkUI;
             Engine.play(currentPassageForHuman());
         });
     }
@@ -146,7 +267,7 @@
         const recentEvents = world.events.slice(-12);
 
         actionRoot.innerHTML = `
-            <h3>Framework controls — acting as ${view.self.name}</h3>
+            <h3>Framework controls &mdash; acting as ${escapeHtml(view.self.name)}</h3>
             <div id="framework-action-status" class="framework-status"></div>
 
             <div class="framework-action-grid">
@@ -200,7 +321,7 @@
                     <select id="action-narrative-target">
                         <option value="">No addressee</option>
                         ${targets.map(function (target) {
-                            return `<option value="${target.id}">${target.name}</option>`;
+                            return `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`;
                         }).join("")}
                     </select>
                     <select id="action-narrative-noticeability">
@@ -214,17 +335,24 @@
             <details class="framework-debug">
                 <summary>Framework debug</summary>
                 <h4>Character view</h4>
-                <pre>${JSON.stringify(view, null, 2)}</pre>
+                <pre>${escapeHtml(JSON.stringify(view, null, 2))}</pre>
                 <h4>Last action result</h4>
-                <pre>${formatResult(world.debug.lastActionResult)}</pre>
+                <pre>${escapeHtml(formatResult(world.debug.lastActionResult))}</pre>
                 <h4>Recent confirmed events</h4>
-                <pre>${JSON.stringify(recentEvents, null, 2)}</pre>
+                <pre>${escapeHtml(JSON.stringify(recentEvents, null, 2))}</pre>
                 <h4>Controller log</h4>
-                <pre>${JSON.stringify(world.debug.controllerLog.slice(-20), null, 2)}</pre>
+                <pre>${escapeHtml(JSON.stringify(world.debug.controllerLog.slice(-20), null, 2))}</pre>
             </details>
         `;
 
         passage.appendChild(actionRoot);
+
+        const selectedTargetId = getUIState().interactionTargetId;
+        if (targets.some(function (target) { return target.id === selectedTargetId; })) {
+            $("#action-give-item-target").val(selectedTargetId);
+            $("#action-money-target").val(selectedTargetId);
+            $("#action-narrative-target").val(selectedTargetId);
+        }
 
         $("#action-move").prop("disabled", moveOptions.length === 0).on("click", function () {
             runAction({
@@ -309,9 +437,38 @@
         takeControl: function (characterId) {
             const result = setup.Game.takeHumanControl(characterId);
             if (result.ok) {
+                getUIState().interactionTargetId = "";
                 Engine.play(currentPassageForHuman());
             }
             return result;
+        },
+
+        openInteraction: function (targetId) {
+            const view = setup.CharacterAPI.getView(setup.Game.getHumanCharacterId());
+            const target = view.location.characters.find(function (character) {
+                return character.id === targetId;
+            });
+            const uiState = getUIState();
+
+            if (!target) {
+                uiState.interactionTargetId = "";
+                uiState.locationStatus = "That character is no longer nearby.";
+                renderLocationView();
+                return {
+                    ok: false,
+                    error: { code: "TARGET_NOT_NEARBY", message: "That character is no longer nearby." }
+                };
+            }
+
+            uiState.interactionTargetId = target.id;
+            renderLocationView();
+            renderActionPanel();
+            return { ok: true, targetId: target.id };
+        },
+
+        renderLocationView: renderLocationView,
+        renderInteractionView: function () {
+            renderLocationView();
         },
 
         goToHumanLocation: function () {
@@ -320,11 +477,12 @@
 
         render: function () {
             renderSidebar();
+            renderLocationView();
             renderActionPanel();
         }
     };
 
-    $(document).on(":passagedisplay", function () {
+    $(document).on(":passageend", function () {
         setup.Game.bootstrap();
 
         if (!checkPhysicalPassageConsistency()) {
@@ -332,6 +490,7 @@
         }
 
         renderSidebar();
+        renderLocationView();
         renderActionPanel();
     });
 }());

@@ -17,6 +17,28 @@
     background: rgba(0, 0, 0, 0.18);
 }
 
+.framework-location-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin: 1rem 0;
+}
+
+.framework-location-links button {
+    cursor: pointer;
+}
+
+.framework-interaction-panel {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    border: 1px solid #777;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.framework-interaction-panel h3 {
+    margin-top: 0;
+}
+
 .framework-action-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

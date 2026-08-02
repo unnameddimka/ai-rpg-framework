@@ -1,7 +1,7 @@
 (function () {
     "use strict";
 
-    const WORLD_VERSION = 1;
+    const WORLD_VERSION = 2;
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
 
     function clone(value) {
@@ -31,6 +31,8 @@
                     locationId: "tavernEntrance",
                     inventoryId: "inventory_player",
                     wallet: 10,
+                    presenceText: "A rain-soaked traveller stands nearby, taking in the room.",
+                    interactionLabel: "Speak with the traveller",
                     defaultControllerId: "dummy"
                 },
 
@@ -41,6 +43,8 @@
                     locationId: "commonRoom",
                     inventoryId: "inventory_hoodedWoman",
                     wallet: 8,
+                    presenceText: "A hooded woman sits near the fire, watching the room from beneath the edge of her hood.",
+                    interactionLabel: "Speak with the hooded woman",
                     defaultControllerId: "dummy"
                 },
 
@@ -51,6 +55,8 @@
                     locationId: "bar",
                     inventoryId: "inventory_innkeeper",
                     wallet: 25,
+                    presenceText: "The innkeeper stands behind the counter, wiping a wooden mug with a worn cloth.",
+                    interactionLabel: "Speak with the innkeeper",
                     defaultControllerId: "dummy"
                 },
 
@@ -58,7 +64,11 @@
                     id: "tavernEntrance",
                     type: "location",
                     name: "Tavern entrance",
-                    passage: "The Tavern",
+                    passage: "Location",
+                    description: [
+                        "You stand in the entrance of a modest roadside tavern.",
+                        "The room smells of smoke, spilled ale, and wet wool."
+                    ],
                     inventoryId: "inventory_tavernEntrance",
                     exits: {
                         bar: "bar",
@@ -71,7 +81,11 @@
                     id: "bar",
                     type: "location",
                     name: "The bar",
-                    passage: "The Bar",
+                    passage: "Location",
+                    description: [
+                        "The bar counter is dark with age and spilled ale.",
+                        "Shelves of mismatched bottles line the wall behind it."
+                    ],
                     inventoryId: "inventory_bar",
                     exits: {
                         tavernEntrance: "tavernEntrance"
@@ -82,7 +96,11 @@
                     id: "commonRoom",
                     type: "location",
                     name: "The common room",
-                    passage: "The Common Room",
+                    passage: "Location",
+                    description: [
+                        "Several travellers sit near the fire while two merchants argue quietly over a map.",
+                        "Smoke gathers beneath the rafters above scarred tables and mismatched chairs."
+                    ],
                     inventoryId: "inventory_commonRoom",
                     exits: {
                         tavernEntrance: "tavernEntrance"
@@ -93,7 +111,11 @@
                     id: "street",
                     type: "location",
                     name: "The street",
-                    passage: "The Street",
+                    passage: "Location",
+                    description: [
+                        "Cold rain falls upon the empty village street.",
+                        "The tavern's windows glow warmly behind you."
+                    ],
                     inventoryId: "inventory_street",
                     exits: {
                         tavernEntrance: "tavernEntrance"
@@ -873,8 +895,14 @@
                 name: location.name,
                 passage: location.passage,
                 characters: nearbyCharacters(actor, world).map(function (character) {
-                    return { id: character.id, name: character.name };
+                    return {
+                        id: character.id,
+                        name: character.name,
+                        presence_text: character.presenceText || `${character.name} is here.`,
+                        interaction_label: character.interactionLabel || `Speak with ${character.name}`
+                    };
                 }),
+                description: clone(location.description || []),
                 items: inventoryItems(location.inventoryId, world),
                 exits: Object.values(location.exits || {}).map(function (locationId) {
                     const destination = getLocation(locationId, world);

@@ -253,27 +253,33 @@ Human and Dummy controllers currently acknowledge events immediately. A future A
 
 Narrative input also produces events, but it does not change protected physical state.
 
-## 12. Browser and debug UI
+## 12. Dynamic location, interaction, and debug UI
 
-The sidebar shows:
+The normal player-facing location screen is rendered dynamically from the world state of the one character currently controlled by `HumanController`.
 
-- the one human-controlled character;
-- current location;
-- wallet;
-- inventory;
-- character takeover selector;
-- world validation and reset controls.
+Use one generic physical-location passage. The current physical location is determined by the controlled character's `locationId`, not by maintaining one hard-coded Twine passage per location.
 
-The passage action panel exposes all current formal actions plus narrative input.
+The player-facing view contains:
 
-Debug output shows:
+- the current location name;
+- base location prose stored on the location entity;
+- public `presenceText` for every other character in the same location;
+- one interaction link for every other character in the same location;
+- one movement link for every currently connected exit.
 
-- the restricted character view;
-- the last action result;
-- recent confirmed events;
-- controller logs.
+The controlled character is excluded from nearby-character prose and interaction targets. This remains true after debug takeover; the UI must never assume the controlled actor is the entity named `player`.
 
-Switching the human-controlled character navigates to that character's current physical location.
+Movement links do not navigate directly between physical Twine passages. They request the registered `move` action through `CharacterAPI`, and the generic location screen rerenders only after successful validation and world mutation.
+
+Interaction uses one generic interaction surface. The selected target is UI state and must be revalidated against current location state before rendering.
+
+The current action/API panel remains below the player-facing view as a developer debug interface. Both normal links and debug controls call the same `CharacterAPI`; there are no separate gameplay rules in the UI.
+
+Dynamic UI requirements and acceptance scenarios are specified in:
+
+```text
+docs/task-dynamic-location-ui.md
+```
 
 ## 13. Source organization
 

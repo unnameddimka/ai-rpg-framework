@@ -20,6 +20,10 @@
 - AIController placeholder with no model integration.
 - Debug UI for taking human control of any character.
 - Atomic enforcement that exactly one HumanController exists.
+- One generic physical `Location` passage rendered from the controlled character's restricted view.
+- Dynamic location descriptions, nearby-character presence, interaction controls, and movement controls.
+- Inline character interaction panel with validated, JSON-serializable target UI state.
+- Public `presenceText` and interaction labels for the player, innkeeper, and hooded woman.
 - Node tests.
 
 ## Not implemented
@@ -32,6 +36,8 @@
 - Combat.
 - Ownership and theft rules.
 
-## Next sensible task
+## Known limitations
 
-Build the project with Tweego on the development machine, inspect the browser UI, and fix any SugarCube/Tweego integration issues before adding more mechanics.
+- Character interaction currently selects and describes a target but does not generate dialogue.
+- The formal action panel remains a developer/debug interface below the player-facing view.
+- Browser acceptance scenarios must still be checked manually when UI behavior changes.

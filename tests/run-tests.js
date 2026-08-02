@@ -38,6 +38,13 @@ let world = setup.Game.getWorld();
 assert(setup.Game.getHumanCharacterId() === "player", "player should start human-controlled");
 assertOk(setup.Game.validateHumanControllerInvariant(), "one human invariant should hold");
 
+let view = setup.CharacterAPI.getView("player");
+assert(view.location.id === "tavernEntrance", "initial view should show the tavern entrance");
+assert(Array.isArray(view.location.description), "location description should be an array");
+assert(view.location.description.length > 0, "location description should contain prose");
+assert(view.location.exits.length === 3, "entrance exits should come from world state");
+assert(view.location.characters.length === 0, "the controlled character must not see itself nearby");
+
 assertOk(setup.Game.takeHumanControl("hoodedWoman"), "takeover should succeed");
 assert(setup.Game.getHumanCharacterId() === "hoodedWoman", "hooded woman should be human-controlled");
 assert(world.control.assignments.player === "dummy", "previous human should return to dummy");
@@ -55,6 +62,15 @@ assertOk(setup.CharacterAPI.perform("player", {
 
 world = setup.Game.getWorld();
 assert(world.entities.player.locationId === "bar", "player location should be bar");
+
+view = setup.CharacterAPI.getView("player");
+assert(view.location.id === "bar", "view should follow the actor's world location");
+assert(view.location.characters.some(function (character) {
+    return character.id === "innkeeper" && character.presence_text;
+}), "bar view should expose the innkeeper's public presence");
+assert(!view.location.characters.some(function (character) {
+    return character.id === "player";
+}), "nearby characters should never include self");
 
 assertOk(setup.CharacterAPI.perform("player", {
     type: "take_item",
@@ -90,9 +106,47 @@ const failed = setup.CharacterAPI.perform("player", {
 assert(!failed.ok, "insufficient-funds action should fail");
 assert(world.entities.player.wallet === playerBefore - 3, "failed action must not alter player wallet");
 
+assertOk(setup.Game.takeHumanControl("innkeeper"), "innkeeper takeover should succeed");
+view = setup.CharacterAPI.getView("innkeeper");
+assert(!view.location.characters.some(function (character) {
+    return character.id === "innkeeper";
+}), "innkeeper should not see its own presence");
+assert(view.location.characters.some(function (character) {
+    return character.id === "player" && character.presence_text;
+}), "innkeeper should see the player's public presence in the bar");
+
+assertOk(setup.CharacterAPI.perform("hoodedWoman", {
+    type: "move",
+    destination_id: "tavernEntrance"
+}), "hooded woman should move to the entrance");
+assertOk(setup.CharacterAPI.perform("hoodedWoman", {
+    type: "move",
+    destination_id: "bar"
+}), "hooded woman should move into the bar");
+view = setup.CharacterAPI.getView("innkeeper");
+assert(view.location.characters.some(function (character) {
+    return character.id === "hoodedWoman";
+}), "a character entering the room should appear dynamically");
+
+assertOk(setup.CharacterAPI.perform("hoodedWoman", {
+    type: "move",
+    destination_id: "tavernEntrance"
+}), "hooded woman should leave the bar");
+view = setup.CharacterAPI.getView("innkeeper");
+assert(!view.location.characters.some(function (character) {
+    return character.id === "hoodedWoman";
+}), "a character leaving the room should disappear dynamically");
+
+assertOk(setup.Game.takeHumanControl("player"), "control should return to player before repair test");
+
 world.control.assignments.innkeeper = "human";
 const repairedHumanId = setup.Game.getHumanCharacterId();
 assert(repairedHumanId === "player", "invalid multiple-human state should repair to player");
 assertOk(setup.Game.validateWorld(), "world should validate after repair");
+
+const storySource = fs.readFileSync(path.join(root, "src/story.twee"), "utf8");
+assert(storySource.includes(":: Location"), "story should contain the generic Location passage");
+assert(!storySource.includes(":: The Bar"), "story should not retain a physical bar passage");
+assert(!storySource.includes("->The Tavern"), "story should not contain raw physical navigation links");
 
 console.log("All framework tests passed.");
