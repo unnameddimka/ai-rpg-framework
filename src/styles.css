@@ -1,0 +1,59 @@
+.framework-sidebar-block {
+    margin: 0 0 1rem;
+    padding-bottom: 0.8rem;
+    border-bottom: 1px solid #666;
+}
+
+.framework-sidebar-block select,
+.framework-sidebar-block button {
+    max-width: 100%;
+    margin-top: 0.35rem;
+}
+
+.framework-panel {
+    margin-top: 2rem;
+    padding: 1rem;
+    border: 1px solid #777;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.framework-action-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.8rem;
+}
+
+.framework-action-grid fieldset {
+    min-width: 0;
+    padding: 0.8rem;
+    border: 1px solid #666;
+}
+
+.framework-action-grid select,
+.framework-action-grid input,
+.framework-action-grid textarea,
+.framework-action-grid button {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 0.45rem;
+}
+
+.framework-status {
+    min-height: 1.4em;
+    margin: 0.5rem 0;
+    font-weight: bold;
+}
+
+.framework-debug {
+    margin-top: 1rem;
+}
+
+.framework-debug pre {
+    max-height: 420px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding: 0.7rem;
+    border: 1px solid #555;
+    background: rgba(0, 0, 0, 0.25);
+}

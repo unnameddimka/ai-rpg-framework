@@ -1,0 +1,355 @@
+# AI RPG Architecture — Framework-First Proof of Concept
+
+## 1. Goal
+
+Build a deterministic Twine/SugarCube game framework before connecting a language model.
+
+Every character uses the same engine representation and the same formal action API. The difference between the player, an inactive NPC, and a future AI NPC is the controller assigned to that character.
+
+The framework currently supports:
+
+- the existing tavern locations and passages;
+- objective shared world state;
+- character and location inventories;
+- taking, dropping, and giving items;
+- wallets and giving money;
+- movement through connected exits;
+- confirmed world events;
+- restricted character views;
+- browser controls for manually testing every character.
+
+Combat, trading, equipment, item effects, and model calls are outside the current milestone.
+
+## 2. Core rule
+
+The engine owns objective reality.
+
+```text
+Controller
+    │ requests an intention
+    ▼
+CharacterAPI
+    │
+    ▼
+ActionRegistry validation
+    │
+    ▼
+Objective world mutation
+    │
+    ▼
+Confirmed world event
+```
+
+No controller may directly change wallets, inventories, locations, or other protected state.
+
+## 3. World state
+
+The world is stored as a JSON-serializable object in `State.variables.world`.
+
+It contains:
+
+- `entities` — characters, locations, and items;
+- `inventories` — inventories owned by characters and locations;
+- `control.assignments` — controller IDs assigned to characters;
+- `events` — confirmed event history and pending recipients;
+- `debug` — last action result, controller logs, and repairs.
+
+Functions and controller objects are kept in `setup`, not in SugarCube state.
+
+## 4. Existing locations
+
+The original map is preserved rather than replaced.
+
+```text
+tavernEntrance  → The Tavern
+bar              → The Bar
+commonRoom       → The Common Room
+street           → The Street
+```
+
+Connections:
+
+```text
+                  bar
+                   │
+commonRoom ─ tavernEntrance ─ street
+```
+
+Close-up passages such as `Hooded Woman`, `Innkeeper Close-up`, and `Merchants` do not create additional physical locations.
+
+A successful player-controlled `move` action updates the character's `locationId` and then the UI opens the destination location's passage.
+
+NPC movement changes only that NPC's `locationId`; it does not inherently move another character or rewrite browser state.
+
+## 5. Characters and controllers
+
+Character entities contain physical state and a `defaultControllerId`.
+
+```js
+{
+  id: "hoodedWoman",
+  type: "character",
+  name: "Hooded woman",
+  locationId: "commonRoom",
+  inventoryId: "inventory_hoodedWoman",
+  wallet: 8,
+  defaultControllerId: "dummy"
+}
+```
+
+Controller assignment is stored separately:
+
+```js
+world.control.assignments = {
+  player: "human",
+  hoodedWoman: "dummy",
+  innkeeper: "dummy"
+};
+```
+
+### 5.1 HumanController
+
+`human` receives decisions from the browser interface. It is not permanently tied to the entity named `player`.
+
+The developer may take control of the hooded woman or innkeeper. All UI actions then use that character as the actor.
+
+### 5.2 DummyController
+
+`dummy` makes no autonomous decisions and requests no actions. It may acknowledge perceived events and write debug logs.
+
+### 5.3 AIController
+
+`ai` is reserved for a later milestone. The current shell returns a not-implemented result and does not call any model.
+
+## 6. Exactly one HumanController
+
+This is a hard world invariant:
+
+```text
+Exactly one character is assigned controllerId = "human".
+```
+
+Human control may be switched only through:
+
+```js
+setup.Game.takeHumanControl(characterId)
+```
+
+The operation is atomic:
+
+1. copy the current assignment map;
+2. return every current human assignment to that character's default controller;
+3. assign `human` to the target character;
+4. validate that the candidate map contains exactly one human;
+5. commit the complete assignment map once.
+
+Generic controller assignment rejects `human`, and it also rejects removing the only human assignment.
+
+Initialization and loading validate the invariant. Invalid legacy or debug states are repaired to one human character, preferring `player` when no unambiguous previous human exists.
+
+## 7. Inventories and items
+
+Every item belongs to exactly one inventory.
+
+```text
+item.containerId == inventory.id
+inventory.itemIds contains item.id
+```
+
+An inventory may belong to a character or location. Later it may belong to a chest or another container.
+
+Current test items:
+
+- mug of ale in the bar inventory;
+- cleaning rag in the innkeeper's inventory.
+
+Money remains a numeric wallet value rather than coin items.
+
+## 8. Character API
+
+All controllers use the same interface:
+
+```js
+setup.CharacterAPI = {
+  getView(actorId),
+  getAvailableActions(actorId),
+  perform(actorId, action),
+  narrate(actorId, input)
+};
+```
+
+Controllers and UI code must not bypass it to mutate world state.
+
+## 9. Formal actions
+
+The first action registry contains:
+
+```text
+move
+take_item
+drop_item
+give_item
+give_money
+```
+
+Every action definition provides:
+
+- description;
+- serializable schema;
+- current options;
+- objective validation;
+- execution code;
+- confirmed event data.
+
+Example:
+
+```json
+{
+  "type": "give_item",
+  "target_id": "hoodedWoman",
+  "item_id": "beerMug"
+}
+```
+
+Validation completes before execution. The framework snapshots state and restores it if execution throws or violates an item invariant.
+
+## 10. Restricted character view
+
+A controller receives a view for one actor, not the entire world.
+
+The view contains:
+
+- the actor's location, wallet, and inventory;
+- nearby characters;
+- items in the current location;
+- directly connected exits;
+- current action descriptions, schemas, and options.
+
+It does not expose distant inventories, distant wallets, or distant items.
+
+This same view will later become part of AI model input.
+
+## 11. Events
+
+Physical state changes happen immediately in world state after validation.
+
+Events describe confirmed facts for perception and later subjective interpretation.
+
+```js
+{
+  id: 12,
+  type: "item_transferred",
+  actorId: "player",
+  targetId: "hoodedWoman",
+  itemId: "beerMug",
+  locationId: "commonRoom",
+  recipients: ["hoodedWoman"],
+  pendingFor: [],
+  processedBy: ["hoodedWoman"]
+}
+```
+
+Human and Dummy controllers currently acknowledge events immediately. A future AI controller may leave them pending until a successful model response processes them.
+
+Narrative input also produces events, but it does not change protected physical state.
+
+## 12. Browser and debug UI
+
+The sidebar shows:
+
+- the one human-controlled character;
+- current location;
+- wallet;
+- inventory;
+- character takeover selector;
+- world validation and reset controls.
+
+The passage action panel exposes all current formal actions plus narrative input.
+
+Debug output shows:
+
+- the restricted character view;
+- the last action result;
+- recent confirmed events;
+- controller logs.
+
+Switching the human-controlled character navigates to that character's current physical location.
+
+## 13. Source organization
+
+```text
+src/story.twee          passages and prose
+src/10-game-api.js      world, actions, CharacterAPI, invariants
+src/20-controllers.js   Human, Dummy, future AI shell
+src/30-game-ui.js       browser and debug controls
+src/styles.css          UI styling
+```
+
+The numeric prefixes make JavaScript load order explicit for Tweego.
+
+## 14. Development order
+
+### Phase 1 — framework
+
+Implemented now:
+
+- world state;
+- existing locations;
+- inventories and wallets;
+- action registry;
+- character API;
+- events;
+- restricted views;
+- Human and Dummy controllers;
+- debug character takeover;
+- exactly-one-human invariant.
+
+### Phase 2 — browser validation
+
+Build with Tweego, run in a browser, and verify all controls and SugarCube save/load behaviour.
+
+### Phase 3 — perception and subjective state
+
+Add per-character memories, attitudes, and robust pending-event processing without a model first where possible.
+
+### Phase 4 — AI controller
+
+Add model request construction and structured output. The model receives the restricted view and action schemas, and all returned actions still pass through `CharacterAPI.perform()`.
+
+### Phase 5 — expansion
+
+Possible later systems:
+
+- jobs and rewards;
+- buying and selling;
+- item use;
+- doors and locks;
+- character-specific capabilities;
+- reputation interpreted by the model;
+- combat as a separate subsystem.
+
+## 15. Final summary
+
+```text
+                    World State
+       characters, locations, items, money
+                          ▲
+                          │ validated mutation
+                          │
+                    CharacterAPI
+        getView / getAvailableActions / perform
+                          ▲
+                          │
+          ┌───────────────┼───────────────┐
+          │               │               │
+ HumanController   DummyController   AIController
+ browser input      no autonomous     later model
+                        actions
+          └───────────────┼───────────────┘
+                          │
+                          ▼
+                   ActionRegistry
+              validate → execute → event
+```
+
+The engine determines objective facts. Controllers choose intentions. Exactly one character is controlled by the human interface. The future model remains a controller rather than an authority over world state.

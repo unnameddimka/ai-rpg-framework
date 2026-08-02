@@ -1,0 +1,110 @@
+:: StoryTitle
+AI RPG Framework POC
+
+
+:: StoryData
+{
+  "ifid": "7A96C8DB-CDD6-4B5C-A486-4EF8A4DB12BB",
+  "format": "SugarCube",
+  "format-version": "2.37.3",
+  "start": "The Tavern",
+  "zoom": 1
+}
+
+
+:: StoryInit
+<<set $health = 10>>
+<<set $maxHealth = 10>>
+<<set $time = "Evening">>
+<<run setup.Game.bootstrap()>>
+
+
+:: StoryCaption
+<div id="framework-sidebar"></div>
+
+
+:: The Tavern
+<h2>The Tavern Entrance</h2>
+
+You find yourself in a modest roadside tavern.
+
+The room smells of smoke, spilled ale, and wet wool.
+
+<<link "Approach the bar">><<run setup.GameUI.moveHuman("bar")>><</link>><br>
+<<link "Look at the other patrons">><<run setup.GameUI.moveHuman("commonRoom")>><</link>><br>
+<<link "Step outside">><<run setup.GameUI.moveHuman("street")>><</link>>
+
+
+:: The Bar
+<h2>The Bar</h2>
+
+The innkeeper wipes a wooden mug with a cloth that has probably seen better days.
+
+"What can I get you?"
+
+[[Speak with the innkeeper->Innkeeper Close-up]]<br>
+[[Order an ale->Drink Ale]]<br>
+[[Ask about recent news->Ask for News]]<br>
+<<link "Return to the entrance">><<run setup.GameUI.moveHuman("tavernEntrance")>><</link>>
+
+
+:: Innkeeper Close-up
+<h2>The Innkeeper</h2>
+
+The innkeeper looks up from his work and waits for you to speak.
+
+[[Step back from the bar->The Bar]]
+
+
+:: The Common Room
+<h2>The Common Room</h2>
+
+Several travellers sit near the fire.
+
+A hooded woman watches the entrance. Two merchants argue quietly over a map.
+
+[[Approach the hooded woman->Hooded Woman]]<br>
+[[Listen to the merchants->Merchants]]<br>
+<<link "Return to the entrance">><<run setup.GameUI.moveHuman("tavernEntrance")>><</link>>
+
+
+:: Hooded Woman
+<h2>The Hooded Woman</h2>
+
+As you approach, the woman turns slightly toward you. Her face remains hidden beneath the hood.
+
+[[Step away from the woman->The Common Room]]
+
+
+:: Merchants
+<h2>The Merchants</h2>
+
+The merchants lower their voices when they notice you listening.
+
+[[Return to the common room->The Common Room]]
+
+
+:: The Street
+<h2>The Street</h2>
+
+Cold rain falls upon the empty village street.
+
+The tavern's windows glow warmly behind you.
+
+<<link "Return to the tavern">><<run setup.GameUI.moveHuman("tavernEntrance")>><</link>>
+
+
+:: Drink Ale
+<h2>Order an Ale</h2>
+
+The deterministic framework does not implement buying and selling yet. The mug on the bar can still be taken, dropped, or handed to another character through the action interface below.
+
+[[Return to the bar->The Bar]]
+
+
+:: Ask for News
+<h2>Ask for News</h2>
+
+The innkeeper has no scripted or AI response yet. He is currently controlled by DummyController and therefore takes no action.
+
+[[Return to the bar->The Bar]]
