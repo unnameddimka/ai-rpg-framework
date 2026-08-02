@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "protectedLocationIds": ["tavernEntrance", "bar", "commonRoom"],
+  "protectedSublocationIds": ["tavernEntranceFloor", "barBehindCounter", "commonRoomTableOne"],
+  "locations": {
+    "tavernEntrance": {
+      "id": "tavernEntrance",
+      "type": "location",
+      "name": "Tavern entrance",
+      "passage": "The Tavern",
+      "description": [
+        "You stand in the entrance of a modest roadside tavern.",
+        "The room smells of smoke, spilled ale, and wet wool."
+      ],
+      "defaultSublocationId": "tavernEntranceFloor",
+      "inventoryId": "inventory_tavernEntrance",
+      "exits": {
+        "bar": "bar",
+        "commonRoom": "commonRoom",
+        "street": "street"
+      },
+      "sublocations": {
+        "tavernEntranceFloor": {
+          "id": "tavernEntranceFloor",
+          "type": "sublocation",
+          "locationId": "tavernEntrance",
+          "name": "Tavern floor",
+          "enterLabel": "Stand by the tavern entrance",
+          "selfText": "You are standing near the tavern entrance.",
+          "occupantTemplate": "{name} stands near the tavern entrance.",
+          "capacity": 20,
+          "reachableSublocationIds": ["tavernEntranceFloor"]
+        }
+      }
+    },
+    "bar": {
+      "id": "bar",
+      "type": "location",
+      "name": "The bar",
+      "passage": "The Bar",
+      "description": [
+        "The bar counter is dark with age and spilled ale.",
+        "Shelves of mismatched bottles line the wall behind it."
+      ],
+      "defaultSublocationId": "barPublicSide",
+      "inventoryId": "inventory_bar",
+      "exits": { "tavernEntrance": "tavernEntrance" },
+      "sublocations": {
+        "barPublicSide": {
+          "id": "barPublicSide",
+          "type": "sublocation",
+          "locationId": "bar",
+          "name": "Public side of the bar",
+          "publicText": "The public side of the counter is worn smooth by years of elbows and spilled drink.",
+          "enterLabel": "Step to the public side of the bar",
+          "selfText": "You are standing on the public side of the counter.",
+          "occupantTemplate": "{name} stands on the public side of the counter.",
+          "capacity": 20,
+          "reachableSublocationIds": ["barPublicSide", "barBehindCounter"]
+        },
+        "barBehindCounter": {
+          "id": "barBehindCounter",
+          "type": "sublocation",
+          "locationId": "bar",
+          "name": "Behind the bar",
+          "publicText": "A narrow working space behind the counter holds taps, bottles, and clean mugs.",
+          "enterLabel": "Step behind the bar",
+          "selfText": "You are standing behind the bar.",
+          "occupantTemplate": "{name} stands behind the bar.",
+          "capacity": 2,
+          "capabilities": ["pour_ale"],
+          "reachableSublocationIds": ["barBehindCounter", "barPublicSide"]
+        }
+      }
+    },
+    "commonRoom": {
+      "id": "commonRoom",
+      "type": "location",
+      "name": "The common room",
+      "passage": "The Common Room",
+      "description": [
+        "Several travellers sit near the fire while two merchants argue quietly over a map.",
+        "Smoke gathers beneath the rafters above scarred tables and mismatched chairs."
+      ],
+      "defaultSublocationId": "commonRoomFloor",
+      "inventoryId": "inventory_commonRoom",
+      "exits": { "tavernEntrance": "tavernEntrance" },
+      "sublocations": {
+        "commonRoomFloor": {
+          "id": "commonRoomFloor",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Common-room floor",
+          "enterLabel": "Stand in the common room",
+          "selfText": "You are standing in the common room.",
+          "occupantTemplate": "{name} stands in the common room.",
+          "capacity": 20,
+          "reachableSublocationIds": ["commonRoomFloor", "commonRoomTableOne", "commonRoomTableTwo"]
+        },
+        "commonRoomTableOne": {
+          "id": "commonRoomTableOne",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "First table",
+          "publicText": "The first table stands close to the fire.",
+          "enterLabel": "Sit at the first table",
+          "selfText": "You are sitting at the first table.",
+          "occupantTemplate": "{name} sits at the first table.",
+          "capacity": 4,
+          "inventoryId": "inventory_commonRoomTableOne",
+          "reachableSublocationIds": ["commonRoomTableOne", "commonRoomFloor"]
+        },
+        "commonRoomTableTwo": {
+          "id": "commonRoomTableTwo",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Second table",
+          "publicText": "The second table sits nearer the shadowed wall.",
+          "enterLabel": "Sit at the second table",
+          "selfText": "You are sitting at the second table.",
+          "occupantTemplate": "{name} sits at the second table.",
+          "capacity": 4,
+          "inventoryId": "inventory_commonRoomTableTwo",
+          "reachableSublocationIds": ["commonRoomTableTwo", "commonRoomFloor"]
+        }
+      }
+    },
+    "street": {
+      "id": "street",
+      "type": "location",
+      "name": "The street",
+      "passage": "The Street",
+      "description": [
+        "Cold rain falls upon the empty village street.",
+        "The tavern's windows glow warmly behind you."
+      ],
+      "defaultSublocationId": "streetCenter",
+      "inventoryId": "inventory_street",
+      "exits": { "tavernEntrance": "tavernEntrance" },
+      "sublocations": {
+        "streetCenter": {
+          "id": "streetCenter",
+          "type": "sublocation",
+          "locationId": "street",
+          "name": "Village street",
+          "enterLabel": "Stand in the street",
+          "selfText": "You are standing in the village street.",
+          "occupantTemplate": "{name} stands in the village street.",
+          "capacity": 20,
+          "reachableSublocationIds": ["streetCenter"]
+        }
+      }
+    }
+  }
+}

@@ -29,10 +29,14 @@ if not defined TWEEGO_PATH if exist "%LOCALAPPDATA%\Tweego\storyformats" (
     set "TWEEGO_PATH=%LOCALAPPDATA%\Tweego\storyformats"
 )
 
+echo Generating world data...
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\generate-world-data.ps1
+if errorlevel 1 exit /b 1
+
 if not exist dist mkdir dist
 
 echo Running JavaScript tests...
-"%NODE_EXE%" tests\run-tests.js
+call test.bat
 if errorlevel 1 exit /b 1
 
 echo Building dist\game.html...

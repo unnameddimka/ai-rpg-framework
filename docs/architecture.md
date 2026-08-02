@@ -338,6 +338,11 @@ Possible later systems:
 
 ### Sublocation spatial layer
 
+Spatial authoring data lives in `data/world.json` (schema version 1). The standalone editor
+imports and exports that file without accessing the repository. During administrator builds,
+`tools/generate-world-data.ps1` creates derived `src/generated/world-data.js` and mount-only
+physical passages. The browser game never fetches external JSON at runtime.
+
 Major locations remain the four physical SugarCube passages. Characters also carry a
 `sublocationId`, which identifies their objective position within the major location.
 

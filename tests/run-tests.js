@@ -38,6 +38,7 @@ function perform(actorId, action, message) {
     return result;
 }
 
+load("src/generated/world-data.js");
 load("src/10-game-api.js");
 load("src/20-controllers.js");
 
@@ -177,7 +178,7 @@ world.control.assignments.innkeeper = "human";
 assert(setup.Game.getHumanCharacterId() === "player", "invalid multi-human state should repair to player");
 assertOk(setup.Game.validateWorld(), "world should validate after controller repair");
 
-const storySource = fs.readFileSync(path.join(root, "src/story.twee"), "utf8");
+const storySource = fs.readFileSync(path.join(root, "src/generated/world-passages.twee"), "utf8");
 for (const passage of ["The Tavern", "The Bar", "The Common Room", "The Street"]) {
     assert(storySource.includes(`:: ${passage}`), `${passage} physical passage should exist`);
 }

@@ -31,6 +31,9 @@
 - `move_within_location`, `place_item`, and `pour_ale` registered actions.
 - Major movement resets characters to each destination's default sublocation.
 - Public events remain visible throughout the major location regardless of sublocation.
+- Authoritative spatial data in `data/world.json`.
+- Single-file offline editor for locations, exits, sublocations, inventories, and capabilities.
+- Build-time PowerShell embedding into self-contained generated JavaScript and Twee passages.
 - Node tests.
 
 ## Not implemented

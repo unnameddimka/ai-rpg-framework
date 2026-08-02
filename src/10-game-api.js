@@ -19,8 +19,47 @@
         }, extra || {});
     }
 
+    function installGeneratedSpatialData(world) {
+        const document = setup.GeneratedWorldData;
+        if (!document || document.schemaVersion !== 1 || !document.locations) {
+            throw new Error("Generated world data is missing or uses an unsupported schema version.");
+        }
+
+        for (const [locationId, sourceLocation] of Object.entries(document.locations)) {
+            const location = clone(sourceLocation);
+            const sublocations = location.sublocations || {};
+            delete location.sublocations;
+            location.id = locationId;
+            location.type = "location";
+            world.entities[locationId] = location;
+            world.inventories[location.inventoryId] = {
+                id: location.inventoryId,
+                ownerId: locationId,
+                itemIds: locationId === "bar" ? ["beerMug"] : []
+            };
+            if (locationId === "bar" && world.entities.beerMug) {
+                world.entities.beerMug.containerId = location.inventoryId;
+            }
+
+            for (const [sublocationId, sourceSublocation] of Object.entries(sublocations)) {
+                const sublocation = clone(sourceSublocation);
+                sublocation.id = sublocationId;
+                sublocation.type = "sublocation";
+                sublocation.locationId = locationId;
+                world.entities[sublocationId] = sublocation;
+                if (sublocation.inventoryId) {
+                    world.inventories[sublocation.inventoryId] = {
+                        id: sublocation.inventoryId,
+                        ownerId: sublocationId,
+                        itemIds: []
+                    };
+                }
+            }
+        }
+    }
+
     function createInitialWorld() {
-        return {
+        const world = {
             version: WORLD_VERSION,
 
             entities: {
@@ -63,163 +102,6 @@
                     defaultControllerId: "dummy"
                 },
 
-                tavernEntrance: {
-                    id: "tavernEntrance",
-                    type: "location",
-                    name: "Tavern entrance",
-                    passage: "The Tavern",
-                    defaultSublocationId: "tavernEntranceFloor",
-                    description: [
-                        "You stand in the entrance of a modest roadside tavern.",
-                        "The room smells of smoke, spilled ale, and wet wool."
-                    ],
-                    inventoryId: "inventory_tavernEntrance",
-                    exits: {
-                        bar: "bar",
-                        commonRoom: "commonRoom",
-                        street: "street"
-                    }
-                },
-
-                bar: {
-                    id: "bar",
-                    type: "location",
-                    name: "The bar",
-                    passage: "The Bar",
-                    defaultSublocationId: "barPublicSide",
-                    description: [
-                        "The bar counter is dark with age and spilled ale.",
-                        "Shelves of mismatched bottles line the wall behind it."
-                    ],
-                    inventoryId: "inventory_bar",
-                    exits: {
-                        tavernEntrance: "tavernEntrance"
-                    }
-                },
-
-                commonRoom: {
-                    id: "commonRoom",
-                    type: "location",
-                    name: "The common room",
-                    passage: "The Common Room",
-                    defaultSublocationId: "commonRoomFloor",
-                    description: [
-                        "Several travellers sit near the fire while two merchants argue quietly over a map.",
-                        "Smoke gathers beneath the rafters above scarred tables and mismatched chairs."
-                    ],
-                    inventoryId: "inventory_commonRoom",
-                    exits: {
-                        tavernEntrance: "tavernEntrance"
-                    }
-                },
-
-                street: {
-                    id: "street",
-                    type: "location",
-                    name: "The street",
-                    passage: "The Street",
-                    defaultSublocationId: "streetCenter",
-                    description: [
-                        "Cold rain falls upon the empty village street.",
-                        "The tavern's windows glow warmly behind you."
-                    ],
-                    inventoryId: "inventory_street",
-                    exits: {
-                        tavernEntrance: "tavernEntrance"
-                    }
-                },
-
-                tavernEntranceFloor: {
-                    id: "tavernEntranceFloor",
-                    type: "sublocation",
-                    locationId: "tavernEntrance",
-                    name: "Tavern floor",
-                    enterLabel: "Stand by the tavern entrance",
-                    selfText: "You are standing near the tavern entrance.",
-                    occupantTemplate: "{name} stands near the tavern entrance.",
-                    capacity: 20,
-                    reachableSublocationIds: ["tavernEntranceFloor"]
-                },
-
-                barPublicSide: {
-                    id: "barPublicSide",
-                    type: "sublocation",
-                    locationId: "bar",
-                    name: "Public side of the bar",
-                    publicText: "The public side of the counter is worn smooth by years of elbows and spilled drink.",
-                    enterLabel: "Step to the public side of the bar",
-                    selfText: "You are standing on the public side of the counter.",
-                    occupantTemplate: "{name} stands on the public side of the counter.",
-                    capacity: 20,
-                    reachableSublocationIds: ["barPublicSide", "barBehindCounter"]
-                },
-
-                barBehindCounter: {
-                    id: "barBehindCounter",
-                    type: "sublocation",
-                    locationId: "bar",
-                    name: "Behind the bar",
-                    publicText: "A narrow working space behind the counter holds taps, bottles, and clean mugs.",
-                    enterLabel: "Step behind the bar",
-                    selfText: "You are standing behind the bar.",
-                    occupantTemplate: "{name} stands behind the bar.",
-                    capacity: 2,
-                    capabilities: ["pour_ale"],
-                    reachableSublocationIds: ["barBehindCounter", "barPublicSide"]
-                },
-
-                commonRoomFloor: {
-                    id: "commonRoomFloor",
-                    type: "sublocation",
-                    locationId: "commonRoom",
-                    name: "Common-room floor",
-                    enterLabel: "Stand in the common room",
-                    selfText: "You are standing in the common room.",
-                    occupantTemplate: "{name} stands in the common room.",
-                    capacity: 20,
-                    reachableSublocationIds: ["commonRoomFloor", "commonRoomTableOne", "commonRoomTableTwo"]
-                },
-
-                commonRoomTableOne: {
-                    id: "commonRoomTableOne",
-                    type: "sublocation",
-                    locationId: "commonRoom",
-                    name: "First table",
-                    publicText: "The first table stands close to the fire.",
-                    enterLabel: "Sit at the first table",
-                    selfText: "You are sitting at the first table.",
-                    occupantTemplate: "{name} sits at the first table.",
-                    capacity: 4,
-                    inventoryId: "inventory_commonRoomTableOne",
-                    reachableSublocationIds: ["commonRoomTableOne", "commonRoomFloor"]
-                },
-
-                commonRoomTableTwo: {
-                    id: "commonRoomTableTwo",
-                    type: "sublocation",
-                    locationId: "commonRoom",
-                    name: "Second table",
-                    publicText: "The second table sits nearer the shadowed wall.",
-                    enterLabel: "Sit at the second table",
-                    selfText: "You are sitting at the second table.",
-                    occupantTemplate: "{name} sits at the second table.",
-                    capacity: 4,
-                    inventoryId: "inventory_commonRoomTableTwo",
-                    reachableSublocationIds: ["commonRoomTableTwo", "commonRoomFloor"]
-                },
-
-                streetCenter: {
-                    id: "streetCenter",
-                    type: "sublocation",
-                    locationId: "street",
-                    name: "Village street",
-                    enterLabel: "Stand in the street",
-                    selfText: "You are standing in the village street.",
-                    occupantTemplate: "{name} stands in the village street.",
-                    capacity: 20,
-                    reachableSublocationIds: ["streetCenter"]
-                },
-
                 beerMug: {
                     id: "beerMug",
                     type: "item",
@@ -251,36 +133,6 @@
                     ownerId: "innkeeper",
                     itemIds: ["cleaningRag"]
                 },
-                inventory_tavernEntrance: {
-                    id: "inventory_tavernEntrance",
-                    ownerId: "tavernEntrance",
-                    itemIds: []
-                },
-                inventory_bar: {
-                    id: "inventory_bar",
-                    ownerId: "bar",
-                    itemIds: ["beerMug"]
-                },
-                inventory_commonRoom: {
-                    id: "inventory_commonRoom",
-                    ownerId: "commonRoom",
-                    itemIds: []
-                },
-                inventory_street: {
-                    id: "inventory_street",
-                    ownerId: "street",
-                    itemIds: []
-                },
-                inventory_commonRoomTableOne: {
-                    id: "inventory_commonRoomTableOne",
-                    ownerId: "commonRoomTableOne",
-                    itemIds: []
-                },
-                inventory_commonRoomTableTwo: {
-                    id: "inventory_commonRoomTableTwo",
-                    ownerId: "commonRoomTableTwo",
-                    itemIds: []
-                }
             },
 
             control: {
@@ -301,6 +153,8 @@
                 repairs: []
             }
         };
+        installGeneratedSpatialData(world);
+        return world;
     }
 
     function getWorld() {

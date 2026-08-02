@@ -12,6 +12,9 @@ src/10-game-api.js      World, ActionRegistry, CharacterAPI, invariants
 src/20-controllers.js   Human, Dummy, and future AI controller shell
 src/30-game-ui.js       Browser controls and character takeover UI
 src/styles.css          Framework UI styles
+data/world.json         Authoritative location and sublocation data
+editor/world-editor.html Standalone offline world editor
+tools/generate-world-data.ps1 Build-time JSON embedder
 docs/architecture.md    Current architecture
 docs/status.md          Current implementation status
 AGENTS.md                Instructions for Codex and other coding agents
@@ -20,6 +23,24 @@ build.bat                Windows Tweego build
 ```
 
 The numeric JavaScript prefixes make the dependency order explicit when Tweego reads the source directory.
+
+## World authoring workflow
+
+`data/world.json` is the single authoritative source for major locations, exits, and
+sublocations. `src/generated/world-data.js` and `src/generated/world-passages.twee` are
+derived build files and must not be edited directly.
+
+Administrator steps:
+
+1. Send `editor/world-editor.html` and the current `data/world.json` to the author.
+2. Receive the edited downloaded `world.json`.
+3. Review the JSON diff.
+4. Replace `data/world.json` in the repository.
+5. Run `test.bat` and `build.bat`.
+
+The build invokes a local PowerShell conversion step before tests and Tweego compilation.
+The resulting `dist/game.html` embeds the spatial data and remains self-contained; it does
+not fetch `world.json` at runtime.
 
 ## Build on Windows
 

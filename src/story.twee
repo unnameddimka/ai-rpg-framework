@@ -22,18 +22,3 @@ AI RPG Framework POC
 :: StoryCaption
 <div id="framework-sidebar"></div>
 
-
-:: The Tavern
-<div id="location-view"></div>
-
-
-:: The Bar
-<div id="location-view"></div>
-
-
-:: The Common Room
-<div id="location-view"></div>
-
-
-:: The Street
-<div id="location-view"></div>
