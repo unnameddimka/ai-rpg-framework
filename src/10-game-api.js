@@ -1,8 +1,9 @@
 (function () {
     "use strict";
 
-    const WORLD_VERSION = 3;
+    const WORLD_VERSION = 4;
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
+    const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value));
@@ -19,11 +20,14 @@
         }, extra || {});
     }
 
-    function installGeneratedSpatialData(world) {
+    function installGeneratedData(world) {
         const document = setup.GeneratedWorldData;
-        if (!document || document.schemaVersion !== 1 || !document.locations) {
+        if (!document || document.schemaVersion !== 2 || !document.locations || !document.characters || !document.abilities) {
             throw new Error("Generated world data is missing or uses an unsupported schema version.");
         }
+
+        world.startLocationId = document.startLocationId;
+        world.abilities = clone(document.abilities);
 
         for (const [locationId, sourceLocation] of Object.entries(document.locations)) {
             const location = clone(sourceLocation);
@@ -32,6 +36,9 @@
             location.id = locationId;
             location.type = "location";
             world.entities[locationId] = location;
+            if (world.inventories[location.inventoryId]) {
+                throw new Error(`Duplicate inventory ID ${location.inventoryId}.`);
+            }
             world.inventories[location.inventoryId] = {
                 id: location.inventoryId,
                 ownerId: locationId,
@@ -48,6 +55,9 @@
                 sublocation.locationId = locationId;
                 world.entities[sublocationId] = sublocation;
                 if (sublocation.inventoryId) {
+                    if (world.inventories[sublocation.inventoryId]) {
+                        throw new Error(`Duplicate inventory ID ${sublocation.inventoryId}.`);
+                    }
                     world.inventories[sublocation.inventoryId] = {
                         id: sublocation.inventoryId,
                         ownerId: sublocationId,
@@ -56,6 +66,26 @@
                 }
             }
         }
+
+        for (const [characterId, sourceCharacter] of Object.entries(document.characters)) {
+            const character = clone(sourceCharacter);
+            character.id = characterId;
+            character.type = "character";
+            character.mind = clone(character.initialMind || {});
+            delete character.initialMind;
+            character.mind.pendingObservations = [];
+            world.entities[characterId] = character;
+            if (world.inventories[character.inventoryId]) {
+                throw new Error(`Duplicate inventory ID ${character.inventoryId}.`);
+            }
+            world.inventories[character.inventoryId] = {
+                id: character.inventoryId,
+                ownerId: characterId,
+                itemIds: characterId === "innkeeper" ? ["cleaningRag"] : []
+            };
+            world.control.assignments[characterId] = character.initialControllerId;
+            delete character.initialControllerId;
+        }
     }
 
     function createInitialWorld() {
@@ -63,45 +93,6 @@
             version: WORLD_VERSION,
 
             entities: {
-                player: {
-                    id: "player",
-                    type: "character",
-                    name: "You",
-                    locationId: "tavernEntrance",
-                    sublocationId: "tavernEntranceFloor",
-                    inventoryId: "inventory_player",
-                    wallet: 10,
-                    presenceText: "A rain-soaked traveller takes in the surroundings.",
-                    interactionLabel: "Speak with the traveller",
-                    defaultControllerId: "dummy"
-                },
-
-                hoodedWoman: {
-                    id: "hoodedWoman",
-                    type: "character",
-                    name: "Hooded woman",
-                    locationId: "commonRoom",
-                    sublocationId: "commonRoomTableOne",
-                    inventoryId: "inventory_hoodedWoman",
-                    wallet: 8,
-                    presenceText: "A hooded woman watches the room from beneath the edge of her hood.",
-                    interactionLabel: "Speak with the hooded woman",
-                    defaultControllerId: "dummy"
-                },
-
-                innkeeper: {
-                    id: "innkeeper",
-                    type: "character",
-                    name: "Innkeeper",
-                    locationId: "bar",
-                    sublocationId: "barBehindCounter",
-                    inventoryId: "inventory_innkeeper",
-                    wallet: 25,
-                    presenceText: "The innkeeper wipes a wooden mug with a worn cloth.",
-                    interactionLabel: "Speak with the innkeeper",
-                    defaultControllerId: "dummy"
-                },
-
                 beerMug: {
                     id: "beerMug",
                     type: "item",
@@ -117,34 +108,15 @@
                 }
             },
 
-            inventories: {
-                inventory_player: {
-                    id: "inventory_player",
-                    ownerId: "player",
-                    itemIds: []
-                },
-                inventory_hoodedWoman: {
-                    id: "inventory_hoodedWoman",
-                    ownerId: "hoodedWoman",
-                    itemIds: []
-                },
-                inventory_innkeeper: {
-                    id: "inventory_innkeeper",
-                    ownerId: "innkeeper",
-                    itemIds: ["cleaningRag"]
-                },
-            },
+            inventories: {},
 
             control: {
-                assignments: {
-                    player: "human",
-                    hoodedWoman: "dummy",
-                    innkeeper: "dummy"
-                }
+                assignments: {}
             },
 
             events: [],
             nextEventId: 1,
+            nextObservationId: 1,
             nextGeneratedItemId: 1,
 
             debug: {
@@ -153,7 +125,11 @@
                 repairs: []
             }
         };
-        installGeneratedSpatialData(world);
+        installGeneratedData(world);
+        const validation = validateWorld(world);
+        if (!validation.ok) {
+            throw new Error(validation.error.message);
+        }
         return world;
     }
 
@@ -358,6 +334,24 @@
             return entity.type === "sublocation";
         });
 
+        const passageNames = new Set();
+        const inventoryOwners = new Map();
+        for (const location of locations) {
+            if (typeof location.passage !== "string" || !location.passage.trim() || passageNames.has(location.passage)) {
+                return fail("LOCATION_PASSAGE_INVALID", `Location ${location.id} has a missing or duplicate passage name.`);
+            }
+            passageNames.add(location.passage);
+        }
+        if (!getLocation(world.startLocationId, world)) {
+            return fail("START_LOCATION_INVALID", "The configured start location is invalid.");
+        }
+        for (const inventory of Object.values(world.inventories)) {
+            if (inventoryOwners.has(inventory.id)) {
+                return fail("DUPLICATE_INVENTORY_ID", `Inventory ${inventory.id} is owned by both ${inventoryOwners.get(inventory.id)} and ${inventory.ownerId}.`);
+            }
+            inventoryOwners.set(inventory.id, inventory.ownerId);
+        }
+
         for (const location of locations) {
             const defaultPosition = getSublocation(location.defaultSublocationId, world);
             if (!defaultPosition || defaultPosition.locationId !== location.id) {
@@ -403,6 +397,31 @@
             if (!world.inventories[character.inventoryId] ||
                     world.inventories[character.inventoryId].ownerId !== character.id) {
                 return fail("CHARACTER_INVENTORY_MISSING", `Character ${character.id} has no valid inventory.`);
+            }
+            if (!Number.isInteger(character.wallet) || character.wallet < 0) {
+                return fail("CHARACTER_WALLET_INVALID", `Character ${character.id} has an invalid wallet.`);
+            }
+            if (!CONTROLLER_IDS.has(character.defaultControllerId) || character.defaultControllerId === "human") {
+                return fail("DEFAULT_CONTROLLER_INVALID", `Character ${character.id} has an invalid default controller.`);
+            }
+            if (!character.mind || !Array.isArray(character.mind.pendingObservations)) {
+                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} has an invalid mind.`);
+            }
+            for (const partition of ["knownFacts", "beliefs", "relationships", "recentMemories", "longTermMemories"]) {
+                if (!Array.isArray(character.mind[partition])) {
+                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.${partition} must be an array.`);
+                }
+            }
+            for (const abilityId of character.abilityIds || []) {
+                if (!world.abilities[abilityId]) {
+                    return fail("ABILITY_REFERENCE_INVALID", `Character ${character.id} references missing ability ${abilityId}.`);
+                }
+            }
+        }
+
+        for (const [abilityId, ability] of Object.entries(world.abilities || {})) {
+            if (!ability || ability.id !== abilityId || !ActionRegistry[ability.actionType]) {
+                return fail("ABILITY_DEFINITION_INVALID", `Ability ${abilityId} has an invalid registered action type.`);
             }
         }
 
@@ -597,6 +616,30 @@
             });
     }
 
+    function enqueueObservation(recipientId, observation, world) {
+        const recipient = getCharacter(recipientId, world);
+        if (!recipient) {
+            return;
+        }
+        const record = Object.assign({ id: world.nextObservationId++ }, clone(observation));
+        recipient.mind.pendingObservations.push(record);
+    }
+
+    function routeFeedback(feedback, action, world) {
+        for (const entry of feedback) {
+            enqueueObservation(entry.recipientId, {
+                kind: "action_feedback",
+                actionType: action.type,
+                turn: world.nextEventId,
+                actorId: entry.recipientId,
+                targetId: entry.data && entry.data.targetId ? entry.data.targetId : null,
+                text: entry.text,
+                data: clone(entry.data || {}),
+                code: entry.code
+            }, world);
+        }
+    }
+
     function acknowledgeEvent(eventId, characterId) {
         const world = ensureWorld();
         const event = world.events.find(function (candidate) {
@@ -658,6 +701,18 @@
         event.recipients = recipientsForEvent(event, world);
         event.pendingFor = event.recipients.slice();
         world.events.push(event);
+
+        for (const recipientId of event.recipients) {
+            enqueueObservation(recipientId, {
+                kind: "event",
+                sourceEventId: event.id,
+                turn: event.id,
+                actorId: event.actorId || null,
+                targetId: event.targetId || null,
+                text: event.text,
+                data: clone(event)
+            }, world);
+        }
 
         if (world.events.length > 200) {
             world.events = world.events.slice(-200);
@@ -1095,17 +1150,71 @@
                     containerId: actor.inventoryId
                 };
                 world.inventories[actor.inventoryId].itemIds.push(itemId);
-                return [{
+                return { events: [{
                     type: "ale_poured",
                     actorId: actor.id,
                     itemId: itemId,
                     locationId: actor.locationId,
                     sublocationId: actor.sublocationId,
                     text: `${actor.name} poured a mug of ale.`
-                }];
+                }], feedback: [{
+                    recipientId: actor.id,
+                    kind: "observation",
+                    code: "ALE_POURED",
+                    text: "You feel the weight of a freshly poured mug in your hand.",
+                    data: { itemId: itemId }
+                }] };
+            }
+        },
+
+        read_aura: {
+            description: "Read a visible character's aura.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "read_aura" }, target_id: { type: "string" } },
+                required: ["type", "target_id"]
+            },
+            getOptions: function (actor, world) {
+                return { target_ids: nearbyCharacters(actor, world).map(function (character) { return character.id; }) };
+            },
+            validate: function (actor, action, world) {
+                const target = getCharacter(action.target_id, world);
+                if (!target) return fail("TARGET_NOT_FOUND", "Target character does not exist.");
+                if (target.id === actor.id) return fail("INVALID_TARGET", "A character cannot read its own aura.");
+                if (target.locationId !== actor.locationId) return fail("TARGET_NOT_VISIBLE", "Target is not visible from the current location.");
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const target = getCharacter(action.target_id, world);
+                const aura = target.engineFacts && typeof target.engineFacts.aura === "string" && target.engineFacts.aura.trim()
+                    ? target.engineFacts.aura.trim()
+                    : "You sense no unusual supernatural aura.";
+                return { events: [], feedback: [{
+                    recipientId: actor.id,
+                    kind: "observation",
+                    code: "AURA_READ",
+                    text: aura,
+                    data: { targetId: target.id, factKey: "aura" }
+                }] };
             }
         }
     };
+
+    function grantedActionSources(actor, world) {
+        const grants = {};
+        function grant(type, source) {
+            if (!grants[type]) grants[type] = [];
+            grants[type].push(source);
+        }
+        for (const type of BASE_ACTION_TYPES) grant(type, { kind: "base" });
+        const sublocation = getSublocation(actor.sublocationId, world);
+        for (const type of (sublocation.capabilities || [])) grant(type, { kind: "sublocation", id: sublocation.id });
+        for (const abilityId of (actor.abilityIds || [])) {
+            const ability = world.abilities[abilityId];
+            if (ability) grant(ability.actionType, { kind: "character_ability", id: ability.id, name: ability.name });
+        }
+        return grants;
+    }
 
     function getAvailableActions(actorId) {
         const world = ensureWorld();
@@ -1116,12 +1225,16 @@
         }
 
         const actions = {};
+        const grants = grantedActionSources(actor, world);
 
-        for (const [type, definition] of Object.entries(ActionRegistry)) {
+        for (const [type, sources] of Object.entries(grants)) {
+            const definition = ActionRegistry[type];
+            if (!definition) continue;
             actions[type] = {
                 description: definition.description,
                 schema: clone(definition.schema),
-                options: definition.getOptions(actor, world)
+                options: definition.getOptions(actor, world),
+                sources: clone(sources)
             };
         }
 
@@ -1157,7 +1270,8 @@
                     return {
                         id: character.id,
                         name: character.name,
-                        presence_text: character.presenceText || `${character.name} is here.`,
+                        playerDescription: character.playerDescription || `${character.name} is here.`,
+                        presence_text: character.playerDescription || `${character.name} is here.`,
                         interaction_label: character.interactionLabel || `Speak with ${character.name}`,
                         sublocation_id: character.sublocationId,
                         position_text: positionText(character, world),
@@ -1196,33 +1310,50 @@
     function executeAction(actorId, action) {
         let world = ensureWorld();
         const actor = getCharacter(actorId, world);
+        const attempted = action && typeof action === "object" ? clone(action) : {};
 
         if (!actor) {
-            return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+            return { ok: false, action: attempted, events: [], feedback: [], error: { code: "ACTOR_NOT_FOUND", message: "Actor character does not exist." } };
         }
 
         if (!action || typeof action !== "object") {
-            return fail("INVALID_ACTION", "Action must be an object.");
+            return { ok: false, action: attempted, events: [], feedback: [], error: { code: "INVALID_ACTION", message: "Action must be an object." } };
         }
 
         const definition = ActionRegistry[action.type];
         if (!definition) {
-            return fail(
-                "UNKNOWN_ACTION",
-                `Unknown action type: ${String(action.type)}.`
-            );
+            return { ok: false, action: attempted, events: [], feedback: [], error: {
+                code: "UNKNOWN_ACTION", message: `Unknown action type: ${String(action.type)}.`
+            } };
+        }
+
+        if (!grantedActionSources(actor, world)[action.type]) {
+            const result = {
+                ok: false, action: clone(action), events: [], feedback: [],
+                error: { code: "ACTION_NOT_AVAILABLE", message: "Action is not currently available to this actor." }
+            };
+            world.debug.lastActionResult = result;
+            return result;
         }
 
         const validation = definition.validate(actor, action, world);
         if (!validation.ok) {
-            world.debug.lastActionResult = validation;
-            return validation;
+            const feedback = [{
+                recipientId: actor.id, kind: "observation", code: validation.error.code,
+                text: validation.error.message, data: clone(action)
+            }];
+            routeFeedback(feedback, action, world);
+            const result = { ok: false, action: clone(action), events: [], feedback: feedback, error: clone(validation.error) };
+            world.debug.lastActionResult = result;
+            return result;
         }
 
         const snapshot = clone(world);
 
         try {
-            const rawEvents = definition.execute(actor, action, world);
+            const raw = definition.execute(actor, action, world);
+            const rawEvents = Array.isArray(raw) ? raw : (raw.events || []);
+            const feedback = Array.isArray(raw) ? [] : clone(raw.feedback || []);
             const invariantResult = validateWorld(world);
 
             if (!invariantResult.ok) {
@@ -1232,14 +1363,15 @@
             const events = rawEvents.map(function (eventData) {
                 return emitEvent(eventData, world);
             });
+            routeFeedback(feedback, action, world);
 
-            const result = ok({ action: clone(action), events: clone(events) });
+            const result = { ok: true, action: clone(action), events: clone(events), feedback: feedback, error: null };
             world.debug.lastActionResult = result;
             return result;
         } catch (error) {
             State.variables.world = snapshot;
             world = getWorld();
-            const result = fail("ACTION_EXECUTION_FAILED", error.message);
+            const result = { ok: false, action: clone(action), events: [], feedback: [], error: { code: "ACTION_EXECUTION_FAILED", message: error.message } };
             world.debug.lastActionResult = result;
             return result;
         }
@@ -1294,6 +1426,24 @@
         });
     }
 
+    function buildContext(actorId) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        return clone({
+            schemaVersion: 1,
+            character: {
+                id: actor.id,
+                name: actor.name,
+                aiDescription: actor.aiDescription,
+                abilities: (actor.abilityIds || []).map(function (id) { return world.abilities[id]; }).filter(Boolean)
+            },
+            mind: actor.mind,
+            view: getCharacterView(actorId),
+            availableActions: getAvailableActions(actorId)
+        });
+    }
+
     setup.Game = {
         WORLD_VERSION: WORLD_VERSION,
         ActionRegistry: ActionRegistry,
@@ -1342,4 +1492,5 @@
         perform: executeAction,
         narrate: submitNarrative
     };
+    setup.ContextBuilder = { build: buildContext };
 }());

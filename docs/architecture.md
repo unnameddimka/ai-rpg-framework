@@ -1,64 +1,80 @@
-# AI RPG Architecture — Framework-First Proof of Concept
+# AI RPG Architecture — Deterministic Character Foundation
 
 ## 1. Goal
 
-Build a deterministic Twine/SugarCube game framework before connecting a language model.
+Build a deterministic Twine/SugarCube RPG framework that can later supply a stateless language model with everything required to behave as one specific character.
 
-Every character uses the same engine representation and the same formal action API. The difference between the player, an inactive NPC, and a future AI NPC is the controller assigned to that character.
+The model is not part of the current milestone. The current milestone prepares:
 
-The framework currently supports:
+- authorable characters;
+- separate public and AI-private descriptions;
+- individual formal abilities;
+- objective action feedback;
+- per-character saved mind state;
+- restricted future-controller context.
 
-- the existing tavern locations and passages;
-- objective shared world state;
-- character and location inventories;
-- taking, dropping, and giving items;
-- wallets and giving money;
-- movement through connected exits;
-- confirmed world events;
-- restricted character views;
-- browser controls for manually testing every character.
+The engine remains the authority over objective reality.
 
-Combat, trading, equipment, item effects, and model calls are outside the current milestone.
-
-## 2. Core rule
-
-The engine owns objective reality.
+## 2. Main separation
 
 ```text
-Controller
-    │ requests an intention
-    ▼
-CharacterAPI
-    │
-    ▼
-ActionRegistry validation
-    │
-    ▼
-Objective world mutation
-    │
-    ▼
-Confirmed world event
+Authoring data in world.json
+        │ new game initialization
+        ▼
+Deterministic runtime world in SugarCube state
+        │ restricted projection
+        ▼
+Human / Dummy / future AI controller
+        │ intention
+        ▼
+CharacterAPI.perform()
+        │ validation and execution
+        ▼
+World mutation + events + private feedback
+        │
+        └──► character mind.pendingObservations
 ```
 
-No controller may directly change wallets, inventories, locations, or other protected state.
+Free narrative is a separate channel:
 
-## 3. World state
+```text
+Narrative text
+    may describe speech, gestures, or attempts
+    does not itself mutate protected state
+    does not itself reveal hidden facts
+```
 
-The world is stored as a JSON-serializable object in `State.variables.world`.
+## 3. Authoritative world document
 
-It contains:
+`data/world.json` becomes the authoring source for:
 
-- `entities` — characters, locations, and items;
-- `inventories` — inventories owned by characters and locations;
-- `control.assignments` — controller IDs assigned to characters;
-- `events` — confirmed event history and pending recipients;
-- `debug` — last action result, controller logs, and repairs.
+- `startLocationId`;
+- major locations;
+- sublocations;
+- character definitions;
+- character initial minds;
+- individual ability definitions;
+- protected IDs used by the authoring workflow.
 
-Functions and controller objects are kept in `setup`, not in SugarCube state.
+The document uses `schemaVersion: 2`.
 
-## 4. Existing locations
+Conceptual shape:
 
-The original map is preserved rather than replaced.
+```json
+{
+  "schemaVersion": 2,
+  "startLocationId": "tavernEntrance",
+  "locations": {},
+  "characters": {},
+  "abilities": {}
+}
+```
+
+Generated JavaScript, generated Twee passages, generated StoryData, and the built game HTML are derived artifacts.
+
+## 4. Major locations and generated passages
+
+Every major physical location has its own generated Twine passage.
 
 ```text
 tavernEntrance  → The Tavern
@@ -67,329 +83,480 @@ commonRoom       → The Common Room
 street           → The Street
 ```
 
-Connections:
+The build generator must:
 
-```text
-                  bar
-                   │
-commonRoom ─ tavernEntrance ─ street
+1. validate unique passage names;
+2. validate `startLocationId`;
+3. generate one physical passage per location;
+4. generate SugarCube `StoryData.start` from the start location's passage.
+
+The obsolete generic-location-passage design is not authoritative.
+
+Internal sublocations remain runtime entities rather than passages.
+
+## 5. Character authoring definition
+
+A character definition contains authored starting data rather than mutable runtime state.
+
+Example:
+
+```json
+{
+  "id": "hoodedWoman",
+  "name": "Hooded woman",
+  "playerDescription": "A pale woman in a travel-stained dark cloak watches the room from beneath her hood.",
+  "interactionLabel": "Speak with the hooded woman",
+  "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.",
+  "locationId": "commonRoom",
+  "sublocationId": "commonRoomTableOne",
+  "inventoryId": "inventory_hoodedWoman",
+  "wallet": 8,
+  "initialControllerId": "dummy",
+  "defaultControllerId": "dummy",
+  "abilityIds": ["readAura"],
+  "engineFacts": {
+    "aura": "A quiet, disciplined magical presence surrounds her."
+  },
+  "initialMind": {
+    "knownFacts": [],
+    "beliefs": [],
+    "relationships": [],
+    "recentMemories": [],
+    "longTermMemories": []
+  }
+}
 ```
 
-Close-up passages such as `Hooded Woman`, `Innkeeper Close-up`, and `Merchants` do not create additional physical locations.
+### 5.1 Public and private descriptions
 
-A successful player-controlled `move` action updates the character's `locationId` and then the UI opens the destination location's passage.
+`playerDescription` is public prose used in normal player-facing views.
 
-NPC movement changes only that NPC's `locationId`; it does not inherently move another character or rewrite browser state.
+`aiDescription` is private controller identity data. It may later be supplied only to the AI controller of that same character.
 
-## 5. Characters and controllers
+`engineFacts` contains hidden objective values used by mechanics. It is not a prompt and must not appear in unrestricted dumps or other characters' views.
 
-Character entities contain physical state and a `defaultControllerId`.
+## 6. Runtime character state
+
+At new-game initialization, the engine deep-copies character authoring definitions into runtime entities.
+
+The runtime character owns physical state and mind state:
 
 ```js
 {
   id: "hoodedWoman",
   type: "character",
   name: "Hooded woman",
+  playerDescription: "...",
+  aiDescription: "...",
+  engineFacts: { aura: "..." },
   locationId: "commonRoom",
+  sublocationId: "commonRoomTableOne",
   inventoryId: "inventory_hoodedWoman",
   wallet: 8,
-  defaultControllerId: "dummy"
+  defaultControllerId: "dummy",
+  abilityIds: ["readAura"],
+  mind: {
+    knownFacts: [],
+    beliefs: [],
+    relationships: [],
+    recentMemories: [],
+    longTermMemories: [],
+    pendingObservations: []
+  }
 }
 ```
 
-Controller assignment is stored separately:
+The mind belongs to the character. Switching the character between `human`, `dummy`, and future `ai` controllers does not replace or reset it.
 
-```js
-world.control.assignments = {
-  player: "human",
-  hoodedWoman: "dummy",
-  innkeeper: "dummy"
-};
-```
+Because the character lives in `State.variables.world`, normal SugarCube saves carry the mind with the world.
 
-### 5.1 HumanController
+## 7. Initial mind record shapes
 
-`human` receives decisions from the browser interface. It is not permanently tied to the entity named `player`.
+The data is structured but intentionally simple.
 
-The developer may take control of the hooded woman or innkeeper. All UI actions then use that character as the actor.
-
-### 5.2 DummyController
-
-`dummy` makes no autonomous decisions and requests no actions. It may acknowledge perceived events and write debug logs.
-
-### 5.3 AIController
-
-`ai` is reserved for a later milestone. The current shell returns a not-implemented result and does not call any model.
-
-## 6. Exactly one HumanController
-
-This is a hard world invariant:
-
-```text
-Exactly one character is assigned controllerId = "human".
-```
-
-Human control may be switched only through:
-
-```js
-setup.Game.takeHumanControl(characterId)
-```
-
-The operation is atomic:
-
-1. copy the current assignment map;
-2. return every current human assignment to that character's default controller;
-3. assign `human` to the target character;
-4. validate that the candidate map contains exactly one human;
-5. commit the complete assignment map once.
-
-Generic controller assignment rejects `human`, and it also rejects removing the only human assignment.
-
-Initialization and loading validate the invariant. Invalid legacy or debug states are repaired to one human character, preferring `player` when no unambiguous previous human exists.
-
-## 7. Inventories and items
-
-Every item belongs to exactly one inventory.
-
-```text
-item.containerId == inventory.id
-inventory.itemIds contains item.id
-```
-
-An inventory may belong to a character or location. Later it may belong to a chest or another container.
-
-Current test items:
-
-- mug of ale in the bar inventory;
-- cleaning rag in the innkeeper's inventory.
-
-Money remains a numeric wallet value rather than coin items.
-
-## 8. Character API
-
-All controllers use the same interface:
-
-```js
-setup.CharacterAPI = {
-  getView(actorId),
-  getAvailableActions(actorId),
-  perform(actorId, action),
-  narrate(actorId, input)
-};
-```
-
-Controllers and UI code must not bypass it to mutate world state.
-
-## 9. Formal actions
-
-The first action registry contains:
-
-```text
-move
-take_item
-drop_item
-give_item
-give_money
-```
-
-Every action definition provides:
-
-- description;
-- serializable schema;
-- current options;
-- objective validation;
-- execution code;
-- confirmed event data.
-
-Example:
+### Known facts
 
 ```json
 {
-  "type": "give_item",
-  "target_id": "hoodedWoman",
-  "item_id": "beerMug"
+  "id": "fact_arrival_reason",
+  "text": "You came to the tavern looking for information."
 }
 ```
 
-Validation completes before execution. The framework snapshots state and restores it if execution throws or violates an item invariant.
+### Beliefs
 
-## 10. Restricted character view
+```json
+{
+  "id": "belief_guard_interest",
+  "text": "The town guard may be watching travellers who ask about magic.",
+  "confidence": "medium"
+}
+```
 
-A controller receives a view for one actor, not the entire world.
+### Relationships
 
-The view contains:
+```json
+{
+  "targetCharacterId": "player",
+  "summary": "You do not know this traveller yet."
+}
+```
 
-- the actor's location, wallet, and inventory;
-- nearby characters;
-- items in the current location;
-- directly connected exits;
-- current action descriptions, schemas, and options.
+### Memories
 
-It does not expose distant inventories, distant wallets, or distant items.
+```json
+{
+  "id": "memory_old_mentor",
+  "summary": "Your former mentor warned you never to reveal your gift to officials.",
+  "importance": 0.9,
+  "protected": true
+}
+```
 
-This same view will later become part of AI model input.
+`recentMemories` and `longTermMemories` use the same shape. Their future compression policy is outside this milestone.
 
-## 11. Events
+## 8. Pending observations
 
-Physical state changes happen immediately in world state after validation.
+`pendingObservations` contains objective information delivered to one character but not yet interpreted by a future AI controller.
 
-Events describe confirmed facts for perception and later subjective interpretation.
+Example event observation:
+
+```json
+{
+  "id": 14,
+  "kind": "event",
+  "sourceEventId": 8,
+  "turn": 23,
+  "actorId": "player",
+  "targetId": "hoodedWoman",
+  "text": "The traveller gave you a mug of ale.",
+  "data": {
+    "itemId": "aleMug_4"
+  }
+}
+```
+
+Example action-feedback observation:
+
+```json
+{
+  "id": 15,
+  "kind": "action_feedback",
+  "actionType": "read_aura",
+  "turn": 24,
+  "text": "You sense a faint necromantic residue around the traveller.",
+  "data": {
+    "targetId": "player",
+    "factKey": "aura"
+  }
+}
+```
+
+The deterministic engine may enqueue observations. It must not automatically decide what the character believes or how relationships change.
+
+## 9. Abilities and executable actions
+
+An ability is authored metadata that grants one existing engine action to specific characters.
+
+```json
+{
+  "id": "readAura",
+  "name": "Read aura",
+  "actionType": "read_aura",
+  "playerDescription": "Sense supernatural traces around a visible character.",
+  "aiDescription": "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
+}
+```
+
+Ability definitions do not contain JavaScript, mutations, conditions, or effect scripts.
+
+The `actionType` must correspond to a registered `ActionRegistry` definition.
+
+## 10. Formal action availability
+
+The action registry contains executable mechanics, but registry membership alone does not grant access.
+
+For an actor, the currently available action types are:
+
+```text
+base actions
++ current sublocation capabilities
++ action types from actor abilityIds
+```
+
+Examples:
+
+```text
+move                    base
+move_within_location    base
+take_item               base
+give_item               base
+pour_ale                granted by barBehindCounter
+place_item               granted by a table sublocation
+read_aura               granted by hoodedWoman.readAura
+```
+
+`getAvailableActions(actorId)` returns a deduplicated map with source metadata:
+
+```json
+{
+  "read_aura": {
+    "description": "Read a visible character's aura.",
+    "sources": [
+      {
+        "kind": "character_ability",
+        "id": "readAura",
+        "name": "Read aura"
+      }
+    ],
+    "schema": {},
+    "options": {}
+  }
+}
+```
+
+`perform()` rejects an otherwise registered action when the actor does not currently receive it from any valid source.
+
+## 11. Unified formal action result
+
+Physical and perceptual actions use the same registry and the same normalized result contract.
 
 ```js
 {
-  id: 12,
-  type: "item_transferred",
-  actorId: "player",
-  targetId: "hoodedWoman",
-  itemId: "beerMug",
-  locationId: "commonRoom",
-  recipients: ["hoodedWoman"],
-  pendingFor: [],
-  processedBy: ["hoodedWoman"]
+  ok: true,
+  action: { type: "take_item", item_id: "aleMug_4" },
+  events: [],
+  feedback: [],
+  error: null
 }
 ```
 
-Human and Dummy controllers currently acknowledge events immediately. A future AI controller may leave them pending until a successful model response processes them.
+Failure:
 
-Narrative input also produces events, but it does not change protected physical state.
-
-## 12. Dynamic location, interaction, and debug UI
-
-The normal player-facing location screen is rendered dynamically from the world state of the one character currently controlled by `HumanController`.
-
-Use one generic physical-location passage. The current physical location is determined by the controlled character's `locationId`, not by maintaining one hard-coded Twine passage per location.
-
-The player-facing view contains:
-
-- the current location name;
-- base location prose stored on the location entity;
-- public `presenceText` for every other character in the same location;
-- one interaction link for every other character in the same location;
-- one movement link for every currently connected exit.
-
-The controlled character is excluded from nearby-character prose and interaction targets. This remains true after debug takeover; the UI must never assume the controlled actor is the entity named `player`.
-
-Movement links do not navigate directly between physical Twine passages. They request the registered `move` action through `CharacterAPI`, and the generic location screen rerenders only after successful validation and world mutation.
-
-Interaction uses one generic interaction surface. The selected target is UI state and must be revalidated against current location state before rendering.
-
-The current action/API panel remains below the player-facing view as a developer debug interface. Both normal links and debug controls call the same `CharacterAPI`; there are no separate gameplay rules in the UI.
-
-Dynamic UI requirements and acceptance scenarios are specified in:
-
-```text
-docs/task-dynamic-location-ui.md
+```js
+{
+  ok: false,
+  action: { type: "take_item", item_id: "aleMug_4" },
+  events: [],
+  feedback: [
+    {
+      recipientId: "hoodedWoman",
+      kind: "observation",
+      code: "ITEM_NOT_ACCESSIBLE",
+      text: "The mug is on another table and is out of reach.",
+      data: { itemId: "aleMug_4" }
+    }
+  ],
+  error: {
+    code: "ITEM_NOT_ACCESSIBLE",
+    message: "Item is not accessible from the current position."
+  }
+}
 ```
 
-## 13. Source organization
+Feedback is grounded engine output. Each recipient feedback entry is also appended to that character's `mind.pendingObservations`.
 
-```text
-src/story.twee          passages and prose
-src/10-game-api.js      world, actions, CharacterAPI, invariants
-src/20-controllers.js   Human, Dummy, future AI shell
-src/30-game-ui.js       browser and debug controls
-src/styles.css          UI styling
+Events and feedback are independent:
+
+- an action may mutate state and emit a public event;
+- an action may fail yet provide private feedback;
+- an action may reveal private information without mutating state;
+- an action may do all three.
+
+## 12. Sample individual action: read_aura
+
+`read_aura` proves that personal abilities can reveal grounded hidden information without a separate perception subsystem.
+
+Rules:
+
+- the actor must receive `read_aura` from an assigned ability;
+- the target must be another character in the same major location and visible under current perception rules;
+- the action does not require physical reach unless later mechanics add that rule;
+- the result reads only the target's objective `engineFacts.aura` value;
+- the result is private feedback to the actor;
+- no other character receives the aura result;
+- the action need not mutate world state or emit a public event;
+- absence of an aura value returns a grounded neutral result rather than exposing raw missing data.
+
+A character without the ability receives `ACTION_NOT_AVAILABLE` even if it manually submits the same JSON action.
+
+## 13. Events and observation routing
+
+Confirmed events remain the record of objective occurrences.
+
+When an event has recipients, the engine creates recipient-specific pending observations. These observations may use second-person text or structured data suitable for future context building.
+
+Do not use event history as the only persistent character memory. A loaded save must already contain each character's current mind and observation inbox.
+
+The event log may remain capped for debugging while character mind remains independent.
+
+## 14. Restricted character view
+
+A restricted view may contain:
+
+- the actor's physical state;
+- current location and sublocation;
+- public descriptions of nearby characters;
+- reachable characters and accessible inventories;
+- exits and positions;
+- currently granted actions.
+
+It must not contain:
+
+- another character's `aiDescription`;
+- another character's mind;
+- another character's `engineFacts`;
+- distant private inventories or wallets;
+- hidden facts not revealed through a formal action.
+
+## 15. Future context builder boundary
+
+Add a pure, deterministic interface:
+
+```js
+setup.ContextBuilder.build(actorId)
 ```
 
-The numeric prefixes make JavaScript load order explicit for Tweego.
+It returns a deep-cloned JSON-serializable bundle suitable for a future controller adapter:
 
-## 14. Development order
-
-### Phase 1 — framework
-
-Implemented now:
-
-- world state;
-- existing locations;
-- inventories and wallets;
-- action registry;
-- character API;
-- events;
-- restricted views;
-- Human and Dummy controllers;
-- debug character takeover;
-- exactly-one-human invariant.
-
-### Phase 2 — browser validation
-
-Build with Tweego, run in a browser, and verify all controls and SugarCube save/load behaviour.
-
-### Phase 3 — perception and subjective state
-
-Add per-character memories, attitudes, and robust pending-event processing without a model first where possible.
-
-### Phase 4 — AI controller
-
-Add model request construction and structured output. The model receives the restricted view and action schemas, and all returned actions still pass through `CharacterAPI.perform()`.
-
-### Phase 5 — expansion
-
-Possible later systems:
-
-- jobs and rewards;
-- buying and selling;
-- item use;
-- doors and locks;
-- character-specific capabilities;
-- reputation interpreted by the model;
-- combat as a separate subsystem.
-
-## 15. Final summary
-
-### Sublocation spatial layer
-
-Spatial authoring data lives in `data/world.json` (schema version 1). The standalone editor
-imports and exports that file without accessing the repository. During administrator builds,
-`tools/generate-world-data.ps1` creates derived `src/generated/world-data.js` and mount-only
-physical passages. The browser game never fetches external JSON at runtime.
-
-Major locations remain the four physical SugarCube passages. Characters also carry a
-`sublocationId`, which identifies their objective position within the major location.
-
-Stable sublocation IDs:
-
-- `tavernEntranceFloor`
-- `barPublicSide`
-- `barBehindCounter`
-- `commonRoomFloor`
-- `commonRoomTableOne`
-- `commonRoomTableTwo`
-- `streetCenter`
-
-Sublocations declare capacity, legal/reachable neighboring positions, presentation text,
-optional inventories, and optional capabilities. The behind-bar position supplies
-`pour_ale`; both common-room tables own distinct inventories.
-
-`move` changes major location and assigns its default sublocation. It emits separate
-`character_left_location` and `character_entered_location` events so perception is scoped
-to the correct origin and destination. `move_within_location` changes only sublocation and
-does not navigate to another passage.
-
-`drop_item` places an item in the general major-location inventory. `place_item` places an
-item on the accessible surface at the actor's current sublocation. Public perception is
-major-location-wide, while physical transfers and surface access obey sublocation
-reachability.
-
-```text
-                    World State
-       characters, locations, items, money
-                          ▲
-                          │ validated mutation
-                          │
-                    CharacterAPI
-        getView / getAvailableActions / perform
-                          ▲
-                          │
-          ┌───────────────┼───────────────┐
-          │               │               │
- HumanController   DummyController   AIController
- browser input      no autonomous     later model
-                        actions
-          └───────────────┼───────────────┘
-                          │
-                          ▼
-                   ActionRegistry
-              validate → execute → event
+```json
+{
+  "schemaVersion": 1,
+  "character": {
+    "id": "hoodedWoman",
+    "name": "Hooded woman",
+    "aiDescription": "...",
+    "abilities": []
+  },
+  "mind": {},
+  "view": {},
+  "availableActions": {}
+}
 ```
 
-The engine determines objective facts. Controllers choose intentions. Exactly one character is controlled by the human interface. The future model remains a controller rather than an authority over world state.
+The current ContextBuilder must not:
+
+- generate prompt prose;
+- call a model;
+- retain conversation state outside the character;
+- count tokens;
+- summarize memories;
+- mutate the world or acknowledge observations.
+
+Its purpose is to prove that the deterministic engine can already supply the future adapter with the correct restricted data.
+
+## 16. HumanController invariant
+
+Exactly one runtime character is assigned `human`.
+
+Authoring definitions include:
+
+- `initialControllerId` — used to construct the initial assignment map;
+- `defaultControllerId` — fallback after human control leaves the character.
+
+Exactly one character must have `initialControllerId: "human"`.
+
+No character may have `defaultControllerId: "human"`.
+
+Controller switching remains atomic through `setup.Game.takeHumanControl(characterId)`.
+
+## 17. Editor architecture
+
+`editor/world-editor.html` remains:
+
+- one self-contained file;
+- offline;
+- English-only;
+- usable through `file://`;
+- limited to importing and downloading `world.json`.
+
+Main sections:
+
+```text
+Locations
+Characters
+Abilities
+```
+
+### Character form
+
+Expose:
+
+- stable ID;
+- name;
+- player-facing description;
+- interaction label;
+- AI-facing description;
+- starting location and sublocation;
+- wallet;
+- inventory ID;
+- initial controller;
+- fallback/default controller;
+- assigned abilities;
+- hidden aura fact for the POC;
+- initial known facts;
+- initial beliefs;
+- initial relationships;
+- initial recent memories;
+- initial long-term memories.
+
+`pendingObservations` is runtime state and is not authored.
+
+### Ability form
+
+Expose:
+
+- stable ID;
+- name;
+- player-facing description;
+- AI-facing usage description;
+- engine action type selected from a known allowlist.
+
+The editor does not define action code.
+
+## 18. Hardening rules
+
+The same core problems must be rejected before build and at runtime when relevant:
+
+- duplicate location passage names;
+- invalid or missing start location;
+- globally colliding inventory IDs;
+- invalid character location/sublocation;
+- zero or multiple initial human characters;
+- default controller set to `human`;
+- invalid ability reference;
+- ability references an unknown action type;
+- deletion of referenced locations, sublocations, characters, or abilities;
+- malformed mind records;
+- restricted-view leaks of AI-private or engine-hidden data.
+
+## 19. Save behavior
+
+Runtime mind is ordinary JSON state under `State.variables.world`.
+
+The implementation must prove that:
+
+```text
+world
+  → JSON.stringify
+  → JSON.parse
+  → equivalent character minds and pending observations
+```
+
+No separate log replay or model call is required after loading.
+
+The task does not introduce a second persistence system.
+
+## 20. Out of scope
+
+The following remain later work:
+
+- OpenAI or any other model API;
+- API key entry;
+- prompt templates;
+- response schemas for model decisions;
+- autonomous controller turns;
+- memory interpretation and relationship updates by a model;
+- memory compression and token budgeting;
+- embeddings or retrieval;
+- combat, economy, quests, dialogue trees, and arbitrary scripts.

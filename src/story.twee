@@ -2,16 +2,6 @@
 AI RPG Framework POC
 
 
-:: StoryData
-{
-  "ifid": "7A96C8DB-CDD6-4B5C-A486-4EF8A4DB12BB",
-  "format": "SugarCube",
-  "format-version": "2.37.3",
-  "start": "The Tavern",
-  "zoom": 1
-}
-
-
 :: StoryInit
 <<set $health = 10>>
 <<set $maxHealth = 10>>
@@ -21,4 +11,3 @@ AI RPG Framework POC
 
 :: StoryCaption
 <div id="framework-sidebar"></div>
-

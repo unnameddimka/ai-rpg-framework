@@ -2,7 +2,8 @@
 (function () {
     "use strict";
     setup.GeneratedWorldData = {
-    "schemaVersion":  1,
+    "schemaVersion":  2,
+    "startLocationId":  "tavernEntrance",
     "protectedLocationIds":  [
                                  "tavernEntrance",
                                  "bar",
@@ -13,6 +14,14 @@
                                     "barBehindCounter",
                                     "commonRoomTableOne"
                                 ],
+    "protectedCharacterIds":  [
+                                  "player",
+                                  "hoodedWoman",
+                                  "innkeeper"
+                              ],
+    "protectedAbilityIds":  [
+                                "readAura"
+                            ],
     "locations":  {
                       "tavernEntrance":  {
                                              "id":  "tavernEntrance",
@@ -138,6 +147,9 @@
                                                                                          "selfText":  "You are sitting at the first table.",
                                                                                          "occupantTemplate":  "{name} sits at the first table.",
                                                                                          "capacity":  4,
+                                                                                         "capabilities":  [
+                                                                                                              "place_item"
+                                                                                                          ],
                                                                                          "inventoryId":  "inventory_commonRoomTableOne",
                                                                                          "reachableSublocationIds":  [
                                                                                                                          "commonRoomTableOne",
@@ -154,6 +166,9 @@
                                                                                          "selfText":  "You are sitting at the second table.",
                                                                                          "occupantTemplate":  "{name} sits at the second table.",
                                                                                          "capacity":  4,
+                                                                                         "capabilities":  [
+                                                                                                              "place_item"
+                                                                                                          ],
                                                                                          "inventoryId":  "inventory_commonRoomTableTwo",
                                                                                          "reachableSublocationIds":  [
                                                                                                                          "commonRoomTableTwo",
@@ -192,6 +207,128 @@
                                                                            }
                                                       }
                                  }
+                  },
+    "characters":  {
+                       "player":  {
+                                      "id":  "player",
+                                      "name":  "You",
+                                      "playerDescription":  "A rain-soaked traveller takes in the surroundings.",
+                                      "interactionLabel":  "Speak with the traveller",
+                                      "aiDescription":  "You are a traveller newly arrived at a roadside tavern.",
+                                      "locationId":  "tavernEntrance",
+                                      "sublocationId":  "tavernEntranceFloor",
+                                      "inventoryId":  "inventory_player",
+                                      "wallet":  10,
+                                      "initialControllerId":  "human",
+                                      "defaultControllerId":  "dummy",
+                                      "abilityIds":  [
+
+                                                     ],
+                                      "engineFacts":  {
+                                                          "aura":  "A faint current of unrealized potential surrounds the traveller."
+                                                      },
+                                      "initialMind":  {
+                                                          "knownFacts":  [
+
+                                                                         ],
+                                                          "beliefs":  [
+
+                                                                      ],
+                                                          "relationships":  [
+
+                                                                            ],
+                                                          "recentMemories":  [
+
+                                                                             ],
+                                                          "longTermMemories":  [
+
+                                                                               ]
+                                                      }
+                                  },
+                       "hoodedWoman":  {
+                                           "id":  "hoodedWoman",
+                                           "name":  "Hooded woman",
+                                           "playerDescription":  "A hooded woman watches the room from beneath the edge of her hood.",
+                                           "interactionLabel":  "Speak with the hooded woman",
+                                           "aiDescription":  "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.",
+                                           "locationId":  "commonRoom",
+                                           "sublocationId":  "commonRoomTableOne",
+                                           "inventoryId":  "inventory_hoodedWoman",
+                                           "wallet":  8,
+                                           "initialControllerId":  "dummy",
+                                           "defaultControllerId":  "dummy",
+                                           "abilityIds":  [
+                                                              "readAura"
+                                                          ],
+                                           "engineFacts":  {
+                                                               "aura":  "A quiet, disciplined magical presence surrounds her."
+                                                           },
+                                           "initialMind":  {
+                                                               "knownFacts":  [
+
+                                                                              ],
+                                                               "beliefs":  [
+
+                                                                           ],
+                                                               "relationships":  [
+                                                                                     {
+                                                                                         "targetCharacterId":  "player",
+                                                                                         "summary":  "You do not know this traveller yet."
+                                                                                     }
+                                                                                 ],
+                                                               "recentMemories":  [
+
+                                                                                  ],
+                                                               "longTermMemories":  [
+
+                                                                                    ]
+                                                           }
+                                       },
+                       "innkeeper":  {
+                                         "id":  "innkeeper",
+                                         "name":  "Innkeeper",
+                                         "playerDescription":  "The innkeeper wipes a wooden mug with a worn cloth.",
+                                         "interactionLabel":  "Speak with the innkeeper",
+                                         "aiDescription":  "You are the practical innkeeper of this roadside tavern.",
+                                         "locationId":  "bar",
+                                         "sublocationId":  "barBehindCounter",
+                                         "inventoryId":  "inventory_innkeeper",
+                                         "wallet":  25,
+                                         "initialControllerId":  "dummy",
+                                         "defaultControllerId":  "dummy",
+                                         "abilityIds":  [
+
+                                                        ],
+                                         "engineFacts":  {
+
+                                                         },
+                                         "initialMind":  {
+                                                             "knownFacts":  [
+
+                                                                            ],
+                                                             "beliefs":  [
+
+                                                                         ],
+                                                             "relationships":  [
+
+                                                                               ],
+                                                             "recentMemories":  [
+
+                                                                                ],
+                                                             "longTermMemories":  [
+
+                                                                                  ]
+                                                         }
+                                     }
+                   },
+    "abilities":  {
+                      "readAura":  {
+                                       "id":  "readAura",
+                                       "name":  "Read aura",
+                                       "actionType":  "read_aura",
+                                       "playerDescription":  "Sense supernatural traces around a visible character.",
+                                       "aiDescription":  "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
+                                   }
                   }
 };
 }());

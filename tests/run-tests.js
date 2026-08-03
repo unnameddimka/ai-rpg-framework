@@ -71,7 +71,7 @@ assert(world.entities.player.sublocationId === "barPublicSide", "major move shou
 perform("player", { type: "take_item", item_id: "beerMug" }, "player should take existing bar-floor item");
 perform("player", { type: "drop_item", item_id: "beerMug" }, "drop should return item to major-location floor");
 assert(world.inventories.inventory_bar.itemIds.includes("beerMug"), "dropped item should be in bar floor inventory");
-assertFails(setup.CharacterAPI.perform("player", { type: "pour_ale" }), "CAPABILITY_REQUIRED",
+assertFails(setup.CharacterAPI.perform("player", { type: "pour_ale" }), "ACTION_NOT_AVAILABLE",
     "pouring should fail on public side");
 
 perform("player", { type: "move_within_location", destination_id: "barBehindCounter" },
@@ -105,7 +105,7 @@ assert(world.entities.player.wallet === playerMoney - 1, "money transfer should 
 perform("player", { type: "move", destination_id: "tavernEntrance" }, "player should leave bar");
 perform("player", { type: "move", destination_id: "commonRoom" }, "player should enter common room floor");
 assert(world.entities.player.sublocationId === "commonRoomFloor", "major movement should reset sublocation");
-assertFails(setup.CharacterAPI.perform("player", { type: "pour_ale" }), "CAPABILITY_REQUIRED",
+assertFails(setup.CharacterAPI.perform("player", { type: "pour_ale" }), "ACTION_NOT_AVAILABLE",
     "pouring should fail outside bar");
 
 perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "hooded woman should leave bar");
@@ -178,11 +178,99 @@ world.control.assignments.innkeeper = "human";
 assert(setup.Game.getHumanCharacterId() === "player", "invalid multi-human state should repair to player");
 assertOk(setup.Game.validateWorld(), "world should validate after controller repair");
 
+assert(world.entities.player.playerDescription === setup.GeneratedWorldData.characters.player.playerDescription,
+    "runtime characters should be loaded from generated world data");
+assert(world.entities.player.mind && Array.isArray(world.entities.player.mind.pendingObservations),
+    "runtime character should own a pending observation inbox");
+const baseActions = setup.CharacterAPI.getAvailableActions("player");
+assert(baseActions.move.sources.some(function (source) { return source.kind === "base"; }),
+    "base action should identify its grant source");
+assert(!baseActions.read_aura, "player should not receive read_aura");
+assert(!baseActions.pour_ale, "player outside behind-bar position should not receive pour_ale");
+assertFails(setup.CharacterAPI.perform("player", { type: "read_aura", target_id: "hoodedWoman" }),
+    "ACTION_NOT_AVAILABLE", "ungranted aura action should be rejected before hidden data is read");
+
+assertOk(setup.Game.takeHumanControl("hoodedWoman"), "hooded woman takeover for aura test");
+const auraActions = setup.CharacterAPI.getAvailableActions("hoodedWoman");
+assert(auraActions.read_aura.sources.some(function (source) {
+    return source.kind === "character_ability" && source.id === "readAura";
+}), "read_aura should identify the individual ability source");
+const playerInboxBeforeAura = world.entities.player.mind.pendingObservations.length;
+const innkeeperInboxBeforeAura = world.entities.innkeeper.mind.pendingObservations.length;
+const aura = perform("hoodedWoman", { type: "read_aura", target_id: "player" }, "hooded woman should read player aura");
+assert(aura.events.length === 0 && aura.feedback.length === 1 && aura.error === null,
+    "read_aura should be a private feedback-only normalized success");
+assert(aura.feedback[0].text === world.entities.player.engineFacts.aura,
+    "aura result should use the target's grounded hidden fact");
+assert(world.entities.hoodedWoman.mind.pendingObservations.some(function (item) {
+    return item.kind === "action_feedback" && item.actionType === "read_aura" && item.text === aura.feedback[0].text;
+}), "aura feedback should enter only the actor's observation inbox");
+assert(world.entities.player.mind.pendingObservations.length === playerInboxBeforeAura,
+    "aura feedback must not enter the target inbox");
+assert(world.entities.innkeeper.mind.pendingObservations.length === innkeeperInboxBeforeAura,
+    "aura feedback must not enter a bystander inbox");
+
+const restricted = setup.CharacterAPI.getView("hoodedWoman");
+const visiblePlayer = restricted.location.characters.find(function (item) { return item.id === "player"; });
+assert(visiblePlayer.playerDescription && !Object.prototype.hasOwnProperty.call(visiblePlayer, "aiDescription") &&
+    !Object.prototype.hasOwnProperty.call(visiblePlayer, "engineFacts") && !Object.prototype.hasOwnProperty.call(visiblePlayer, "mind"),
+    "restricted nearby character view should expose public prose but no private character data");
+const context = setup.ContextBuilder.build("hoodedWoman");
+assert(context.character.aiDescription === world.entities.hoodedWoman.aiDescription &&
+    context.character.abilities[0].id === "readAura", "context should include the actor's own private identity and abilities");
+assert(!JSON.stringify(context.view).includes(world.entities.player.engineFacts.aura),
+    "context restricted view must not leak another character's engine facts");
+const contextSnapshot = JSON.stringify(world);
+setup.ContextBuilder.build("hoodedWoman");
+assert(JSON.stringify(world) === contextSnapshot, "ContextBuilder must not mutate or acknowledge state");
+
+const failedInboxBefore = world.entities.innkeeper.mind.pendingObservations.length;
+const inaccessible = setup.CharacterAPI.perform("innkeeper", { type: "take_item", item_id: mugOne });
+assertFails(inaccessible, "ITEM_NOT_ACCESSIBLE", "failed physical action should remain grounded");
+assert(inaccessible.feedback.length === 1 && world.entities.innkeeper.mind.pendingObservations.length === failedInboxBefore + 1,
+    "failed physical feedback should be normalized and routed to the actor inbox");
+const mindsBeforeRoundTrip = cloneMinds(world);
+assertOk(setup.Game.takeHumanControl("player"), "control return should preserve minds");
+State.variables.world = JSON.parse(JSON.stringify(world));
+assert(JSON.stringify(cloneMinds(setup.Game.getWorld())) === JSON.stringify(mindsBeforeRoundTrip),
+    "JSON serialize/parse and controller switching should preserve every mind partition");
+
+function cloneMinds(value) {
+    const result = {};
+    for (const character of Object.values(value.entities).filter(function (entity) { return entity.type === "character"; })) {
+        result[character.id] = JSON.parse(JSON.stringify(character.mind));
+    }
+    return result;
+}
+
+const originalGenerated = setup.GeneratedWorldData;
+function assertInitialDataRejected(mutator, expectedText) {
+    const candidate = JSON.parse(JSON.stringify(originalGenerated));
+    mutator(candidate);
+    setup.GeneratedWorldData = candidate;
+    let rejected = false;
+    try { setup.Game.createInitialWorld(); } catch (error) { rejected = error.message.includes(expectedText); }
+    setup.GeneratedWorldData = originalGenerated;
+    assert(rejected, `invalid initial data should be rejected with ${expectedText}`);
+}
+assertInitialDataRejected(function (doc) { doc.characters.player.initialControllerId = "dummy"; }, "Exactly one");
+assertInitialDataRejected(function (doc) { doc.characters.innkeeper.initialControllerId = "human"; }, "Exactly one");
+assertInitialDataRejected(function (doc) { doc.characters.player.inventoryId = "inventory_bar"; }, "Duplicate inventory ID");
+
+world = setup.Game.getWorld();
+const originalPassage = world.entities.bar.passage;
+world.entities.bar.passage = world.entities.tavernEntrance.passage;
+assertFails(setup.Game.validateWorld(), "LOCATION_PASSAGE_INVALID", "runtime should reject duplicate passage names");
+world.entities.bar.passage = originalPassage;
+assertOk(setup.Game.validateWorld(), "restored world should remain valid");
+
 const storySource = fs.readFileSync(path.join(root, "src/generated/world-passages.twee"), "utf8");
 for (const passage of ["The Tavern", "The Bar", "The Common Room", "The Street"]) {
     assert(storySource.includes(`:: ${passage}`), `${passage} physical passage should exist`);
 }
 assert(!storySource.includes("->The Tavern"), "normal story should not contain raw physical navigation links");
 assert(!storySource.includes("setup.GameUI.moveHuman"), "physical passage source should not hard-code exits");
+const storyDataSource = fs.readFileSync(path.join(root, "src/generated/world-storydata.twee"), "utf8");
+assert(storyDataSource.includes('"start": "The Tavern"'), "generated StoryData should resolve startLocationId passage");
 
 console.log("All framework tests passed.");

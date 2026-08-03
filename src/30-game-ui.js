@@ -172,7 +172,7 @@
         });
         root.appendChild(internalMovement);
 
-        if (view.available_actions.pour_ale.options.available) {
+        if (view.available_actions.pour_ale && view.available_actions.pour_ale.options.available) {
             const capabilities = document.createElement("div");
             capabilities.className = "framework-location-links";
             const pourButton = appendTextElement(capabilities, "button", "Pour a mug of ale");
@@ -200,7 +200,9 @@
             root.appendChild(surface);
         });
 
-        const placementTargets = view.available_actions.place_item.options.target_inventory_ids;
+        const placementTargets = view.available_actions.place_item
+            ? view.available_actions.place_item.options.target_inventory_ids
+            : [];
         if (placementTargets.length > 0 && view.self.inventory.length > 0) {
             const placement = document.createElement("section");
             placement.className = "framework-surface-panel";
@@ -351,7 +353,9 @@
                 const position = view.location.sublocations.find(function (candidate) { return candidate.id === id; });
                 return position ? { id: position.id, name: position.name } : null;
             }).filter(Boolean);
-        const placementInventoryIds = view.available_actions.place_item.options.target_inventory_ids;
+        const placementInventoryIds = view.available_actions.place_item
+            ? view.available_actions.place_item.options.target_inventory_ids
+            : [];
         const placementInventories = view.accessible_inventories.filter(function (inventory) {
             return placementInventoryIds.includes(inventory.id);
         });
@@ -525,7 +529,7 @@
             });
 
         $("#action-pour-ale")
-            .prop("disabled", !view.available_actions.pour_ale.options.available)
+            .prop("disabled", !(view.available_actions.pour_ale && view.available_actions.pour_ale.options.available))
             .on("click", function () {
                 runAction({ type: "pour_ale" });
             });

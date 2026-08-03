@@ -2,7 +2,7 @@
 
 This repository is the framework-first rewrite of the original Twine tavern proof of concept.
 
-The current version has no model calls. It provides a deterministic world, a shared Character API, inventories, movement, item and money transfers, confirmed events, and debug takeover of any character.
+The current version has no model calls. It provides a deterministic world, authored characters and abilities, saved per-character minds, grounded observations, restricted context bundles, a shared Character API, inventories, movement, item and money transfers, confirmed events, and debug takeover of any character.
 
 ## Project layout
 
@@ -12,7 +12,7 @@ src/10-game-api.js      World, ActionRegistry, CharacterAPI, invariants
 src/20-controllers.js   Human, Dummy, and future AI controller shell
 src/30-game-ui.js       Browser controls and character takeover UI
 src/styles.css          Framework UI styles
-data/world.json         Authoritative location and sublocation data
+data/world.json         Authoritative locations, characters, minds, and abilities
 editor/world-editor.html Standalone offline world editor
 tools/generate-world-data.ps1 Build-time JSON embedder
 docs/architecture.md    Current architecture
@@ -26,9 +26,13 @@ The numeric JavaScript prefixes make the dependency order explicit when Tweego r
 
 ## World authoring workflow
 
-`data/world.json` is the single authoritative source for major locations, exits, and
-sublocations. `src/generated/world-data.js` and `src/generated/world-passages.twee` are
-derived build files and must not be edited directly.
+`data/world.json` (schema version 2) is the single authoritative source for the start
+location, major locations, sublocations, characters, initial minds, controller defaults,
+hidden engine facts, and individual ability grants. The editor exposes separate Locations,
+Characters, and Abilities sections and blocks structurally invalid downloads.
+
+`src/generated/world-data.js`, `src/generated/world-passages.twee`, and
+`src/generated/world-storydata.twee` are derived build files and must not be edited directly.
 
 Administrator steps:
 
@@ -38,8 +42,8 @@ Administrator steps:
 4. Replace `data/world.json` in the repository.
 5. Run `test.bat` and `build.bat`.
 
-The build invokes a local PowerShell conversion step before tests and Tweego compilation.
-The resulting `dist/game.html` embeds the spatial data and remains self-contained; it does
+The build invokes a local PowerShell validation/generation step before tests and Tweego
+compilation. The resulting `dist/game.html` embeds the world data and remains self-contained; it does
 not fetch `world.json` at runtime.
 
 ## Build on Windows
@@ -72,7 +76,10 @@ or:
 node tests/run-tests.js
 ```
 
-The tests verify the HumanController invariant, movement, inventory transfer, money transfer, rollback-safe validation, and controller switching.
+The tests verify the HumanController invariant, action grants, normalized feedback,
+observation privacy, restricted views and context, mind save round trips, movement,
+inventory and money transfer, editor validation, generator rejection, rollback safety,
+and controller switching.
 
 ## Development workflow
 

@@ -18,4 +18,6 @@ if errorlevel 1 (
 "%NODE_EXE%" tests\run-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-editor-tests.js
+if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-generator-tests.js
 endlocal

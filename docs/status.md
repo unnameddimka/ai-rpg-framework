@@ -2,52 +2,39 @@
 
 ## Implemented
 
-- Existing locations preserved: tavern entrance, bar, common room, street.
-- Shared objective world in SugarCube state.
-- Character and location inventories.
-- Mug of ale and cleaning rag test items.
-- Wallets.
-- Registered actions:
-  - `move`
-  - `take_item`
-  - `drop_item`
-  - `give_item`
-  - `give_money`
-- Confirmed world event history.
-- Restricted per-character view.
-- HumanController.
-- DummyController that takes no actions and writes debug logs.
-- AIController placeholder with no model integration.
-- Debug UI for taking human control of any character.
-- Atomic enforcement that exactly one HumanController exists.
-- One generic physical `Location` passage rendered from the controlled character's restricted view.
-- Dynamic location descriptions, nearby-character presence, interaction controls, and movement controls.
-- Inline character interaction panel with validated, JSON-serializable target UI state.
-- Public `presenceText` and interaction labels for the player, innkeeper, and hooded woman.
-- Major physical passages backed by dynamic world-state rendering.
-- Internal sublocations with capacity, explicit reachability, and first/third-person position prose.
-- Behind-bar ale pouring with unique generated mug entities.
-- Two independently inventoried common-room tables with engine-enforced access.
-- `move_within_location`, `place_item`, and `pour_ale` registered actions.
-- Major movement resets characters to each destination's default sublocation.
-- Public events remain visible throughout the major location regardless of sublocation.
-- Authoritative spatial data in `data/world.json`.
-- Single-file offline editor for locations, exits, sublocations, inventories, and capabilities.
-- Build-time PowerShell embedding into self-contained generated JavaScript and Twee passages.
-- Node tests.
+- Schema version 2 `data/world.json` is authoritative for the start location, locations,
+  sublocations, characters, initial minds, controller defaults, abilities, and hidden
+  engine facts.
+- Major locations retain separate generated physical passages. Generated StoryData derives
+  its start passage from `startLocationId`.
+- Generator, editor, and runtime validation cover passage uniqueness, start references,
+  globally unique inventory IDs, character positions/controllers, ability references and
+  action types, and structured mind records.
+- Runtime characters and all mind partitions live in JSON-serializable SugarCube world state.
+- Exactly one HumanController is preserved through atomic takeover and load repair.
+- Formal action availability is the deduplicated union of base actions, current sublocation
+  capabilities, and individual ability grants, with grant-source metadata.
+- Every formal action returns the normalized `ok/action/events/feedback/error` result shape.
+  Grounded private feedback and perceptible confirmed events are copied into recipient
+  `mind.pendingObservations` inboxes.
+- Existing movement, internal positioning, inventories, wallets, item and money transfer,
+  table placement, ale pouring, events, restricted views, rollback, and debug takeover remain.
+- `read_aura` is a private feedback-only formal action granted to the hooded woman through
+  the authored `readAura` ability. It reads only grounded `engineFacts.aura` data.
+- `setup.ContextBuilder.build(actorId)` returns a deep-cloned, non-mutating bundle containing
+  only the actor's private identity/mind/abilities, restricted view, and available actions.
+- The single-file offline editor provides Locations, Characters, and Abilities workflows,
+  repeatable mind rows, reference-aware deletion, validation-blocked export, unknown-field
+  preservation, and local draft storage.
+- Engine, editor, and generator-focused Node tests cover the milestone and legacy behavior.
 
-## Not implemented
+## Remaining limitations
 
-- AI/model requests.
-- NPC memories and attitudes.
-- AI event processing.
-- Buying and selling.
-- Item use effects.
-- Combat.
-- Ownership and theft rules.
-
-## Known limitations
-
-- Character interaction currently selects and describes a target but does not generate dialogue.
-- The formal action panel remains a developer/debug interface below the player-facing view.
-- Browser acceptance scenarios must still be checked manually when UI behavior changes.
+- No model or API integration, API-key UI, prompt construction, or token counting.
+- No autonomous NPC decisions or observation interpretation.
+- No memory compression, summarization, embeddings, or retrieval.
+- Character interaction selects a target but does not generate dialogue.
+- The formal action panel remains a developer/debug interface.
+- Combat, health effects, buying/selling, equipment, quests, dialogue trees, and arbitrary
+  author scripts remain out of scope.
+- Browser acceptance scenarios still require manual checking after UI changes.
