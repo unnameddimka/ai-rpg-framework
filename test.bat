@@ -21,5 +21,7 @@ if errorlevel 1 exit /b 1
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-ui-tests.js
 if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-ai-tests.js
+if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-generator-tests.js
 endlocal

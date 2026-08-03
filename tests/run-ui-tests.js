@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const root = path.resolve(__dirname, "..");
+const uiSource = fs.readFileSync(path.join(root, "src/30-game-ui.js"), "utf8");
 const context = {
     setup: {},
     State: { variables: {} },
@@ -12,7 +13,7 @@ const context = {
     $: function () { return { on: function () {} }; }
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(path.join(root, "src/30-game-ui.js"), "utf8"), context, { filename: "30-game-ui.js" });
+vm.runInContext(uiSource, context, { filename: "30-game-ui.js" });
 const model = context.setup.AbilityUIModel;
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function viewFor(actorId, abilityIds, grant) {
@@ -63,5 +64,14 @@ assert(model.getActorAbilityResult(state, "player").marker === "private-player" 
     model.getActorAbilityResult(state, "innkeeper").marker === "private-innkeeper" &&
     model.getActorAbilityResult(state, "hoodedWoman") === null,
     "displayed private results should be isolated by controlled actor ID");
+
+const aiPanelSource = uiSource.slice(uiSource.indexOf('id="ai-settings-panel"'), uiSource.indexOf("`;", uiSource.indexOf('id="ai-settings-panel"')));
+assert(aiPanelSource.includes("Provider: OpenRouter") && aiPanelSource.includes("Model: Cydonia 24B V4.1") &&
+    aiPanelSource.includes('type="password"') && aiPanelSource.includes("Take next AI turn"),
+    "AI panel should show fixed provider/model, password key input, and one global queue button");
+assert(!aiPanelSource.includes("<select") && !uiSource.includes("ai-character-select"),
+    "AI queue UI must not contain a character picker");
+assert(uiSource.includes("!aiQueue.head || !aiSettings.hasKey || aiBusy"),
+    "queue button should disable for empty queue, missing key, or in-flight request");
 
 console.log("All ability UI tests passed.");

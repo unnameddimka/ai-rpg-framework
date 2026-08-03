@@ -203,7 +203,7 @@
       "aiDescription": "You are a traveller newly arrived at a roadside tavern.",
       "locationId": "tavernEntrance", "sublocationId": "tavernEntranceFloor",
       "inventoryId": "inventory_player", "wallet": 10,
-      "initialControllerId": "human", "defaultControllerId": "dummy",
+      "initialControllerId": "human", "defaultControllerId": "ai",
       "abilityIds": [],
       "engineFacts": { "aura": "A faint current of unrealized potential surrounds the traveller." },
       "initialMind": { "knownFacts": [], "beliefs": [], "relationships": [], "recentMemories": [], "longTermMemories": [] }
@@ -215,7 +215,7 @@
       "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.",
       "locationId": "commonRoom", "sublocationId": "commonRoomTableOne",
       "inventoryId": "inventory_hoodedWoman", "wallet": 8,
-      "initialControllerId": "dummy", "defaultControllerId": "dummy",
+      "initialControllerId": "ai", "defaultControllerId": "ai",
       "abilityIds": ["readAura"],
       "engineFacts": { "aura": "A quiet, disciplined magical presence surrounds her." },
       "initialMind": { "knownFacts": [], "beliefs": [], "relationships": [{"targetCharacterId":"player","summary":"You do not know this traveller yet."}], "recentMemories": [], "longTermMemories": [] }

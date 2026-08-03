@@ -2,16 +2,19 @@
 
 ## 1. Goal
 
-Build a deterministic Twine/SugarCube RPG framework that can later supply a stateless language model with everything required to behave as one specific character.
+Build a deterministic Twine/SugarCube RPG framework that supplies a stateless language model with everything required to behave as one specific character while the engine remains authoritative.
 
-The model is not part of the current milestone. The current milestone prepares:
+The current integration milestone adds a narrow manual OpenRouter/Cydonia vertical slice on top of the existing deterministic foundation:
 
 - authorable characters;
 - separate public and AI-private descriptions;
 - individual formal abilities;
 - objective action feedback;
 - per-character saved mind state;
-- restricted future-controller context.
+- restricted controller context;
+- a saved deterministic AI-turn queue;
+- one manually triggered AI turn at a time;
+- browser-side OpenRouter access with a transient user-supplied key.
 
 The engine remains the authority over objective reality.
 
@@ -24,7 +27,7 @@ Authoring data in world.json
 Deterministic runtime world in SugarCube state
         │ restricted projection
         ▼
-Human / Dummy / future AI controller
+Human / Dummy / AI controller
         │ intention
         ▼
 CharacterAPI.perform()
@@ -217,7 +220,7 @@ The data is structured but intentionally simple.
 
 ## 8. Pending observations
 
-`pendingObservations` contains objective information delivered to one character but not yet interpreted by a future AI controller.
+`pendingObservations` contains objective information delivered to one character but not yet interpreted by a AI controller.
 
 Example event observation:
 
@@ -459,7 +462,7 @@ It must not contain:
 - distant private inventories or wallets;
 - hidden facts not revealed through a formal action.
 
-## 15. Future context builder boundary
+## 15. Context builder boundary
 
 Add a pure, deterministic interface:
 
@@ -467,7 +470,7 @@ Add a pure, deterministic interface:
 setup.ContextBuilder.build(actorId)
 ```
 
-It returns a deep-cloned JSON-serializable bundle suitable for a future controller adapter:
+It returns a deep-cloned JSON-serializable bundle suitable for the AI protocol adapter:
 
 ```json
 {
@@ -484,31 +487,22 @@ It returns a deep-cloned JSON-serializable bundle suitable for a future controll
 }
 ```
 
-The current ContextBuilder must not:
+ContextBuilder remains a pure restricted-data projection. It must not call a model, retain conversation state outside the character, count tokens, summarize memories, mutate the world, or acknowledge observations. A separate browser-side adapter serializes this bundle into stage-specific model messages.
 
-- generate prompt prose;
-- call a model;
-- retain conversation state outside the character;
-- count tokens;
-- summarize memories;
-- mutate the world or acknowledge observations.
+## 16. HumanController invariant and permanent defaults
 
-Its purpose is to prove that the deterministic engine can already supply the future adapter with the correct restricted data.
-
-## 16. HumanController invariant
-
-Exactly one runtime character is assigned `human`.
+Exactly one runtime character is assigned `human`. HumanController is a temporary override rather than a character's persistent controller.
 
 Authoring definitions include:
 
-- `initialControllerId` — used to construct the initial assignment map;
-- `defaultControllerId` — fallback after human control leaves the character.
+- `initialControllerId` — used only to construct the initial assignment map;
+- `defaultControllerId` — the character's permanent nonhuman controller for this game definition.
 
-Exactly one character must have `initialControllerId: "human"`.
+Exactly one character must have `initialControllerId: "human"`. No character may have `defaultControllerId: "human"`.
 
-No character may have `defaultControllerId: "human"`.
+When human control moves from character A to character B, the atomic candidate assignment map must set A directly to `A.defaultControllerId` and B to `human`. Do not track `controllerBeforeHuman`. Normal gameplay does not change authored default controllers in this milestone. A future dumb mob may therefore keep a scripted controller as its default for the entire game.
 
-Controller switching remains atomic through `setup.Game.takeHumanControl(characterId)`.
+If A returns to `ai` and already has pending observations, queue A for a later manual AI turn. Controller switching itself does not immediately execute that turn.
 
 ## 17. Editor architecture
 
@@ -601,12 +595,224 @@ The task does not introduce a second persistence system.
 
 The following remain later work:
 
-- OpenAI or any other model API;
-- API key entry;
-- prompt templates;
-- response schemas for model decisions;
-- autonomous controller turns;
-- memory interpretation and relationship updates by a model;
+- automatic queue draining or autonomous/timer-driven NPC activity;
+- provider or model selection beyond fixed OpenRouter/Cydonia;
+- streaming;
+- multiple formal actions in one AI turn;
 - memory compression and token budgeting;
 - embeddings or retrieval;
-- combat, economy, quests, dialogue trees, and arbitrary scripts.
+- editable ability effects or arbitrary scripts;
+- combat, economy, quests, dialogue trees, and other major gameplay systems.
+
+## 21. Manual AI turn queue
+
+The first model integration is deterministic and manually advanced. The UI does not ask the user to pick an AI character. It exposes a single queue head:
+
+```text
+Next AI turn: Hooded woman
+[Take next AI turn]
+```
+
+When empty:
+
+```text
+No pending AI turns
+```
+
+The runtime world owns a JSON-serializable queue, conceptually:
+
+```js
+world.ai = {
+  turnQueue: ["hoodedWoman", "innkeeper"]
+};
+```
+
+A character may appear at most once. Additional observations accumulate in that character's `mind.pendingObservations` without adding duplicate queue entries.
+
+Queue eligibility requires both:
+
+- current controller assignment `ai`;
+- at least one pending observation.
+
+Stale entries are removed or skipped when inspected. Human and dummy characters are never executed by the queue.
+
+### 21.1 Ordering
+
+For each confirmed event or feedback delivery, enqueue eligible AI recipients in this priority order:
+
+1. direct addressee, when present;
+2. formal-action target, when present;
+3. other perceiving AI characters in deterministic delivery order.
+
+Existing queued characters keep their earlier position.
+
+### 21.2 Control switching
+
+If HumanController leaves a character and its `defaultControllerId` is `ai`, enqueue that character if it already owns pending observations. Switching control never calls the model automatically.
+
+### 21.3 Save behavior
+
+The queue is runtime game state and must survive SugarCube save/load. In-flight requests, promises, API settings, raw prompts, and raw responses are transient and must not be saved.
+
+## 22. OpenRouter client and key lifecycle
+
+The browser sends a non-streaming chat-completions request to OpenRouter using the fixed model:
+
+```text
+thedrummer/cydonia-24b-v4.1
+```
+
+The user enters an OpenRouter API key in an `AI Settings` panel. The key is stored in a transient object outside `State.variables`.
+
+Optional `Remember for 24 hours` persistence uses `localStorage`, not cookies:
+
+```json
+{
+  "apiKey": "...",
+  "expiresAt": 0
+}
+```
+
+On read, reject malformed data, delete expired data, and never display the full saved key. `Forget saved key` clears both localStorage and the current in-memory value. If localStorage fails under `file://`, continue with memory-only storage and show a warning.
+
+The key must never be present in:
+
+- `world.json`;
+- generated JS or Twee;
+- SugarCube history or saves;
+- copied context bundles;
+- controller logs;
+- debug world dumps;
+- error bodies shown to the player.
+
+## 23. One queued AI turn
+
+`Take next AI turn` processes only the first eligible queue entry. The button is disabled while the request is in flight.
+
+At turn start:
+
+1. identify the queue-head actor;
+2. snapshot the IDs and contents of current pending observations;
+3. build a restricted context bundle;
+4. send the decision request.
+
+The decision response may choose no formal action or one currently available formal action.
+
+### 23.1 One-stage turn
+
+When `action` is `null`, the same response may contain final public narrative, spoken text, and bounded memory updates. After local validation, commit them atomically and consume only the snapshotted observation IDs.
+
+### 23.2 Two-stage turn
+
+When an action is present:
+
+1. validate and execute it through `CharacterAPI.perform()`;
+2. capture its normalized grounded result, including failure feedback;
+3. send a second request containing the original restricted context, chosen action, and actual action result;
+4. receive final reaction text and bounded memory updates;
+5. commit the whole turn only after the second response validates.
+
+The two requests are one game turn. The model must not invent action success or hidden feedback before the engine result exists.
+
+All stage-one narrative for action-taking turns is held until completion and may describe only intention or attempt, never an unconfirmed result.
+
+## 24. Model JSON protocol
+
+Do not rely on native strict structured-output support. Request JSON-only output, extract a JSON object, and validate locally. At most one repair request may be sent when parsing or schema validation fails. General network retries are not automatic.
+
+Conceptual decision response:
+
+```json
+{
+  "action": null,
+  "publicNarrative": "She studies the traveller in silence.",
+  "spokenText": null,
+  "memoryUpdates": {
+    "recentMemoriesToAdd": [],
+    "beliefsToUpsert": [],
+    "relationshipsToUpsert": []
+  }
+}
+```
+
+When `action` is non-null, `memoryUpdates` must be empty until the result-stage response. The action object is passed unchanged to local action validation after removing unknown top-level protocol fields.
+
+Conceptual result-stage response:
+
+```json
+{
+  "publicNarrative": "Her expression tightens for a moment.",
+  "spokenText": "Interesting.",
+  "memoryUpdates": {
+    "recentMemoriesToAdd": [
+      {
+        "summary": "I sensed unusual potential around the traveller.",
+        "importance": 0.6
+      }
+    ],
+    "beliefsToUpsert": [],
+    "relationshipsToUpsert": []
+  }
+}
+```
+
+No chain-of-thought, hidden reasoning, arbitrary world patch, arbitrary mind replacement, or executable code is accepted.
+
+## 25. Validated memory updates
+
+The model may request only these bounded operations:
+
+- append a recent memory;
+- upsert a belief by stable `id`;
+- upsert a relationship by `targetCharacterId`.
+
+The engine assigns unique IDs to new memories when the model does not provide one. Validate text length, importance range `0..1`, belief confidence, relationship targets, and per-turn count limits. Protected memories, known facts, long-term memories, and pending observations cannot be directly edited by the model.
+
+Applying updates must use an engine-owned function and must be part of the turn transaction.
+
+## 26. Narrative commit
+
+Accepted AI narrative is not a direct DOM append. It goes through `CharacterAPI.narrate()` so it creates the same confirmed narrative event and recipient observations as human narrative.
+
+The display may combine public narrative and spoken text for readability, but both remain model-authored narrative rather than objective engine facts. HTML-escape all content.
+
+## 27. Failure and rollback
+
+On API error, missing key, malformed response after one repair, local schema rejection, or unexpected exception:
+
+- do not consume observations;
+- do not remove the queue head;
+- do not apply memory changes;
+- do not commit model narrative;
+- preserve any pre-turn world snapshot needed to roll back a formal action;
+- show a concise safe error and retain a retry path.
+
+Because a formal action occurs before the second request, the implementation must either execute against a cloned transaction candidate or capture and restore the pre-action world on second-stage failure. Partial world mutation is not acceptable.
+
+## 28. Debug and usage UI
+
+The AI panel should show:
+
+- key status without revealing the key;
+- fixed provider and model;
+- queue head and queue length;
+- `Take next AI turn`;
+- last safe error;
+- last token usage and cost when returned by OpenRouter;
+- optional transient `Copy AI context` and `Show last raw response` controls, with credentials excluded.
+
+Raw prompts and responses are never saved.
+
+## 29. Still out of scope
+
+This integration does not add:
+
+- automatic queue draining;
+- timer-based NPC activity;
+- initiative without pending observations;
+- multiple actions in one turn;
+- model/provider selection;
+- streaming;
+- memory compression or token budgeting;
+- target-form generation for human abilities;
+- editable ability effects or arbitrary scripts.

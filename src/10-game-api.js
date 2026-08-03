@@ -1,7 +1,7 @@
 (function () {
     "use strict";
 
-    const WORLD_VERSION = 4;
+    const WORLD_VERSION = 5;
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
 
@@ -117,7 +117,9 @@
             events: [],
             nextEventId: 1,
             nextObservationId: 1,
+            nextMemoryId: 1,
             nextGeneratedItemId: 1,
+            ai: { turnQueue: [] },
 
             debug: {
                 lastActionResult: null,
@@ -146,6 +148,47 @@
     function getCharacter(characterId, world) {
         const entity = world.entities[characterId];
         return entity && entity.type === "character" ? entity : null;
+    }
+
+    function isAIQueueEligible(characterId, world) {
+        const character = getCharacter(characterId, world);
+        return Boolean(character && world.control.assignments[characterId] === "ai" &&
+            character.mind && character.mind.pendingObservations.length > 0);
+    }
+
+    function enqueueAITurn(characterId, reason, world) {
+        world = world || ensureWorld();
+        repairAIQueue(world);
+        if (!isAIQueueEligible(characterId, world)) return fail("AI_NOT_ELIGIBLE", "Character is not eligible for an AI turn.");
+        if (!world.ai.turnQueue.some(function (entry) { return entry.characterId === characterId; })) {
+            world.ai.turnQueue.push({ characterId: characterId, reason: reason || "observation" });
+        }
+        return ok({ characterId: characterId });
+    }
+
+    function repairAIQueue(world) {
+        if (!world.ai || !Array.isArray(world.ai.turnQueue)) world.ai = { turnQueue: [] };
+        const seen = new Set();
+        world.ai.turnQueue = world.ai.turnQueue.filter(function (entry) {
+            const characterId = typeof entry === "string" ? entry : entry && entry.characterId;
+            if (!characterId || seen.has(characterId) || !isAIQueueEligible(characterId, world)) return false;
+            seen.add(characterId);
+            if (typeof entry === "string") return true;
+            entry.characterId = characterId;
+            entry.reason = typeof entry.reason === "string" ? entry.reason : "observation";
+            return true;
+        }).map(function (entry) { return typeof entry === "string" ? { characterId: entry, reason: "repaired" } : entry; });
+        return world.ai.turnQueue;
+    }
+
+    function getAIQueueStatus(world) {
+        world = world || ensureWorld();
+        repairAIQueue(world);
+        const head = world.ai.turnQueue[0] || null;
+        const character = head ? getCharacter(head.characterId, world) : null;
+        return clone({ count: world.ai.turnQueue.length, head: head ? {
+            characterId: head.characterId, name: character.name, reason: head.reason
+        } : null, entries: world.ai.turnQueue });
     }
 
     function getLocation(locationId, world) {
@@ -478,6 +521,8 @@
             }
         }
 
+        repairAIQueue(world);
+
         return world;
     }
 
@@ -524,6 +569,9 @@
         }
 
         world.control.assignments = candidate;
+        if (previousHumanId !== target.id && candidate[previousHumanId] === "ai") {
+            enqueueAITurn(previousHumanId, "released_from_human", world);
+        }
         pushDebugLog(world, {
             controllerId: "human",
             actorId: target.id,
@@ -623,6 +671,8 @@
         }
         const record = Object.assign({ id: world.nextObservationId++ }, clone(observation));
         recipient.mind.pendingObservations.push(record);
+        if (world.control.assignments[recipientId] === "ai") enqueueAITurn(recipientId, observation.kind || "observation", world);
+        return record;
     }
 
     function routeFeedback(feedback, action, world) {
@@ -702,7 +752,12 @@
         event.pendingFor = event.recipients.slice();
         world.events.push(event);
 
-        for (const recipientId of event.recipients) {
+        const observationRecipients = event.recipients.slice();
+        if (event.targetId && observationRecipients.includes(event.targetId)) {
+            observationRecipients.splice(observationRecipients.indexOf(event.targetId), 1);
+            observationRecipients.unshift(event.targetId);
+        }
+        for (const recipientId of observationRecipients) {
             enqueueObservation(recipientId, {
                 kind: "event",
                 sourceEventId: event.id,
@@ -1461,6 +1516,62 @@
         });
     }
 
+    function applyAIMemoryUpdates(actorId, updates) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        updates = updates || {};
+        const memories = updates.recentMemoriesToAdd || [];
+        const beliefs = updates.beliefsToUpsert || [];
+        const relationships = updates.relationshipsToUpsert || [];
+        if (!Array.isArray(memories) || !Array.isArray(beliefs) || !Array.isArray(relationships) ||
+            memories.length > 5 || beliefs.length > 5 || relationships.length > 5) {
+            return fail("MEMORY_UPDATE_INVALID", "Memory updates exceed the allowed record limits.");
+        }
+        function validText(value) { return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 500; }
+        for (const memory of memories) if (!memory || !validText(memory.summary) ||
+            typeof memory.importance !== "number" || !Number.isFinite(memory.importance) || memory.importance < 0 || memory.importance > 1) {
+            return fail("MEMORY_UPDATE_INVALID", "A recent memory update is invalid.");
+        }
+        for (const belief of beliefs) if (!belief || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(belief.id || "") ||
+            !validText(belief.text) || !["low", "medium", "high"].includes(belief.confidence)) {
+            return fail("MEMORY_UPDATE_INVALID", "A belief update is invalid.");
+        }
+        for (const relationship of relationships) if (!relationship || relationship.targetCharacterId === actorId ||
+            !getCharacter(relationship.targetCharacterId, world) || !validText(relationship.summary)) {
+            return fail("MEMORY_UPDATE_INVALID", "A relationship update is invalid.");
+        }
+        for (const memory of memories) {
+            let memoryId;
+            const existingMemoryIds = new Set(actor.mind.recentMemories.concat(actor.mind.longTermMemories).map(function (item) { return item.id; }));
+            do { memoryId = `memory_ai_${world.nextMemoryId++}`; } while (existingMemoryIds.has(memoryId));
+            actor.mind.recentMemories.push({
+                id: memoryId, summary: memory.summary.trim(), importance: memory.importance, protected: false
+            });
+        }
+        for (const belief of beliefs) {
+            const record = { id: belief.id, text: belief.text.trim(), confidence: belief.confidence };
+            const index = actor.mind.beliefs.findIndex(function (item) { return item.id === belief.id; });
+            if (index < 0) actor.mind.beliefs.push(record); else actor.mind.beliefs[index] = record;
+        }
+        for (const relationship of relationships) {
+            const record = { targetCharacterId: relationship.targetCharacterId, summary: relationship.summary.trim() };
+            const index = actor.mind.relationships.findIndex(function (item) { return item.targetCharacterId === relationship.targetCharacterId; });
+            if (index < 0) actor.mind.relationships.push(record); else actor.mind.relationships[index] = record;
+        }
+        return ok();
+    }
+
+    function consumeObservations(actorId, observationIds) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        if (!actor || !Array.isArray(observationIds)) return fail("OBSERVATION_CONSUME_INVALID", "Observation consumption request is invalid.");
+        const ids = new Set(observationIds.filter(Number.isInteger));
+        actor.mind.pendingObservations = actor.mind.pendingObservations.filter(function (item) { return !ids.has(item.id); });
+        repairAIQueue(world);
+        return ok();
+    }
+
     setup.Game = {
         WORLD_VERSION: WORLD_VERSION,
         ActionRegistry: ActionRegistry,
@@ -1502,6 +1613,16 @@
             pushDebugLog(ensureWorld(), entry);
         }
     };
+
+    setup.AITurnQueue = {
+        enqueue: function (characterId, reason) { return enqueueAITurn(characterId, reason, ensureWorld()); },
+        peek: function () { return getAIQueueStatus(ensureWorld()).head; },
+        remove: function (characterId) { const world = ensureWorld(); world.ai.turnQueue = world.ai.turnQueue.filter(function (entry) { return entry.characterId !== characterId; }); return ok(); },
+        getStatus: function () { return getAIQueueStatus(ensureWorld()); },
+        repair: function () { const world = ensureWorld(); repairAIQueue(world); return getAIQueueStatus(world); }
+    };
+
+    setup.AIMemory = { applyUpdates: applyAIMemoryUpdates, consumeObservations: consumeObservations };
 
     setup.CharacterAPI = {
         getView: getCharacterView,

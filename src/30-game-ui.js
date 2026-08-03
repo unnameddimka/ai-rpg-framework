@@ -1,6 +1,8 @@
 (function () {
     "use strict";
 
+    let aiSettingsInitialized = false;
+
     function optionMarkup(items, emptyLabel) {
         if (!items || items.length === 0) {
             return `<option value="">${escapeHtml(emptyLabel)}</option>`;
@@ -347,6 +349,18 @@
         const characters = Object.values(world.entities).filter(function (entity) {
             return entity.type === "character";
         });
+        if (!aiSettingsInitialized && setup.AIRuntimeSettings) {
+            setup.AIRuntimeSettings.readSaved();
+            aiSettingsInitialized = true;
+        }
+        const aiQueue = setup.AITurnQueue.getStatus();
+        const aiSettings = setup.AIRuntimeSettings.getStatus();
+        const aiBusy = setup.AIController.isInFlight();
+        const usage = setup.AITransientDebug.lastUsage;
+        const usageText = usage ? `Usage: ${escapeHtml(JSON.stringify(usage))}` : "";
+        const queueText = aiQueue.head
+            ? `Next AI turn: ${escapeHtml(aiQueue.head.name)}<br>Pending AI characters: ${aiQueue.count}`
+            : "No pending AI turns";
 
         root.innerHTML = `
             <div class="framework-sidebar-block">
@@ -372,6 +386,24 @@
                 <button id="validate-world-button">Validate world</button>
                 <button id="reset-world-button">Reset world</button>
                 <div id="sidebar-status" class="framework-status"></div>
+            </div>
+            <div class="framework-sidebar-block" id="ai-settings-panel">
+                <strong>AI Settings</strong><br>
+                Provider: OpenRouter<br>
+                Model: Cydonia 24B V4.1<br>
+                Key status: ${aiSettings.hasKey ? "available" : "not set"}<br>
+                <label>API key <input id="openrouter-api-key" type="password" autocomplete="off"></label><br>
+                <label><input id="remember-openrouter-key" type="checkbox"> Remember for 24 hours</label><br>
+                <button id="save-ai-settings">Save settings</button>
+                <button id="forget-ai-key">Forget saved key</button>
+                <div id="ai-settings-status" class="framework-status">${escapeHtml(aiSettings.warning || "")}</div>
+            </div>
+            <div class="framework-sidebar-block" id="ai-turn-panel">
+                <strong>Manual AI queue</strong><br>
+                <span id="ai-queue-status">${queueText}</span><br>
+                <button id="take-next-ai-turn"${(!aiQueue.head || !aiSettings.hasKey || aiBusy) ? " disabled" : ""}>Take next AI turn</button>
+                <div id="ai-turn-status" class="framework-status">${escapeHtml(setup.AITransientDebug.lastSafeError || "")}</div>
+                <div id="ai-usage-status" class="framework-status">${usageText}</div>
             </div>
         `;
 
@@ -403,6 +435,34 @@
             setup.Game.resetWorld();
             delete State.variables.frameworkUI;
             Engine.play(currentPassageForHuman());
+        });
+
+        $("#save-ai-settings").on("click", function () {
+            const result = setup.AIRuntimeSettings.save(
+                $("#openrouter-api-key").val(),
+                $("#remember-openrouter-key").prop("checked")
+            );
+            $("#openrouter-api-key").val("");
+            $("#ai-settings-status").text(result.ok
+                ? (result.warning || (result.remembered ? "Key saved for 24 hours." : "Key retained in memory for this page."))
+                : result.error.message);
+            renderSidebar();
+        });
+
+        $("#forget-ai-key").on("click", function () {
+            const result = setup.AIRuntimeSettings.forget();
+            $("#ai-settings-status").text(result.warning || "Saved and in-memory key forgotten.");
+            renderSidebar();
+        });
+
+        $("#take-next-ai-turn").on("click", async function () {
+            $(this).prop("disabled", true);
+            $("#ai-turn-status").text("Taking one AI turn...");
+            const result = await setup.AIController.takeNextTurn();
+            setup.AITransientDebug.lastSafeError = result.ok ? "" : result.error.message;
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
         });
     }
 

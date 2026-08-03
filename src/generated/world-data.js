@@ -220,7 +220,7 @@
                                       "inventoryId":  "inventory_player",
                                       "wallet":  10,
                                       "initialControllerId":  "human",
-                                      "defaultControllerId":  "dummy",
+                                      "defaultControllerId":  "ai",
                                       "abilityIds":  [
 
                                                      ],
@@ -255,8 +255,8 @@
                                            "sublocationId":  "commonRoomTableOne",
                                            "inventoryId":  "inventory_hoodedWoman",
                                            "wallet":  8,
-                                           "initialControllerId":  "dummy",
-                                           "defaultControllerId":  "dummy",
+                                           "initialControllerId":  "ai",
+                                           "defaultControllerId":  "ai",
                                            "abilityIds":  [
                                                               "readAura"
                                                           ],

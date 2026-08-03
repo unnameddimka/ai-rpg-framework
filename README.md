@@ -2,7 +2,10 @@
 
 This repository is the framework-first rewrite of the original Twine tavern proof of concept.
 
-The current version has no model calls. It provides a deterministic world, authored characters and abilities, saved per-character minds, grounded observations, restricted context bundles, a shared Character API, inventories, movement, item and money transfers, confirmed events, and debug takeover of any character.
+The current version provides a deterministic world plus a narrow, manually triggered AI
+integration. It supports authored characters and abilities, saved per-character minds,
+grounded observations, restricted context bundles, inventories, movement, transfers,
+confirmed events, and debug takeover of any character.
 
 Assigned zero-input abilities are also usable from the normal player-facing location view.
 The controls are derived from the character currently under HumanController and from that
@@ -16,7 +19,10 @@ keeps each character's displayed private result isolated from the others.
 ```text
 src/story.twee          Twine passages and prose
 src/10-game-api.js      World, ActionRegistry, CharacterAPI, invariants
-src/20-controllers.js   Human, Dummy, and future AI controller shell
+src/20-controllers.js   Human, Dummy, and manual AI-turn orchestration
+src/21-ai-settings.js   Transient key and optional 24-hour persistence
+src/22-openrouter-client.js Fixed browser-side OpenRouter client
+src/23-ai-protocol.js   JSON-only prompt protocol, parsing, validation, repair
 src/30-game-ui.js       Browser controls and character takeover UI
 src/styles.css          Framework UI styles
 data/world.json         Authoritative locations, characters, minds, and abilities
@@ -71,6 +77,32 @@ dist/game.html
 
 Open that HTML file in a browser.
 
+## Manual OpenRouter AI turns
+
+The built game calls OpenRouter directly from the browser using the fixed
+`thedrummer/cydonia-24b-v4.1` model. It does not offer provider/model selection,
+streaming, automatic turns, or queue draining.
+
+1. Open the AI Settings panel in the sidebar.
+2. Enter an OpenRouter API key. The password field is cleared after saving.
+3. Optionally enable **Remember for 24 hours**. Otherwise the key remains in memory only
+   until the page closes.
+4. Create a visible event for an AI-controlled character. The sidebar will show the next
+   eligible queued character.
+5. Press **Take next AI turn**. One press processes at most one character and one formal
+   action.
+
+The key is never stored in SugarCube state, saves, world data, generated artifacts,
+controller logs, copied AI context, or visible errors. Optional persistence uses a
+namespaced `localStorage` record with an explicit 24-hour expiry. **Forget saved key**
+clears both persisted and in-memory copies. Browser storage can fail for `file://` pages;
+in that case the game displays a warning and safely keeps the key in memory only.
+
+OpenRouter requests require browser network/CORS access and account credit. Authentication,
+credit, rate-limit, provider, and network failures are shown as short safe messages. Failed
+requests retain the queue entry and observations for retry. A failed second-stage request
+also rolls back the preceding formal action completely.
+
 ## Test without Tweego
 
 ```bat
@@ -81,13 +113,19 @@ or:
 
 ```bash
 node tests/run-tests.js
+node tests/run-ui-tests.js
+node tests/run-editor-tests.js
+node tests/run-ai-tests.js
+node tests/run-generator-tests.js
 ```
 
 The tests verify the HumanController invariant, action grants, generic ability discovery,
 targetless aura scans, escaped and actor-isolated private result display, normalized feedback,
 observation privacy, restricted views and context, mind save round trips, movement, inventory
-and money transfer, editor validation, generator rejection, rollback safety, and controller
-switching.
+and money transfer, editor validation, generator rejection, queue ordering and repair,
+mocked OpenRouter responses, key expiry/leak prevention, protocol repair, atomic AI
+transactions, rollback safety, and controller switching. Automated tests never contact the
+live OpenRouter API.
 
 ## Development workflow
 

@@ -24,7 +24,7 @@ The controller types are:
 
 - `human` — receives commands from the browser UI;
 - `dummy` — performs no autonomous actions and may write debug logs;
-- `ai` — reserved for later and currently must not call a model.
+- `ai` — uses the browser-side OpenRouter adapter and the fixed Cydonia model only when a manual queued AI turn is requested.
 
 ### Critical HumanController invariant
 
@@ -34,14 +34,15 @@ Exactly one character must use `HumanController` at all times.
 - Switch human control only through `setup.Game.takeHumanControl(characterId)`.
 - The switch must be atomic: construct and validate a candidate assignment map, then commit it once.
 - Initial authoring data must specify exactly one initial human-controlled character.
-- A character's fallback/default controller must not be `human`.
+- A character's persistent `defaultControllerId` must not be `human`. HumanController is only a temporary override. When human control leaves a character, that character must return directly to its authored `defaultControllerId`. Do not store or restore a `controllerBeforeHuman` value.
 - Loading or initialization must validate and repair or reject zero-human and multiple-human states.
 - Never assume the human-controlled character ID is `player`.
+- Do not change `defaultControllerId` during normal play in this milestone. A future scripted controller may remain a character's permanent default for the whole game.
 
 ## Character descriptions and private data
 
 - `playerDescription` is public player-facing prose. It may be shown to other human-controlled characters.
-- `aiDescription` is private identity/personality/instruction data for a future AI controller. It must not appear in normal player-facing UI or another character's restricted view.
+- `aiDescription` is private identity/personality/instruction data for a AI controller. It must not appear in normal player-facing UI or another character's restricted view.
 - `engineFacts` contains objective hidden data used only by formal mechanics. It must not be exposed merely because a controller asks for a view or context.
 - A formal action such as `read_aura` may reveal a specific hidden fact through private grounded feedback.
 
@@ -56,17 +57,18 @@ Required conceptual partitions:
 - `relationships` — character-specific relationship summaries;
 - `recentMemories` — detailed recent memories;
 - `longTermMemories` — older or already compressed memories;
-- `pendingObservations` — objective events and action feedback not yet interpreted by a future AI controller.
+- `pendingObservations` — objective events and action feedback not yet interpreted by a AI controller.
 
-The current milestone must not:
+The AI controller may interpret a bounded snapshot of `pendingObservations` during an explicitly requested queued AI turn. The deterministic engine must never invent attitudes or interpretations itself.
 
-- call a model;
-- count tokens;
+The current milestone still must not:
+
+- count tokens or implement token-budget policies;
 - summarize or compress memories;
-- convert observations into beliefs automatically;
-- invent attitudes or interpretations in engine code.
+- use embeddings or vector search;
+- run autonomous or time-based NPC loops.
 
-The engine may seed initial mind data and enqueue objective observations. Later controller-specific logic will interpret them.
+Validated AI memory updates may append recent memories and upsert beliefs or relationships only through a dedicated engine-owned function. The model never receives direct mutation access to `mind`.
 
 ## Formal action availability
 
@@ -108,12 +110,50 @@ Examples include:
 
 Narrative output remains separate. A model or human may describe an attempt, but only a successful formal action result establishes objective consequences or hidden information.
 
-## Restricted views and future context
+## Restricted views and AI context
 
 - `setup.CharacterAPI.getView(actorId)` must expose only information currently available to that actor.
 - It must never expose another character's `aiDescription`, `mind`, or `engineFacts`.
-- `setup.ContextBuilder.build(actorId)` may prepare a JSON-serializable future-controller bundle, but it must not build a natural-language prompt, call an API, count tokens, or mutate state.
+- `setup.ContextBuilder.build(actorId)` remains a pure JSON-serializable restricted-data projection. It must not call an API, count tokens, acknowledge observations, or mutate state.
+- A separate AI prompt/protocol adapter may serialize that bundle for OpenRouter.
 - The context bundle may include the actor's own `aiDescription`, own mind, restricted world view, granted abilities, available formal actions, and pending observations.
+
+
+## AI turn queue and controller integration
+
+- AI turns are manual in this milestone. The normal/debug UI exposes one `Take next AI turn` control, never a character picker.
+- Objective events and feedback may enqueue eligible characters whose current controller assignment is `ai`.
+- The queue must be deterministic, JSON-serializable, saveable with SugarCube, and deduplicated by character ID.
+- Direct addressees and formal-action targets are enqueued before other perceiving AI characters; remaining order follows deterministic event delivery order.
+- A queued entry is eligible only while that character is currently assigned `ai` and has pending observations. Skip or remove stale entries.
+- When HumanController leaves a character and that character returns to `defaultControllerId: "ai"`, enqueue it if it already has pending observations.
+- Do not enqueue a human-controlled or dummy-controlled character.
+- One button press processes at most one queued character and at most one formal action.
+- A failed API call, invalid model response, or failed transaction must preserve the queue entry and all unconsumed observations for retry.
+
+## OpenRouter and API-key rules
+
+- The game calls OpenRouter directly from the browser through `POST https://openrouter.ai/api/v1/chat/completions`.
+- The fixed model for this milestone is `thedrummer/cydonia-24b-v4.1`.
+- Streaming is disabled. Do not add provider selection or model selection yet.
+- The API key is entered in the game UI. It must never enter `world.json`, generated files, SugarCube state, saves, exported data, controller logs, request-debug dumps, or error text.
+- Without opt-in persistence, the key exists only in a non-SugarCube runtime object for the lifetime of the page.
+- `Remember for 24 hours` stores a record in `localStorage` with an explicit expiry timestamp. Expired records are deleted when read. Provide `Forget saved key`.
+- If `localStorage` is unavailable under `file://`, keep the key in memory and show a nonfatal warning.
+- Do not use cookies.
+
+## AI response and transaction safety
+
+- Never treat model prose as objective world state.
+- Parse and locally validate model JSON. Do not depend on native provider strict-schema support.
+- Permit at most one repair request for malformed or schema-invalid JSON. No general automatic retries.
+- An AI turn may return no formal action. If it returns an action, pass that action through `setup.CharacterAPI.perform()` exactly like a human action.
+- If a formal action is attempted, provide the normalized grounded result to a second model call before accepting final reaction text or memory updates. Both calls together are one AI turn.
+- Hold all model-produced narrative and memory changes until the complete turn succeeds. Avoid partial commits.
+- Apply public narrative only through `setup.CharacterAPI.narrate()`.
+- Apply model memory changes only through an engine-owned validator supporting bounded append/upsert operations.
+- Remove only observation IDs actually consumed by a successfully committed turn. Never clear an entire inbox blindly.
+- Raw request and response bodies may be kept only in transient debug memory and must be redacted of credentials.
 
 ## Dynamic player-facing UI and passages
 
@@ -159,14 +199,17 @@ Implement and preserve:
 - confirmed events and restricted views;
 - debug takeover of any character by the one HumanController;
 - authorable characters, initial minds, and individual abilities;
-- one sample grounded individual ability, `read_aura`.
+- one sample grounded individual ability, `read_aura`;
+- direct browser OpenRouter integration with fixed Cydonia;
+- one deterministic saved AI turn queue and a manual `Take next AI turn` control;
+- validated one- or two-stage AI turns and bounded memory updates;
+- 24-hour optional local API-key persistence outside SugarCube.
 
 Do not add yet:
 
-- model/API calls or API-key UI;
-- prompt construction;
+- autonomous or timer-driven NPC execution;
+- model/provider selection;
 - memory compression, token budgeting, embeddings, or vector search;
-- autonomous NPC decisions;
 - combat, health changes, or damage;
 - buying and selling;
 - item use effects or equipment;
@@ -176,7 +219,8 @@ Do not add yet:
 ## File placement
 
 - Keep engine logic in `src/10-game-api.js` unless a small additional numerically prefixed engine module clearly improves separation.
-- Keep controllers in `src/20-controllers.js`.
+- Keep controller behavior in `src/20-controllers.js`.
+- Put the browser-only OpenRouter client, prompt/protocol parsing, and transient AI settings in one or more small numerically prefixed source modules before `src/30-game-ui.js`; do not place secrets or promises in SugarCube state.
 - Keep browser/debug UI in `src/30-game-ui.js`.
 - Keep hand-authored non-generated Twee metadata and nonphysical passages in `src/story.twee`.
 - Keep authoritative authoring data in `data/world.json`.
@@ -192,4 +236,6 @@ Do not add yet:
 5. Build with Tweego when installed.
 6. Verify `setup.Game.validateWorld()` succeeds after all tested actions.
 7. Verify a JSON serialize/parse round trip preserves every character mind.
-8. Update `docs/status.md` with implemented results and remaining limitations.
+8. Test queue ordering, deduplication, stale-entry handling, successful one-stage turns, successful two-stage turns, malformed JSON repair, failed-request rollback, consumed-observation removal by ID, and 24-hour key expiry.
+9. Verify no API key appears in a save, world dump, generated artifact, debug log, or copied AI context.
+10. Update `README.md` and `docs/status.md` with implemented results and remaining limitations.
