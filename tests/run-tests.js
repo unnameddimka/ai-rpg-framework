@@ -187,7 +187,7 @@ assert(baseActions.move.sources.some(function (source) { return source.kind === 
     "base action should identify its grant source");
 assert(!baseActions.read_aura, "player should not receive read_aura");
 assert(!baseActions.pour_ale, "player outside behind-bar position should not receive pour_ale");
-assertFails(setup.CharacterAPI.perform("player", { type: "read_aura", target_id: "hoodedWoman" }),
+assertFails(setup.CharacterAPI.perform("player", { type: "read_aura" }),
     "ACTION_NOT_AVAILABLE", "ungranted aura action should be rejected before hidden data is read");
 
 assertOk(setup.Game.takeHumanControl("hoodedWoman"), "hooded woman takeover for aura test");
@@ -195,23 +195,60 @@ const auraActions = setup.CharacterAPI.getAvailableActions("hoodedWoman");
 assert(auraActions.read_aura.sources.some(function (source) {
     return source.kind === "character_ability" && source.id === "readAura";
 }), "read_aura should identify the individual ability source");
+assert(auraActions.read_aura.schema.required.length === 1 && auraActions.read_aura.schema.required[0] === "type" &&
+    !Object.prototype.hasOwnProperty.call(auraActions.read_aura.schema.properties, "target_id"),
+    "read_aura schema should require no caller input beyond its type");
+assertFails(setup.CharacterAPI.perform("hoodedWoman", { type: "read_aura", target_id: "player" }),
+    "INVALID_ACTION_INPUT", "read_aura should reject caller-supplied targets");
+perform("innkeeper", { type: "move", destination_id: "commonRoom" },
+    "innkeeper should enter the aura actor's perceivable major location");
 const playerInboxBeforeAura = world.entities.player.mind.pendingObservations.length;
 const innkeeperInboxBeforeAura = world.entities.innkeeper.mind.pendingObservations.length;
-const aura = perform("hoodedWoman", { type: "read_aura", target_id: "player" }, "hooded woman should read player aura");
+const eventCountBeforeAura = world.events.length;
+const positionsBeforeAura = [world.entities.player.locationId, world.entities.hoodedWoman.locationId, world.entities.innkeeper.locationId];
+const aura = perform("hoodedWoman", { type: "read_aura" }, "hooded woman should scan all perceivable auras");
 assert(aura.events.length === 0 && aura.feedback.length === 1 && aura.error === null,
     "read_aura should be a private feedback-only normalized success");
-assert(aura.feedback[0].text === world.entities.player.engineFacts.aura,
-    "aura result should use the target's grounded hidden fact");
+const auraResults = aura.feedback[0].data.results;
+assert(aura.feedback[0].recipientId === "hoodedWoman" && aura.feedback[0].code === "AURA_SCAN_RESULT",
+    "aura result should be structured private feedback addressed to the acting character");
+assert(auraResults.length === 2 && auraResults.some(function (item) { return item.characterId === "player"; }) &&
+    auraResults.some(function (item) { return item.characterId === "innkeeper"; }) &&
+    !auraResults.some(function (item) { return item.characterId === "hoodedWoman"; }),
+    "scan targets should come from current perception, include all visible others, and exclude self");
+assert(auraResults.find(function (item) { return item.characterId === "player"; }).aura === world.entities.player.engineFacts.aura,
+    "aura scan should use the visible target's grounded hidden aura only");
+assert(auraResults.find(function (item) { return item.characterId === "innkeeper"; }).aura === "You perceive nothing unusual.",
+    "an empty Hidden aura should produce the neutral grounded result");
+assert(world.events.length === eventCountBeforeAura &&
+    JSON.stringify(positionsBeforeAura) === JSON.stringify([world.entities.player.locationId, world.entities.hoodedWoman.locationId, world.entities.innkeeper.locationId]),
+    "aura scan should not mutate physical state or create a public event");
 assert(world.entities.hoodedWoman.mind.pendingObservations.some(function (item) {
-    return item.kind === "action_feedback" && item.actionType === "read_aura" && item.text === aura.feedback[0].text;
+    return item.kind === "action_feedback" && item.actionType === "read_aura" &&
+        Array.isArray(item.data.results) && item.data.results.length === 2;
 }), "aura feedback should enter only the actor's observation inbox");
 assert(world.entities.player.mind.pendingObservations.length === playerInboxBeforeAura,
     "aura feedback must not enter the target inbox");
 assert(world.entities.innkeeper.mind.pendingObservations.length === innkeeperInboxBeforeAura,
     "aura feedback must not enter a bystander inbox");
+perform("innkeeper", { type: "move", destination_id: "tavernEntrance" },
+    "innkeeper should leave the aura actor's perception for exclusion tests");
+const secondAura = perform("hoodedWoman", { type: "read_aura" }, "second scan should use updated perception");
+assert(!secondAura.feedback[0].data.results.some(function (item) { return item.characterId === "innkeeper"; }),
+    "characters outside the actor's major location should be excluded from the scan");
+perform("player", { type: "move", destination_id: "tavernEntrance" },
+    "player should leave for empty aura scan test");
+const emptyAura = perform("hoodedWoman", { type: "read_aura" }, "aura scan with no perceivable characters should succeed");
+assert(emptyAura.feedback[0].data.results.length === 0 && emptyAura.feedback[0].text === "You sense no other auras nearby.",
+    "empty aura scan should return a grounded private no-target observation");
+perform("player", { type: "move", destination_id: "commonRoom" },
+    "player should return for restricted-view tests");
 
 const restricted = setup.CharacterAPI.getView("hoodedWoman");
 const visiblePlayer = restricted.location.characters.find(function (item) { return item.id === "player"; });
+assert(restricted.self.abilities.length === 1 && restricted.self.abilities[0].id === "readAura" &&
+    !Object.prototype.hasOwnProperty.call(restricted.self.abilities[0], "aiDescription"),
+    "restricted self view should expose only public ability metadata needed by the UI");
 assert(visiblePlayer.playerDescription && !Object.prototype.hasOwnProperty.call(visiblePlayer, "aiDescription") &&
     !Object.prototype.hasOwnProperty.call(visiblePlayer, "engineFacts") && !Object.prototype.hasOwnProperty.call(visiblePlayer, "mind"),
     "restricted nearby character view should expose public prose but no private character data");

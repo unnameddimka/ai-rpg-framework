@@ -326,7 +326,7 @@
                                        "id":  "readAura",
                                        "name":  "Read aura",
                                        "actionType":  "read_aura",
-                                       "playerDescription":  "Sense supernatural traces around a visible character.",
+                                       "playerDescription":  "Sense the hidden auras of everyone you can currently perceive.",
                                        "aiDescription":  "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
                                    }
                   }

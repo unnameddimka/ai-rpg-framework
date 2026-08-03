@@ -83,6 +83,10 @@ Rules:
 - `perform()` must reject actions not currently granted to the actor.
 - Action definition validation still checks targets, reachability, inventory access, capacity, and other dynamic preconditions.
 - Character abilities grant access to actions; they do not contain executable JavaScript.
+- Player-facing ability controls must be derived from the currently human-controlled character's assigned abilities and current `available_actions`; never hardcode a character ID such as `hoodedWoman`.
+- For this milestone, the normal player-facing UI supports assigned zero-input abilities. The first supported action is `read_aura`.
+- `read_aura` accepts no target parameter. It scans all other characters currently perceivable to the actor and returns their authored hidden aura values as private grounded feedback.
+- Private feedback returned to the human-controlled actor must be shown immediately in the normal player-facing UI, not only in debug JSON or `mind.pendingObservations`.
 
 ## Formal action results and observations
 
@@ -119,7 +123,8 @@ Narrative output remains separate. A model or human may describe an attempt, but
 - Physical location prose, nearby-character presence, interaction links, and exits must be rendered from the restricted character view and runtime world state.
 - Normal movement UI must call the registered `move` action through `setup.CharacterAPI.perform()`.
 - Never show the controlled character as a nearby character or interaction target.
-- Keep the formal action panel as a developer/debug interface below the player-facing view unless a later task replaces it.
+- Keep the formal action panel as a developer/debug interface below the player-facing view.
+- Assigned character abilities are an exception: currently available zero-input abilities must also appear as normal player-facing controls above the debug panel.
 
 ## World editor
 

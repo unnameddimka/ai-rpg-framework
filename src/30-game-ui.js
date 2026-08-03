@@ -24,10 +24,116 @@
         if (!State.variables.frameworkUI) {
             State.variables.frameworkUI = {
                 interactionTargetId: "",
-                locationStatus: ""
+                locationStatus: "",
+                abilityResultsByActor: {}
             };
         }
+        if (!State.variables.frameworkUI.abilityResultsByActor) {
+            State.variables.frameworkUI.abilityResultsByActor = {};
+        }
         return State.variables.frameworkUI;
+    }
+
+    function isZeroInputAbilityAction(actionRecord) {
+        if (!actionRecord || !actionRecord.schema || !actionRecord.schema.properties) {
+            return false;
+        }
+        return Object.keys(actionRecord.schema.properties).every(function (key) {
+            return key === "type";
+        }) && (actionRecord.schema.required || []).every(function (key) {
+            return key === "type";
+        });
+    }
+
+    function discoverAvailableAbilities(view) {
+        if (!view || !view.self || !Array.isArray(view.self.abilities)) {
+            return [];
+        }
+        return view.self.abilities.filter(function (ability) {
+            const actionRecord = view.available_actions && view.available_actions[ability.actionType];
+            return isZeroInputAbilityAction(actionRecord) && actionRecord.sources.some(function (source) {
+                return source.kind === "character_ability" && source.id === ability.id;
+            });
+        }).map(function (ability) {
+            const actionRecord = view.available_actions[ability.actionType];
+            return {
+                id: ability.id,
+                name: ability.name,
+                playerDescription: ability.playerDescription,
+                actionType: ability.actionType,
+                sources: actionRecord.sources.map(function (source) {
+                    return { kind: source.kind, id: source.id || "", name: source.name || "" };
+                })
+            };
+        });
+    }
+
+    function abilityResultMarkup(result) {
+        if (!result) {
+            return "";
+        }
+        if (!result.ok) {
+            return `<p class="framework-status">${escapeHtml(result.error && result.error.message || "Ability execution failed.")}</p>`;
+        }
+        const auraFeedback = (result.feedback || []).find(function (entry) {
+            return entry.code === "AURA_SCAN_RESULT";
+        });
+        if (!auraFeedback) {
+            return (result.feedback || []).map(function (entry) {
+                return `<p>${escapeHtml(entry.text)}</p>`;
+            }).join("");
+        }
+        const results = auraFeedback.data && Array.isArray(auraFeedback.data.results)
+            ? auraFeedback.data.results
+            : [];
+        if (results.length === 0) {
+            return `<h4>Aura reading</h4><p>${escapeHtml(auraFeedback.text)}</p>`;
+        }
+        return `<h4>Aura reading</h4>${results.map(function (entry) {
+            return `<section class="framework-ability-result-entry"><strong>${escapeHtml(entry.name)}</strong><p>${escapeHtml(entry.aura)}</p></section>`;
+        }).join("")}`;
+    }
+
+    function getActorAbilityResult(uiState, actorId) {
+        return uiState && uiState.abilityResultsByActor
+            ? uiState.abilityResultsByActor[actorId] || null
+            : null;
+    }
+
+    function renderAbilitySection(root, actorId, view) {
+        const abilities = discoverAvailableAbilities(view);
+        if (abilities.length === 0) {
+            return;
+        }
+        const section = document.createElement("section");
+        section.className = "framework-ability-panel";
+        appendTextElement(section, "h3", "Abilities");
+        abilities.forEach(function (ability) {
+            const abilityBlock = document.createElement("section");
+            abilityBlock.className = "framework-ability-control";
+            appendTextElement(abilityBlock, "h4", ability.name);
+            appendTextElement(abilityBlock, "p", ability.playerDescription);
+            const button = appendTextElement(abilityBlock, "button", ability.name);
+            button.type = "button";
+            button.addEventListener("click", function () {
+                const currentActorId = setup.Game.getHumanCharacterId();
+                if (currentActorId !== actorId) {
+                    return;
+                }
+                const result = setup.CharacterAPI.perform(actorId, { type: ability.actionType });
+                getUIState().abilityResultsByActor[actorId] = result;
+                refreshCurrentPassage();
+            });
+            section.appendChild(abilityBlock);
+        });
+        const storedResult = getActorAbilityResult(getUIState(), actorId);
+        if (storedResult) {
+            const resultArea = document.createElement("div");
+            resultArea.className = "framework-ability-result";
+            resultArea.innerHTML = abilityResultMarkup(storedResult);
+            section.appendChild(resultArea);
+        }
+        root.appendChild(section);
     }
 
     function formatResult(result) {
@@ -224,6 +330,7 @@
             root.appendChild(placement);
         }
 
+        renderAbilitySection(root, actorId, view);
         renderInteractionView(root, view);
     }
 
@@ -566,6 +673,13 @@
 
         return true;
     }
+
+    setup.AbilityUIModel = {
+        discoverAvailableAbilities: discoverAvailableAbilities,
+        isZeroInputAbilityAction: isZeroInputAbilityAction,
+        abilityResultMarkup: abilityResultMarkup,
+        getActorAbilityResult: getActorAbilityResult
+    };
 
     setup.GameUI = {
         moveHuman: function (destinationId) {

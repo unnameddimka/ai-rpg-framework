@@ -65,6 +65,24 @@
     border: 1px solid #666;
 }
 
+.framework-ability-panel {
+    margin: 1rem 0;
+    padding: 1rem;
+    border: 1px solid #8c795c;
+    background: #f8f1e3;
+}
+
+.framework-ability-control,
+.framework-ability-result-entry {
+    margin: .7rem 0;
+}
+
+.framework-ability-control h4,
+.framework-ability-result h4,
+.framework-ability-result-entry p {
+    margin: .25rem 0;
+}
+
 .framework-action-grid select,
 .framework-action-grid input,
 .framework-action-grid textarea,

@@ -263,7 +263,7 @@ An ability is authored metadata that grants one existing engine action to specif
   "id": "readAura",
   "name": "Read aura",
   "actionType": "read_aura",
-  "playerDescription": "Sense supernatural traces around a visible character.",
+  "playerDescription": "Sense the hidden auras of everyone you can currently perceive.",
   "aiDescription": "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
 }
 ```
@@ -293,7 +293,7 @@ take_item               base
 give_item               base
 pour_ale                granted by barBehindCounter
 place_item               granted by a table sublocation
-read_aura               granted by hoodedWoman.readAura
+read_aura               granted by the actor's assigned readAura ability
 ```
 
 `getAvailableActions(actorId)` returns a deduplicated map with source metadata:
@@ -367,18 +367,68 @@ Events and feedback are independent:
 
 `read_aura` proves that personal abilities can reveal grounded hidden information without a separate perception subsystem.
 
+Invocation:
+
+```json
+{
+  "type": "read_aura"
+}
+```
+
 Rules:
 
 - the actor must receive `read_aura` from an assigned ability;
-- the target must be another character in the same major location and visible under current perception rules;
-- the action does not require physical reach unless later mechanics add that rule;
-- the result reads only the target's objective `engineFacts.aura` value;
-- the result is private feedback to the actor;
-- no other character receives the aura result;
-- the action need not mutate world state or emit a public event;
-- absence of an aura value returns a grounded neutral result rather than exposing raw missing data.
+- the action accepts no target parameter in this milestone;
+- the engine derives the scan set from the actor's current restricted/perception view;
+- every other currently perceivable character is scanned; the actor is excluded;
+- physical reach is not required;
+- each result reads only that character's objective `engineFacts.aura` value, authored in the editor as `Hidden aura`;
+- absence of an aura value returns a grounded neutral result rather than exposing raw missing data;
+- the complete scan result is private feedback to the actor;
+- no scanned character or bystander receives the aura result;
+- the action does not mutate world state and does not need to emit a public event.
+
+Recommended feedback data shape:
+
+```json
+{
+  "recipientId": "player",
+  "kind": "observation",
+  "code": "AURA_SCAN_RESULT",
+  "text": "You read the nearby auras.",
+  "data": {
+    "results": [
+      {
+        "characterId": "innkeeper",
+        "name": "Innkeeper",
+        "aura": "His aura is mundane and tired."
+      }
+    ]
+  }
+}
+```
+
+When no other characters are perceivable, return a successful private observation such as `You sense no other auras nearby.`
 
 A character without the ability receives `ACTION_NOT_AVAILABLE` even if it manually submits the same JSON action.
+
+### 12.1 Player-facing ability controls
+
+The normal UI renders assigned abilities generically from the currently human-controlled actor's data and current action availability.
+
+For each assigned ability whose `actionType` is currently available and requires no input in this milestone:
+
+- render the authored ability `name`;
+- render its public `playerDescription`;
+- render an execution button;
+- call `setup.CharacterAPI.perform(actorId, {type: ability.actionType})`;
+- display recipient-private feedback immediately in a normal player-facing result area.
+
+The UI must never test for a specific character ID or assume that `readAura` belongs to the hooded woman. Assigning `readAura` to the player, innkeeper, or any future character through the editor must make the same control appear whenever that character is under HumanController.
+
+The debug formal-action panel remains available, but it is not the only interface for assigned abilities.
+
+This milestone does not add arbitrary JavaScript, editable effect scripts, a general target picker, or a universal form generator. Future data-driven effects will be designed separately.
 
 ## 13. Events and observation routing
 

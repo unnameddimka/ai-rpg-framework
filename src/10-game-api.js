@@ -1168,33 +1168,41 @@
         },
 
         read_aura: {
-            description: "Read a visible character's aura.",
+            description: "Read every currently perceivable character's aura.",
             schema: {
                 type: "object",
-                properties: { type: { const: "read_aura" }, target_id: { type: "string" } },
-                required: ["type", "target_id"]
+                properties: { type: { const: "read_aura" } },
+                required: ["type"],
+                additionalProperties: false
             },
-            getOptions: function (actor, world) {
-                return { target_ids: nearbyCharacters(actor, world).map(function (character) { return character.id; }) };
+            getOptions: function () {
+                return {};
             },
             validate: function (actor, action, world) {
-                const target = getCharacter(action.target_id, world);
-                if (!target) return fail("TARGET_NOT_FOUND", "Target character does not exist.");
-                if (target.id === actor.id) return fail("INVALID_TARGET", "A character cannot read its own aura.");
-                if (target.locationId !== actor.locationId) return fail("TARGET_NOT_VISIBLE", "Target is not visible from the current location.");
+                if (Object.keys(action).some(function (key) { return key !== "type"; })) {
+                    return fail("INVALID_ACTION_INPUT", "read_aura does not accept caller-supplied targets or parameters.");
+                }
                 return ok();
             },
             execute: function (actor, action, world) {
-                const target = getCharacter(action.target_id, world);
-                const aura = target.engineFacts && typeof target.engineFacts.aura === "string" && target.engineFacts.aura.trim()
-                    ? target.engineFacts.aura.trim()
-                    : "You sense no unusual supernatural aura.";
+                const visibleCharacters = getCharacterView(actor.id).location.characters;
+                const results = visibleCharacters.map(function (visibleCharacter) {
+                    const target = getCharacter(visibleCharacter.id, world);
+                    const authoredAura = target && target.engineFacts && typeof target.engineFacts.aura === "string"
+                        ? target.engineFacts.aura.trim()
+                        : "";
+                    return {
+                        characterId: visibleCharacter.id,
+                        name: visibleCharacter.name,
+                        aura: authoredAura || "You perceive nothing unusual."
+                    };
+                });
                 return { events: [], feedback: [{
                     recipientId: actor.id,
                     kind: "observation",
-                    code: "AURA_READ",
-                    text: aura,
-                    data: { targetId: target.id, factKey: "aura" }
+                    code: "AURA_SCAN_RESULT",
+                    text: results.length > 0 ? "You read the nearby auras." : "You sense no other auras nearby.",
+                    data: { results: results }
                 }] };
             }
         }
@@ -1260,7 +1268,16 @@
                 sublocation_id: actor.sublocationId,
                 position_text: getSublocation(actor.sublocationId, world).selfText,
                 wallet: actor.wallet,
-                inventory: inventoryItems(actor.inventoryId, world)
+                inventory: inventoryItems(actor.inventoryId, world),
+                abilities: (actor.abilityIds || []).map(function (abilityId) {
+                    const ability = world.abilities[abilityId];
+                    return ability ? {
+                        id: ability.id,
+                        name: ability.name,
+                        playerDescription: ability.playerDescription,
+                        actionType: ability.actionType
+                    } : null;
+                }).filter(Boolean)
             },
             location: {
                 id: location.id,

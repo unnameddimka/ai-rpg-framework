@@ -19,14 +19,21 @@
   `mind.pendingObservations` inboxes.
 - Existing movement, internal positioning, inventories, wallets, item and money transfer,
   table placement, ale pouring, events, restricted views, rollback, and debug takeover remain.
-- `read_aura` is a private feedback-only formal action granted to the hooded woman through
-  the authored `readAura` ability. It reads only grounded `engineFacts.aura` data.
+- `read_aura` exists as a private feedback-only formal action granted through the authored
+  `readAura` ability. It accepts no target, derives every scan target from the actor's
+  restricted perception view, and reads only grounded `engineFacts.aura` data. Missing aura
+  text produces a neutral grounded result.
+- The normal location view generically discovers currently available assigned zero-input
+  abilities for whichever character is under HumanController. It renders authored public
+  ability metadata, executes through `CharacterAPI.perform()`, and immediately displays
+  structured private feedback in an HTML-escaped, actor-isolated result area.
 - `setup.ContextBuilder.build(actorId)` returns a deep-cloned, non-mutating bundle containing
   only the actor's private identity/mind/abilities, restricted view, and available actions.
 - The single-file offline editor provides Locations, Characters, and Abilities workflows,
   repeatable mind rows, reference-aware deletion, validation-blocked export, unknown-field
   preservation, and local draft storage.
-- Engine, editor, and generator-focused Node tests cover the milestone and legacy behavior.
+- Engine, pure ability-UI, editor, and generator-focused Node tests cover the milestone and
+  legacy behavior.
 
 ## Remaining limitations
 
@@ -34,7 +41,9 @@
 - No autonomous NPC decisions or observation interpretation.
 - No memory compression, summarization, embeddings, or retrieval.
 - Character interaction selects a target but does not generate dialogue.
-- The formal action panel remains a developer/debug interface.
+- The formal action panel remains a developer/debug interface below the normal ability UI.
+- The generic player-facing ability renderer currently supports assigned zero-input actions
+  only; parameterized actions remain in the developer/debug interface until a later UI contract.
 - Combat, health effects, buying/selling, equipment, quests, dialogue trees, and arbitrary
   author scripts remain out of scope.
 - Browser acceptance scenarios still require manual checking after UI changes.

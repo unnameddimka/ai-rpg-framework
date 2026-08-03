@@ -4,6 +4,13 @@ This repository is the framework-first rewrite of the original Twine tavern proo
 
 The current version has no model calls. It provides a deterministic world, authored characters and abilities, saved per-character minds, grounded observations, restricted context bundles, a shared Character API, inventories, movement, item and money transfers, confirmed events, and debug takeover of any character.
 
+Assigned zero-input abilities are also usable from the normal player-facing location view.
+The controls are derived from the character currently under HumanController and from that
+character's live action grants; they do not depend on a particular character ID. The sample
+`readAura` ability performs a targetless scan of all other characters currently perceivable
+to the actor and immediately displays its structured private results. Switching control
+keeps each character's displayed private result isolated from the others.
+
 ## Project layout
 
 ```text
@@ -76,10 +83,11 @@ or:
 node tests/run-tests.js
 ```
 
-The tests verify the HumanController invariant, action grants, normalized feedback,
-observation privacy, restricted views and context, mind save round trips, movement,
-inventory and money transfer, editor validation, generator rejection, rollback safety,
-and controller switching.
+The tests verify the HumanController invariant, action grants, generic ability discovery,
+targetless aura scans, escaped and actor-isolated private result display, normalized feedback,
+observation privacy, restricted views and context, mind save round trips, movement, inventory
+and money transfer, editor validation, generator rejection, rollback safety, and controller
+switching.
 
 ## Development workflow
 
