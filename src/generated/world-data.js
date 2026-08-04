@@ -7,12 +7,14 @@
     "protectedLocationIds":  [
                                  "tavernEntrance",
                                  "bar",
-                                 "commonRoom"
+                                 "commonRoom",
+                                 "villageTemple"
                              ],
     "protectedSublocationIds":  [
                                     "tavernEntranceFloor",
                                     "barBehindCounter",
-                                    "commonRoomTableOne"
+                                    "commonRoomTableOne",
+                                    "templeSanctum"
                                 ],
     "protectedCharacterIds":  [
                                   "player",
@@ -189,7 +191,8 @@
                                      "defaultSublocationId":  "streetCenter",
                                      "inventoryId":  "inventory_street",
                                      "exits":  {
-                                                   "tavernEntrance":  "tavernEntrance"
+                                                   "tavernEntrance":  "tavernEntrance",
+                                                   "villageTemple":  "villageTemple"
                                                },
                                      "sublocations":  {
                                                           "streetCenter":  {
@@ -206,7 +209,38 @@
                                                                                                            ]
                                                                            }
                                                       }
-                                 }
+                                 },
+                      "villageTemple":  {
+                                            "id":  "villageTemple",
+                                            "type":  "location",
+                                            "name":  "Village temple",
+                                            "passage":  "The Village Temple",
+                                            "description":  [
+                                                                "A tiny stone temple crouches at the edge of the village, smelling of cold incense and rain.",
+                                                                "At the far end, beneath a soot-darkened icon, a crystal sphere rests on a crooked brass stand."
+                                                            ],
+                                            "defaultSublocationId":  "templeSanctum",
+                                            "inventoryId":  "inventory_villageTemple",
+                                            "exits":  {
+                                                          "street":  "street"
+                                                      },
+                                            "sublocations":  {
+                                                                 "templeSanctum":  {
+                                                                                       "id":  "templeSanctum",
+                                                                                       "type":  "sublocation",
+                                                                                       "locationId":  "villageTemple",
+                                                                                       "name":  "Before the crystal sphere",
+                                                                                       "publicText":  "Pale light moves inside the sphere like a thought trying to remember its shape.",
+                                                                                       "enterLabel":  "Stand before the crystal sphere",
+                                                                                       "selfText":  "You are standing before the crystal sphere.",
+                                                                                       "occupantTemplate":  "{name} stands before the crystal sphere.",
+                                                                                       "capacity":  20,
+                                                                                       "reachableSublocationIds":  [
+                                                                                                                       "templeSanctum"
+                                                                                                                   ]
+                                                                                   }
+                                                             }
+                                        }
                   },
     "characters":  {
                        "player":  {
@@ -294,8 +328,8 @@
                                          "sublocationId":  "barBehindCounter",
                                          "inventoryId":  "inventory_innkeeper",
                                          "wallet":  25,
-                                         "initialControllerId":  "dummy",
-                                         "defaultControllerId":  "dummy",
+                                         "initialControllerId":  "ai",
+                                         "defaultControllerId":  "ai",
                                          "abilityIds":  [
 
                                                         ],

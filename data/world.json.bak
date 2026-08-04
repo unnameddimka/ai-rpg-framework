@@ -1,7 +1,18 @@
 {
-  "schemaVersion": 1,
-  "protectedLocationIds": ["tavernEntrance", "bar", "commonRoom"],
-  "protectedSublocationIds": ["tavernEntranceFloor", "barBehindCounter", "commonRoomTableOne"],
+  "schemaVersion": 2,
+  "startLocationId": "tavernEntrance",
+  "protectedLocationIds": [
+    "tavernEntrance",
+    "bar",
+    "commonRoom"
+  ],
+  "protectedSublocationIds": [
+    "tavernEntranceFloor",
+    "barBehindCounter",
+    "commonRoomTableOne"
+  ],
+  "protectedCharacterIds": ["player", "hoodedWoman", "innkeeper"],
+  "protectedAbilityIds": ["readAura"],
   "locations": {
     "tavernEntrance": {
       "id": "tavernEntrance",
@@ -29,7 +40,9 @@
           "selfText": "You are standing near the tavern entrance.",
           "occupantTemplate": "{name} stands near the tavern entrance.",
           "capacity": 20,
-          "reachableSublocationIds": ["tavernEntranceFloor"]
+          "reachableSublocationIds": [
+            "tavernEntranceFloor"
+          ]
         }
       }
     },
@@ -44,7 +57,10 @@
       ],
       "defaultSublocationId": "barPublicSide",
       "inventoryId": "inventory_bar",
-      "exits": { "tavernEntrance": "tavernEntrance" },
+      "exits": {
+        "tavernEntrance": "tavernEntrance",
+        "commonRoom": "commonRoom"
+      },
       "sublocations": {
         "barPublicSide": {
           "id": "barPublicSide",
@@ -56,7 +72,10 @@
           "selfText": "You are standing on the public side of the counter.",
           "occupantTemplate": "{name} stands on the public side of the counter.",
           "capacity": 20,
-          "reachableSublocationIds": ["barPublicSide", "barBehindCounter"]
+          "reachableSublocationIds": [
+            "barPublicSide",
+            "barBehindCounter"
+          ]
         },
         "barBehindCounter": {
           "id": "barBehindCounter",
@@ -68,8 +87,13 @@
           "selfText": "You are standing behind the bar.",
           "occupantTemplate": "{name} stands behind the bar.",
           "capacity": 2,
-          "capabilities": ["pour_ale"],
-          "reachableSublocationIds": ["barBehindCounter", "barPublicSide"]
+          "capabilities": [
+            "pour_ale"
+          ],
+          "reachableSublocationIds": [
+            "barBehindCounter",
+            "barPublicSide"
+          ]
         }
       }
     },
@@ -84,7 +108,10 @@
       ],
       "defaultSublocationId": "commonRoomFloor",
       "inventoryId": "inventory_commonRoom",
-      "exits": { "tavernEntrance": "tavernEntrance" },
+      "exits": {
+        "tavernEntrance": "tavernEntrance",
+        "bar": "bar"
+      },
       "sublocations": {
         "commonRoomFloor": {
           "id": "commonRoomFloor",
@@ -95,7 +122,11 @@
           "selfText": "You are standing in the common room.",
           "occupantTemplate": "{name} stands in the common room.",
           "capacity": 20,
-          "reachableSublocationIds": ["commonRoomFloor", "commonRoomTableOne", "commonRoomTableTwo"]
+          "reachableSublocationIds": [
+            "commonRoomFloor",
+            "commonRoomTableOne",
+            "commonRoomTableTwo"
+          ]
         },
         "commonRoomTableOne": {
           "id": "commonRoomTableOne",
@@ -107,8 +138,12 @@
           "selfText": "You are sitting at the first table.",
           "occupantTemplate": "{name} sits at the first table.",
           "capacity": 4,
+          "capabilities": ["place_item"],
           "inventoryId": "inventory_commonRoomTableOne",
-          "reachableSublocationIds": ["commonRoomTableOne", "commonRoomFloor"]
+          "reachableSublocationIds": [
+            "commonRoomTableOne",
+            "commonRoomFloor"
+          ]
         },
         "commonRoomTableTwo": {
           "id": "commonRoomTableTwo",
@@ -120,8 +155,12 @@
           "selfText": "You are sitting at the second table.",
           "occupantTemplate": "{name} sits at the second table.",
           "capacity": 4,
+          "capabilities": ["place_item"],
           "inventoryId": "inventory_commonRoomTableTwo",
-          "reachableSublocationIds": ["commonRoomTableTwo", "commonRoomFloor"]
+          "reachableSublocationIds": [
+            "commonRoomTableTwo",
+            "commonRoomFloor"
+          ]
         }
       }
     },
@@ -136,7 +175,9 @@
       ],
       "defaultSublocationId": "streetCenter",
       "inventoryId": "inventory_street",
-      "exits": { "tavernEntrance": "tavernEntrance" },
+      "exits": {
+        "tavernEntrance": "tavernEntrance"
+      },
       "sublocations": {
         "streetCenter": {
           "id": "streetCenter",
@@ -147,9 +188,55 @@
           "selfText": "You are standing in the village street.",
           "occupantTemplate": "{name} stands in the village street.",
           "capacity": 20,
-          "reachableSublocationIds": ["streetCenter"]
+          "reachableSublocationIds": [
+            "streetCenter"
+          ]
         }
       }
+    }
+  },
+  "characters": {
+    "player": {
+      "id": "player", "name": "You",
+      "playerDescription": "A rain-soaked traveller takes in the surroundings.",
+      "interactionLabel": "Speak with the traveller",
+      "aiDescription": "You are a traveller newly arrived at a roadside tavern.",
+      "locationId": "tavernEntrance", "sublocationId": "tavernEntranceFloor",
+      "inventoryId": "inventory_player", "wallet": 10,
+      "initialControllerId": "human", "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": { "aura": "A faint current of unrealized potential surrounds the traveller." },
+      "initialMind": { "knownFacts": [], "beliefs": [], "relationships": [], "recentMemories": [], "longTermMemories": [] }
+    },
+    "hoodedWoman": {
+      "id": "hoodedWoman", "name": "Hooded woman",
+      "playerDescription": "A hooded woman watches the room from beneath the edge of her hood.",
+      "interactionLabel": "Speak with the hooded woman",
+      "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.",
+      "locationId": "commonRoom", "sublocationId": "commonRoomTableOne",
+      "inventoryId": "inventory_hoodedWoman", "wallet": 8,
+      "initialControllerId": "ai", "defaultControllerId": "ai",
+      "abilityIds": ["readAura"],
+      "engineFacts": { "aura": "A quiet, disciplined magical presence surrounds her." },
+      "initialMind": { "knownFacts": [], "beliefs": [], "relationships": [{"targetCharacterId":"player","summary":"You do not know this traveller yet."}], "recentMemories": [], "longTermMemories": [] }
+    },
+    "innkeeper": {
+      "id": "innkeeper", "name": "Innkeeper",
+      "playerDescription": "The innkeeper wipes a wooden mug with a worn cloth.",
+      "interactionLabel": "Speak with the innkeeper",
+      "aiDescription": "You are the practical innkeeper of this roadside tavern.",
+      "locationId": "bar", "sublocationId": "barBehindCounter",
+      "inventoryId": "inventory_innkeeper", "wallet": 25,
+      "initialControllerId": "dummy", "defaultControllerId": "dummy",
+      "abilityIds": [], "engineFacts": {},
+      "initialMind": { "knownFacts": [], "beliefs": [], "relationships": [], "recentMemories": [], "longTermMemories": [] }
+    }
+  },
+  "abilities": {
+    "readAura": {
+      "id": "readAura", "name": "Read aura", "actionType": "read_aura",
+      "playerDescription": "Sense the hidden auras of everyone you can currently perceive.",
+      "aiDescription": "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
     }
   }
 }

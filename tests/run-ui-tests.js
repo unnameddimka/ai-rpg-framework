@@ -15,6 +15,7 @@ const context = {
 vm.createContext(context);
 vm.runInContext(uiSource, context, { filename: "30-game-ui.js" });
 const model = context.setup.AbilityUIModel;
+const promptLabModel = context.setup.PromptLabUIModel;
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function viewFor(actorId, abilityIds, grant) {
     return {
@@ -67,11 +68,54 @@ assert(model.getActorAbilityResult(state, "player").marker === "private-player" 
 
 const aiPanelSource = uiSource.slice(uiSource.indexOf('id="ai-settings-panel"'), uiSource.indexOf("`;", uiSource.indexOf('id="ai-settings-panel"')));
 assert(aiPanelSource.includes("Provider: OpenRouter") && aiPanelSource.includes("Model: Cydonia 24B V4.1") &&
-    aiPanelSource.includes('type="password"') && aiPanelSource.includes("Take next AI turn"),
-    "AI panel should show fixed provider/model, password key input, and one global queue button");
+    aiPanelSource.includes('type="password"') && aiPanelSource.includes("Process next AI event"),
+    "AI panel should show fixed provider/model, password key input, and one global scheduler button");
 assert(!aiPanelSource.includes("<select") && !uiSource.includes("ai-character-select"),
     "AI queue UI must not contain a character picker");
 assert(uiSource.includes("!aiQueue.head || !aiSettings.hasKey || aiBusy"),
     "queue button should disable for empty queue, missing key, or in-flight request");
+
+assert(uiSource.includes('view.location.id !== "villageTemple"') &&
+    uiSource.includes("Scheduler queue") &&
+    uiSource.includes("Inspect request") &&
+    uiSource.includes("Dry-run exact request") &&
+    uiSource.includes("Process live"),
+    "the village-temple crystal sphere should expose the scheduler queue and dry-run/live controls only in its special room");
+const escapedTrace = promptLabModel.traceMarkup({ trace: { attempts: [{
+    attempt: 1,
+    kind: "initial",
+    messages: [{ role: "user", content: "<unsafe request>" }],
+    rawContent: "<img src=x onerror=alert(1)>",
+    parsedValue: { text: "<unsafe parsed>" },
+    validationErrors: ["<unsafe error>"],
+    usage: null
+}] } });
+assert(!escapedTrace.includes("<img") && escapedTrace.includes("&lt;img") &&
+    escapedTrace.includes("&lt;unsafe error&gt;") && escapedTrace.includes("&lt;unsafe request&gt;"),
+    "prompt-lab request, response, parsed JSON, and validation errors should be HTML escaped");
+
+const escapedQueue = promptLabModel.queueMarkup({
+    busy: false,
+    selectedQueueCharacterId: "unsafe",
+    queue: {
+        count: 1,
+        entries: [{
+            position: 1,
+            isNext: true,
+            characterId: "unsafe",
+            recipientName: "<img src=x onerror=alert(1)>",
+            locationName: "<& location>",
+            reason: "<unsafe reason>",
+            requestObservationCount: 1,
+            availableActionCount: 2,
+            observationPreview: [{ turn: 7, type: "<event>", summary: "<unsafe observation>" }],
+            hiddenObservationCount: 0
+        }]
+    }
+}, true);
+assert(!escapedQueue.includes("<img") && escapedQueue.includes("&lt;img") &&
+    escapedQueue.includes("NEXT REQUEST") && escapedQueue.includes("Recipient") &&
+    escapedQueue.includes("&lt;unsafe observation&gt;"),
+    "prompt-lab queue cards should identify the next recipient/event and escape authored or model-adjacent text");
 
 console.log("All ability UI tests passed.");

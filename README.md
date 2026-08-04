@@ -23,7 +23,10 @@ src/20-controllers.js   Human, Dummy, and manual AI-turn orchestration
 src/21-ai-settings.js   Transient key and optional 24-hour persistence
 src/22-openrouter-client.js Fixed browser-side OpenRouter client
 src/23-ai-protocol.js   JSON-only prompt protocol, parsing, validation, repair
-src/30-game-ui.js       Browser controls and character takeover UI
+src/24-ai-request-executor.js Shared serialized request transport and cooldown policy
+src/24-ai-turn-scheduler.js Manual scheduler facade and queue/request projections
+src/24-prompt-lab.js    Transient scheduler/prompt debugger
+src/30-game-ui.js       Browser controls, scheduler queue, sphere lab, and takeover UI
 src/styles.css          Framework UI styles
 data/world.json         Authoritative locations, characters, minds, and abilities
 editor/world-editor.html Standalone offline world editor
@@ -87,10 +90,10 @@ streaming, automatic turns, or queue draining.
 2. Enter an OpenRouter API key. The password field is cleared after saving.
 3. Optionally enable **Remember for 24 hours**. Otherwise the key remains in memory only
    until the page closes.
-4. Create a visible event for an AI-controlled character. The sidebar will show the next
-   eligible queued character.
-5. Press **Take next AI turn**. One press processes at most one character and one formal
-   action.
+4. Create a visible event for an AI-controlled character. The sidebar shows the next
+   recipient and a short description of the first pending observation.
+5. Press **Process next AI event**. One press processes only the queue head and at most one
+   formal action. There is no timer or automatic queue draining yet.
 
 The key is never stored in SugarCube state, saves, world data, generated artifacts,
 controller logs, copied AI context, or visible errors. Optional persistence uses a
@@ -99,9 +102,29 @@ clears both persisted and in-memory copies. Browser storage can fail for `file:/
 in that case the game displays a warning and safely keeps the key in memory only.
 
 OpenRouter requests require browser network/CORS access and account credit. Authentication,
-credit, rate-limit, provider, and network failures are shown as short safe messages. Failed
-requests retain the queue entry and observations for retry. A failed second-stage request
-also rolls back the preceding formal action completely.
+credit, rate-limit, provider, and network failures are shown as short safe messages. All game,
+repair, and sphere requests pass through one serialized `AIRequestExecutor`. It leaves at
+least one second between live transport calls and honors OpenRouter `Retry-After`; it does not
+automatically retry a 429. Failed requests retain the queue entry and observations for retry.
+A failed second-stage request also rolls back the preceding formal action completely.
+
+## Crystal-sphere prompt lab
+
+From the street, enter the temporary **Village temple** and approach the crystal sphere.
+This room is a development-only prompt laboratory wired to the same context builder,
+OpenRouter client, JSON parser, schema validator, and one-repair protocol as real AI turns.
+
+The sphere shows the complete scheduler queue as ordered cards. Each card identifies the
+recipient, location, queue reason, request size, and a preview of the observations that will
+be sent. The first card is marked as the next live request. Any queued request may be
+inspected or dry-run; only the queue head exposes **Process live**, which invokes the same
+manual scheduler as the sidebar and advances the real world on success.
+
+The loaded request panel still supports exact and edited-system-prompt dry runs and displays
+every initial/repair attempt, raw assistant content, parsed JSON, concrete validation errors,
+messages, and provider usage. Dry runs never execute actions, write narrative, update memory,
+consume observations, or advance the queue. The room is intentionally hard-coded and can be
+removed from the final build later.
 
 ## Test without Tweego
 
@@ -123,8 +146,10 @@ The tests verify the HumanController invariant, action grants, generic ability d
 targetless aura scans, escaped and actor-isolated private result display, normalized feedback,
 observation privacy, restricted views and context, mind save round trips, movement, inventory
 and money transfer, editor validation, generator rejection, queue ordering and repair,
-mocked OpenRouter responses, key expiry/leak prevention, protocol repair, atomic AI
-transactions, rollback safety, and controller switching. Automated tests never contact the
+mocked OpenRouter responses, key expiry/leak prevention, detailed protocol diagnostics,
+scheduler request projection, executor serialization and timing, prompt-lab dry-run isolation,
+live sphere scheduling, protocol repair, atomic AI transactions, rollback safety, and
+controller switching. Automated tests never contact the
 live OpenRouter API.
 
 ## Development workflow

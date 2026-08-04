@@ -84,6 +84,7 @@ tavernEntrance  → The Tavern
 bar              → The Bar
 commonRoom       → The Common Room
 street           → The Street
+villageTemple    → The Village Temple (temporary prompt-lab room)
 ```
 
 The build generator must:
@@ -95,7 +96,10 @@ The build generator must:
 
 The obsolete generic-location-passage design is not authoritative.
 
-Internal sublocations remain runtime entities rather than passages.
+Internal sublocations remain runtime entities rather than passages. The temporary
+`villageTemple` location is ordinary world data, but `src/30-game-ui.js` recognizes its ID
+and renders a development-only crystal-sphere prompt lab there. The lab itself is transient
+browser state and never enters the deterministic world or SugarCube saves.
 
 ## 5. Character authoring definition
 
@@ -114,8 +118,8 @@ Example:
   "sublocationId": "commonRoomTableOne",
   "inventoryId": "inventory_hoodedWoman",
   "wallet": 8,
-  "initialControllerId": "dummy",
-  "defaultControllerId": "dummy",
+  "initialControllerId": "ai",
+  "defaultControllerId": "ai",
   "abilityIds": ["readAura"],
   "engineFacts": {
     "aura": "A quiet, disciplined magical presence surrounds her."
@@ -156,7 +160,7 @@ The runtime character owns physical state and mind state:
   sublocationId: "commonRoomTableOne",
   inventoryId: "inventory_hoodedWoman",
   wallet: 8,
-  defaultControllerId: "dummy",
+  defaultControllerId: "ai",
   abilityIds: ["readAura"],
   mind: {
     knownFacts: [],
@@ -606,18 +610,15 @@ The following remain later work:
 
 ## 21. Manual AI turn queue
 
-The first model integration is deterministic and manually advanced. The UI does not ask the user to pick an AI character. It exposes a single queue head:
+The first model integration is deterministic and manually advanced. The sidebar does not ask the user to pick an AI character. It shows the queue head as a recipient plus an event preview:
 
 ```text
-Next AI turn: Hooded woman
-[Take next AI turn]
+Next recipient: Hooded woman
+Event: You to Hooded woman: “Hello there.”
+[Process next AI event]
 ```
 
-When empty:
-
-```text
-No pending AI turns
-```
+When empty it shows `No pending AI turns`. The temporary crystal sphere may render the full queue, but live execution still follows queue order.
 
 The runtime world owns a JSON-serializable queue, conceptually:
 
@@ -685,9 +686,24 @@ The key must never be present in:
 - debug world dumps;
 - error bodies shown to the player.
 
+### 22.1 Shared request executor
+
+Every game-stage, repair, and prompt-lab request passes through `setup.AIRequestExecutor`.
+It serializes executions, prevents overlapping transport calls, and leaves at least one
+second between live OpenRouter calls. HTTP 429 responses may provide `Retry-After`; the
+executor extends its cooldown accordingly and exposes the remaining delay to the debug UI.
+It never performs a general automatic retry. The protocol still permits exactly one repair
+request for invalid JSON, and that repair passes through the same timing policy.
+
 ## 23. One queued AI turn
 
-`Take next AI turn` processes only the first eligible queue entry. The button is disabled while the request is in flight.
+`setup.AITurnScheduler.processNext()` processes only the first eligible queue entry. The
+sidebar button and the crystal sphere's live control both call this operation. There is no
+timer yet, so a scheduler invocation happens only after a user action.
+
+`setup.AITurnScheduler.buildDecisionRequest(characterId)` is the single source for the exact
+restricted decision request represented by a queue entry. It is used by both live turns and
+sphere inspection/dry runs.
 
 At turn start:
 
@@ -795,11 +811,12 @@ The AI panel should show:
 
 - key status without revealing the key;
 - fixed provider and model;
-- queue head and queue length;
-- `Take next AI turn`;
+- next scheduler recipient, first-event preview, and queue length;
+- `Process next AI event`;
+- shared executor busy/cooldown information where useful;
 - last safe error;
 - last token usage and cost when returned by OpenRouter;
-- optional transient `Copy AI context` and `Show last raw response` controls, with credentials excluded.
+- optional transient request/response diagnostics, with credentials excluded.
 
 Raw prompts and responses are never saved.
 
@@ -816,3 +833,31 @@ This integration does not add:
 - memory compression or token budgeting;
 - target-form generation for human abilities;
 - editable ability effects or arbitrary scripts.
+
+
+## Temporary crystal-sphere scheduler and prompt lab
+
+The sphere renders `AITurnScheduler.getQueueView()` as ordered cards. Each card shows the
+recipient, location, queue reason, pending-observation count, available-action count, and a
+preview of the observation bundle. The first card is marked as the exact next live request.
+Any card may be inspected or dry-run, but only the queue head may be processed live.
+
+`src/24-prompt-lab.js` reuses the production `AITurnScheduler`, `AIRequestExecutor`,
+`ContextBuilder`, and `AIProtocol`. It may capture any queued decision request or the last
+request actually issued by `AIController`. Dry-running or retrying a loaded request does not
+call `CharacterAPI.perform()`, `CharacterAPI.narrate()`, `AIMemory.applyUpdates()`, or
+observation consumption. The sphere's explicit **Process live** control is different: it
+invokes the same manual scheduler as the sidebar and commits a normal AI turn.
+
+The protocol returns a transient trace containing:
+
+- the stage and original messages;
+- each initial/repair attempt;
+- raw assistant content;
+- parsed JSON when parsing succeeds;
+- exact validation errors;
+- usage data and final status.
+
+The trace and edited prompt are closure-owned browser debug data. They are not stored in
+`State.variables.world`, saves, authoring data, or generated world files, and they never
+contain the API key.

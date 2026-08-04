@@ -65,6 +65,29 @@
     border: 1px solid #666;
 }
 
+.framework-action-grid .framework-narrative-action {
+    grid-column: 1 / -1;
+    padding: 1rem;
+}
+
+.framework-narrative-action textarea {
+    min-height: 12rem;
+    resize: vertical;
+}
+
+.framework-narrative-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(8rem, auto);
+    gap: 0.65rem;
+    align-items: end;
+}
+
+@media (max-width: 700px) {
+    .framework-narrative-controls {
+        grid-template-columns: 1fr;
+    }
+}
+
 .framework-ability-panel {
     margin: 1rem 0;
     padding: 1rem;
@@ -111,4 +134,221 @@
     padding: 0.7rem;
     border: 1px solid #555;
     background: rgba(0, 0, 0, 0.25);
+}
+
+.prompt-lab-panel {
+    margin: 1.5rem 0;
+    padding: 1.2rem;
+    border: 1px solid #796ca8;
+    border-radius: 0.4rem;
+    background: radial-gradient(circle at top, rgba(109, 83, 160, 0.22), rgba(0, 0, 0, 0.22) 55%);
+}
+
+.prompt-lab-panel h3,
+.prompt-lab-panel h4,
+.prompt-lab-panel h5 {
+    margin-bottom: 0.45rem;
+}
+
+.prompt-lab-orb {
+    position: relative;
+    width: 9rem;
+    height: 9rem;
+    margin: 0 auto 1rem;
+    border-radius: 50%;
+    border: 2px solid rgba(225, 218, 255, 0.8);
+    background:
+        radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.95), rgba(180, 155, 255, 0.7) 9%, rgba(78, 48, 125, 0.82) 42%, rgba(10, 8, 24, 0.98) 78%);
+    box-shadow: 0 0 1.8rem rgba(154, 119, 255, 0.75), inset 0 0 1.2rem rgba(255, 255, 255, 0.35);
+}
+
+.prompt-lab-orb::after {
+    content: "";
+    position: absolute;
+    left: 15%;
+    right: 15%;
+    bottom: -1.15rem;
+    height: 1.25rem;
+    border-radius: 50%;
+    background: #5b4a37;
+    box-shadow: 0 0.55rem 0 #2e251d;
+}
+
+.prompt-lab-orb-glow {
+    position: absolute;
+    inset: 22%;
+    border-radius: 50%;
+    background: rgba(220, 210, 255, 0.26);
+    filter: blur(0.45rem);
+}
+
+.prompt-lab-button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin: 0.8rem 0;
+}
+
+.prompt-lab-button-row button {
+    flex: 1 1 12rem;
+}
+
+.prompt-lab-source,
+.prompt-lab-results {
+    margin-top: 1rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid rgba(200, 190, 230, 0.35);
+}
+
+.prompt-lab-panel textarea {
+    width: 100%;
+    min-height: 14rem;
+    box-sizing: border-box;
+    resize: vertical;
+    margin-top: 0.45rem;
+    font-family: Consolas, "Courier New", monospace;
+}
+
+.prompt-lab-panel pre {
+    max-height: 32rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding: 0.75rem;
+    border: 1px solid #625b78;
+    background: rgba(0, 0, 0, 0.28);
+}
+
+.prompt-lab-attempt {
+    margin: 0.8rem 0;
+    padding: 0.55rem;
+    border: 1px solid rgba(160, 145, 195, 0.55);
+}
+
+.prompt-lab-warning {
+    min-height: 1.2em;
+    font-style: italic;
+}
+
+.prompt-lab-queue {
+    margin-top: 1rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid rgba(200, 190, 230, 0.35);
+}
+
+.prompt-lab-section-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.prompt-lab-queue-entry {
+    margin: 0.85rem 0;
+    padding: 0.9rem;
+    border: 1px solid rgba(160, 145, 195, 0.55);
+    border-radius: 0.35rem;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.prompt-lab-queue-entry.is-next {
+    border-width: 2px;
+    box-shadow: 0 0 0.8rem rgba(154, 119, 255, 0.3);
+}
+
+.prompt-lab-queue-entry.is-selected {
+    outline: 2px solid rgba(225, 218, 255, 0.7);
+    outline-offset: 2px;
+}
+
+.prompt-lab-queue-entry header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.prompt-lab-queue-number,
+.prompt-lab-next-badge,
+.prompt-lab-loaded-badge,
+.prompt-lab-observation-type,
+.prompt-lab-observation-turn {
+    display: inline-block;
+    padding: 0.12rem 0.42rem;
+    border-radius: 0.25rem;
+    font-size: 0.8em;
+}
+
+.prompt-lab-queue-number {
+    border: 1px solid rgba(225, 218, 255, 0.45);
+}
+
+.prompt-lab-next-badge {
+    background: rgba(124, 91, 190, 0.75);
+    font-weight: bold;
+}
+
+.prompt-lab-loaded-badge {
+    background: rgba(70, 110, 95, 0.75);
+    font-weight: bold;
+}
+
+.prompt-lab-queue-entry dl {
+    display: grid;
+    grid-template-columns: minmax(7rem, 10rem) 1fr;
+    gap: 0.28rem 0.7rem;
+    margin: 0.6rem 0;
+}
+
+.prompt-lab-queue-entry dt {
+    font-weight: bold;
+}
+
+.prompt-lab-queue-entry dd {
+    margin: 0;
+}
+
+.prompt-lab-observation-list {
+    margin-top: 0.7rem;
+    padding: 0.65rem;
+    border-left: 3px solid rgba(154, 119, 255, 0.65);
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.prompt-lab-observation-list ol {
+    margin-bottom: 0;
+    padding-left: 1.5rem;
+}
+
+.prompt-lab-observation-list li {
+    margin: 0.45rem 0;
+}
+
+.prompt-lab-observation-type {
+    background: rgba(100, 88, 130, 0.55);
+}
+
+.prompt-lab-observation-turn {
+    opacity: 0.75;
+}
+
+.prompt-lab-more,
+.prompt-lab-queue-empty {
+    opacity: 0.85;
+}
+
+.prompt-lab-queue-empty {
+    padding: 0.9rem;
+    border: 1px dashed rgba(160, 145, 195, 0.55);
+}
+
+.prompt-lab-secondary-controls {
+    margin-top: 1rem;
+}
+
+@media (max-width: 700px) {
+    .prompt-lab-queue-entry dl {
+        grid-template-columns: 1fr;
+    }
 }

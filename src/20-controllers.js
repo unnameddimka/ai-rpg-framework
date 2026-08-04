@@ -3,8 +3,14 @@
 
     let inFlight = false;
     setup.AITransientDebug = {
-        lastContext: null, lastMessages: null, lastRawContent: "", lastParsedResponse: null,
-        lastUsage: null, lastSafeError: ""
+        lastContext: null,
+        lastMessages: null,
+        lastRawContent: "",
+        lastParsedResponse: null,
+        lastUsage: null,
+        lastSafeError: "",
+        lastRequest: null,
+        lastTrace: null
     };
 
     function log(controllerId, actorId, message) {
@@ -77,6 +83,29 @@
         setup.AITransientDebug.lastSafeError = safe;
         return { ok: false, error: { code: error && error.code || "AI_TURN_FAILED", message: safe } };
     }
+
+    function recordProtocolResult(actorId, stage, messages, availableActions, result) {
+        const trace = result && result.trace ? clone(result.trace) : null;
+        const attempts = trace && Array.isArray(trace.attempts) ? trace.attempts : [];
+        const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+        setup.AITransientDebug.lastRequest = {
+            actorId: actorId,
+            stage: stage,
+            messages: clone(messages),
+            availableActions: clone(availableActions || {})
+        };
+        setup.AITransientDebug.lastTrace = trace;
+        setup.AITransientDebug.lastMessages = clone(messages);
+        setup.AITransientDebug.lastRawContent = result && typeof result.rawContent === "string"
+            ? result.rawContent
+            : (lastAttempt && lastAttempt.rawContent || "");
+        setup.AITransientDebug.lastParsedResponse = result && result.value
+            ? clone(result.value)
+            : (lastAttempt && lastAttempt.parsedValue ? clone(lastAttempt.parsedValue) : null);
+        setup.AITransientDebug.lastUsage = result && result.usage
+            ? clone(result.usage)
+            : (lastAttempt && lastAttempt.usage ? clone(lastAttempt.usage) : null);
+    }
     function commitResponse(actorId, responses, consumedIds) {
         const finalResponse = responses[responses.length - 1];
         const memoryResult = setup.AIMemory.applyUpdates(actorId, finalResponse.memoryUpdates);
@@ -107,18 +136,24 @@
         setup.AITransientDebug.lastSafeError = "";
         try {
             const actor = setup.Game.getWorld().entities[actorId];
-            const observations = clone(actor.mind.pendingObservations.slice(0, 50));
-            const originalIds = observations.map(function (item) { return item.id; });
-            const context = setup.ContextBuilder.build(actorId);
-            context.mind.pendingObservations = clone(observations);
-            const decisionMessages = setup.AIProtocol.decisionMessages(context, observations);
+            const request = setup.AITurnScheduler.buildDecisionRequest(actorId);
+            if (!request.ok) throw request.error;
+            const observations = clone(request.observations);
+            const originalIds = clone(request.observationIds);
+            const context = clone(request.context);
+            const decisionMessages = clone(request.messages);
             setup.AITransientDebug.lastContext = clone(context);
             setup.AITransientDebug.lastMessages = clone(decisionMessages);
-            const decisionResult = await setup.AIProtocol.requestValidated(decisionMessages, "decision", context.availableActions, client);
+            const decisionResult = await setup.AIRequestExecutor.execute({
+                actorId: actorId,
+                purpose: "game-decision",
+                messages: decisionMessages,
+                stage: "decision",
+                availableActions: context.availableActions,
+                client: client
+            });
+            recordProtocolResult(actorId, "decision", decisionMessages, context.availableActions, decisionResult);
             if (!decisionResult.ok) throw decisionResult.error;
-            setup.AITransientDebug.lastRawContent = decisionResult.rawContent;
-            setup.AITransientDebug.lastParsedResponse = clone(decisionResult.value);
-            setup.AITransientDebug.lastUsage = decisionResult.usage || null;
             const decision = decisionResult.value;
             if (decision.action === null) {
                 const committed = commitResponse(actorId, [decision], originalIds);
@@ -134,10 +169,16 @@
             }).map(function (item) { return item.id; });
             const resultMessages = setup.AIProtocol.resultMessages(context, observations, decision.action, actionResult);
             setup.AITransientDebug.lastMessages = clone(resultMessages);
-            const finalResult = await setup.AIProtocol.requestValidated(resultMessages, "result", context.availableActions, client);
+            const finalResult = await setup.AIRequestExecutor.execute({
+                actorId: actorId,
+                purpose: "game-result",
+                messages: resultMessages,
+                stage: "result",
+                availableActions: context.availableActions,
+                client: client
+            });
+            recordProtocolResult(actorId, "result", resultMessages, context.availableActions, finalResult);
             if (!finalResult.ok) throw finalResult.error;
-            setup.AITransientDebug.lastRawContent = finalResult.rawContent;
-            setup.AITransientDebug.lastParsedResponse = clone(finalResult.value);
             setup.AITransientDebug.lastUsage = finalResult.usage || decisionResult.usage || null;
             const committed = commitResponse(actorId, [decision, finalResult.value], originalIds.concat(actionFeedbackIds));
             log("ai", actorId, "Completed one grounded manual AI turn.");
@@ -152,7 +193,18 @@
 
     setup.AIController = {
         takeNextTurn: function (client) { const head = setup.AITurnQueue.peek(); return takeQueuedTurn(head && head.characterId, client || setup.OpenRouterClient); },
-        isInFlight: function () { return inFlight; },
-        clearDebug: function () { setup.AITransientDebug.lastContext = null; setup.AITransientDebug.lastMessages = null; setup.AITransientDebug.lastRawContent = ""; setup.AITransientDebug.lastParsedResponse = null; setup.AITransientDebug.lastUsage = null; setup.AITransientDebug.lastSafeError = ""; }
+        isInFlight: function () {
+            return inFlight || Boolean(setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus().busy);
+        },
+        clearDebug: function () {
+            setup.AITransientDebug.lastContext = null;
+            setup.AITransientDebug.lastMessages = null;
+            setup.AITransientDebug.lastRawContent = "";
+            setup.AITransientDebug.lastParsedResponse = null;
+            setup.AITransientDebug.lastUsage = null;
+            setup.AITransientDebug.lastSafeError = "";
+            setup.AITransientDebug.lastRequest = null;
+            setup.AITransientDebug.lastTrace = null;
+        }
     };
 }());

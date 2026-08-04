@@ -207,6 +207,223 @@
         root.appendChild(panel);
     }
 
+    function promptLabJson(value, emptyText) {
+        return value === null || value === undefined
+            ? escapeHtml(emptyText || "None")
+            : escapeHtml(JSON.stringify(value, null, 2));
+    }
+
+    function promptLabTraceMarkup(run) {
+        if (!run || !run.trace) {
+            return `<p>No prompt-lab response has been recorded.</p>`;
+        }
+        const attempts = Array.isArray(run.trace.attempts) ? run.trace.attempts : [];
+        return attempts.map(function (attempt) {
+            const errors = attempt.validationErrors && attempt.validationErrors.length
+                ? `<ul>${attempt.validationErrors.map(function (error) {
+                    return `<li>${escapeHtml(error)}</li>`;
+                }).join("")}</ul>`
+                : `<p>Protocol validation passed for this response.</p>`;
+            return `
+                <details class="prompt-lab-attempt"${attempt.attempt === attempts.length ? " open" : ""}>
+                    <summary>Attempt ${escapeHtml(attempt.attempt)} &mdash; ${escapeHtml(attempt.kind)}</summary>
+                    <h5>Messages sent</h5>
+                    <pre>${promptLabJson(attempt.messages, "No messages")}</pre>
+                    <h5>Raw model content</h5>
+                    <pre>${escapeHtml(attempt.rawContent || "(empty response)")}</pre>
+                    <h5>Parsed JSON</h5>
+                    <pre>${promptLabJson(attempt.parsedValue, "JSON parsing did not succeed.")}</pre>
+                    <h5>Validation</h5>
+                    ${errors}
+                    <h5>Usage</h5>
+                    <pre>${promptLabJson(attempt.usage, "No usage data")}</pre>
+                </details>
+            `;
+        }).join("");
+    }
+
+    function promptLabQueueMarkup(snapshot, hasKey) {
+        const queue = snapshot.queue;
+        if (!queue || !queue.entries || queue.entries.length === 0) {
+            return `<div class="prompt-lab-queue-empty">
+                <strong>The scheduler queue is empty.</strong>
+                <p>Speak or act near an AI-controlled character to create an observation for it.</p>
+            </div>`;
+        }
+        return queue.entries.map(function (entry) {
+            const selected = snapshot.selectedQueueCharacterId === entry.characterId;
+            const classes = ["prompt-lab-queue-entry"];
+            if (entry.isNext) classes.push("is-next");
+            if (selected) classes.push("is-selected");
+            const observations = entry.observationPreview.length
+                ? `<ol>${entry.observationPreview.map(function (observation) {
+                    const turn = observation.turn === null ? "" : ` <span class="prompt-lab-observation-turn">turn ${escapeHtml(observation.turn)}</span>`;
+                    return `<li><span class="prompt-lab-observation-type">${escapeHtml(observation.type)}</span>${turn}<br>${escapeHtml(observation.summary)}</li>`;
+                }).join("")}</ol>`
+                : `<p>No valid observation preview is available.</p>`;
+            const hidden = entry.hiddenObservationCount > 0
+                ? `<p class="prompt-lab-more">+ ${escapeHtml(entry.hiddenObservationCount)} more observations in this request batch</p>`
+                : "";
+            const liveButton = entry.isNext
+                ? `<button class="prompt-lab-process-live"${(!hasKey || snapshot.busy) ? " disabled" : ""}>Process live</button>`
+                : "";
+            return `
+                <article class="${classes.join(" ")}" data-character-id="${escapeHtml(entry.characterId)}">
+                    <header>
+                        <span class="prompt-lab-queue-number">#${escapeHtml(entry.position)}</span>
+                        ${entry.isNext ? `<span class="prompt-lab-next-badge">NEXT REQUEST</span>` : ""}
+                        ${selected ? `<span class="prompt-lab-loaded-badge">LOADED</span>` : ""}
+                    </header>
+                    <h5>${escapeHtml(entry.recipientName)}</h5>
+                    <dl>
+                        <dt>Recipient</dt><dd>${escapeHtml(entry.recipientName)} <code>${escapeHtml(entry.characterId)}</code></dd>
+                        <dt>Location</dt><dd>${escapeHtml(entry.locationName)}</dd>
+                        <dt>Queued because</dt><dd>${escapeHtml(entry.reason)}</dd>
+                        <dt>Request</dt><dd>Decision stage; ${escapeHtml(entry.requestObservationCount)} observation(s); ${escapeHtml(entry.availableActionCount)} formal action type(s)</dd>
+                    </dl>
+                    <div class="prompt-lab-observation-list">
+                        <strong>Observations that will be sent</strong>
+                        ${observations}
+                        ${hidden}
+                    </div>
+                    <div class="prompt-lab-button-row">
+                        <button class="prompt-lab-inspect-queue"${snapshot.busy ? " disabled" : ""}>Inspect request</button>
+                        <button class="prompt-lab-test-queue"${(!hasKey || snapshot.busy) ? " disabled" : ""}>Dry run</button>
+                        ${liveButton}
+                    </div>
+                </article>`;
+        }).join("");
+    }
+
+    function renderPromptLab(root, view) {
+        if (!view || !view.location || view.location.id !== "villageTemple" || !setup.PromptLab) {
+            return;
+        }
+        const snapshot = setup.PromptLab.getSnapshot();
+        const source = snapshot.sourceRequest;
+        const hasKey = setup.AIRuntimeSettings && setup.AIRuntimeSettings.getStatus().hasKey;
+        const disabledForRequest = snapshot.busy || !hasKey;
+        const sourceInfo = source
+            ? `${escapeHtml(source.label)}<br>Actor: ${escapeHtml(source.actorName)}<br>Stage: ${escapeHtml(source.stage)}`
+            : "No request is loaded.";
+        const keyWarning = hasKey ? "" : "Enter and save an OpenRouter key in the sidebar before sending a request.";
+        const lastRunSummary = snapshot.lastRun
+            ? `<strong>Last dry run:</strong> ${snapshot.lastRun.ok ? "valid" : "failed"}`
+            : "<strong>Last dry run:</strong> none";
+        const executorStatus = snapshot.executor && snapshot.executor.cooldownRemainingMs > 0
+            ? `Shared request executor: next network call waits about ${Math.max(1, Math.ceil(snapshot.executor.cooldownRemainingMs / 1000))} second(s).`
+            : `Shared request executor: ready; minimum interval ${escapeHtml(setup.AIRequestExecutor.MIN_INTERVAL_MS)} ms.`;
+
+        const panel = document.createElement("section");
+        panel.id = "prompt-lab-panel";
+        panel.className = "prompt-lab-panel";
+        panel.innerHTML = `
+            <div class="prompt-lab-orb" aria-hidden="true">
+                <div class="prompt-lab-orb-glow"></div>
+            </div>
+            <h3>The crystal sphere</h3>
+            <p>The sphere shows the scheduler queue in its real execution order. The first card is the exact character request the scheduler will process next.</p>
+            <p><strong>Inspect request</strong> and <strong>Dry run</strong> never change the world. <strong>Process live</strong> uses the same scheduler as the sidebar, applies the result, and advances the queue.</p>
+            <div id="prompt-lab-status" class="framework-status">${escapeHtml(snapshot.status || "")}</div>
+            <div class="framework-status">${escapeHtml(executorStatus)}</div>
+            <div class="prompt-lab-warning">${escapeHtml(keyWarning)}</div>
+
+            <section class="prompt-lab-queue">
+                <div class="prompt-lab-section-heading">
+                    <h4>Scheduler queue</h4>
+                    <span>${escapeHtml(snapshot.queue.count)} pending character turn(s)</span>
+                </div>
+                ${promptLabQueueMarkup(snapshot, hasKey)}
+            </section>
+
+            <div class="prompt-lab-button-row prompt-lab-secondary-controls">
+                <button id="prompt-lab-load-last"${(!snapshot.hasLastGameRequest || snapshot.busy) ? " disabled" : ""}>Inspect last game request</button>
+                <button id="prompt-lab-clear"${snapshot.busy ? " disabled" : ""}>Clear sphere</button>
+            </div>
+
+            <section class="prompt-lab-source">
+                <h4>Loaded request</h4>
+                <p>${sourceInfo}</p>
+                <label for="prompt-lab-system-prompt">Editable system prompt</label>
+                <textarea id="prompt-lab-system-prompt" rows="12"${(!source || snapshot.busy) ? " disabled" : ""}>${escapeHtml(snapshot.editedSystemPrompt || "")}</textarea>
+                <div class="prompt-lab-button-row">
+                    <button id="prompt-lab-retry-exact"${(!source || disabledForRequest) ? " disabled" : ""}>Dry-run exact request</button>
+                    <button id="prompt-lab-retry-edited"${(!source || disabledForRequest) ? " disabled" : ""}>Dry-run edited system prompt</button>
+                </div>
+                <details>
+                    <summary>Exact messages that will be sent</summary>
+                    <pre>${promptLabJson(source && source.messages, "No request loaded")}</pre>
+                </details>
+                <details>
+                    <summary>Available formal actions used for validation</summary>
+                    <pre>${promptLabJson(source && source.availableActions, "No request loaded")}</pre>
+                </details>
+            </section>
+
+            <section class="prompt-lab-results">
+                <h4>Protocol trace</h4>
+                <p>${lastRunSummary}</p>
+                ${promptLabTraceMarkup(snapshot.lastRun)}
+            </section>
+        `;
+        root.appendChild(panel);
+
+        function redraw() {
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
+        }
+
+        function showImmediateStatus(message) {
+            const status = document.getElementById("prompt-lab-status");
+            if (status) status.textContent = message;
+        }
+
+        $(".prompt-lab-inspect-queue").on("click", function () {
+            const characterId = $(this).closest(".prompt-lab-queue-entry").attr("data-character-id");
+            const result = setup.PromptLab.loadQueuedDecision(characterId);
+            if (!result.ok) showImmediateStatus(result.error.message);
+            redraw();
+        });
+
+        $(".prompt-lab-test-queue").on("click", async function () {
+            const characterId = $(this).closest(".prompt-lab-queue-entry").attr("data-character-id");
+            showImmediateStatus(`The crystal sphere is dry-running the queued request for ${characterId}...`);
+            await setup.PromptLab.testQueued(characterId);
+            redraw();
+        });
+
+        $(".prompt-lab-process-live").on("click", async function () {
+            showImmediateStatus("The crystal sphere is processing the next scheduler entry live...");
+            await setup.PromptLab.processNextLive();
+            redraw();
+        });
+
+        $("#prompt-lab-load-last").on("click", function () {
+            const result = setup.PromptLab.loadLastGameRequest();
+            if (!result.ok) showImmediateStatus(result.error.message);
+            redraw();
+        });
+
+        $("#prompt-lab-retry-exact").on("click", async function () {
+            showImmediateStatus("The crystal sphere is dry-running the exact request...");
+            await setup.PromptLab.retryExact();
+            redraw();
+        });
+
+        $("#prompt-lab-retry-edited").on("click", async function () {
+            const prompt = $("#prompt-lab-system-prompt").val();
+            showImmediateStatus("The crystal sphere is dry-running the request with the edited system prompt...");
+            await setup.PromptLab.retryEdited(prompt);
+            redraw();
+        });
+
+        $("#prompt-lab-clear").on("click", function () {
+            setup.PromptLab.clear();
+            redraw();
+        });
+    }
+
     function renderLocationView() {
         const root = document.getElementById("location-view");
         if (!root) {
@@ -235,6 +452,8 @@
         view.location.characters.forEach(function (character) {
             appendTextElement(root, "p", `${character.presence_text} ${character.position_text}`);
         });
+
+        renderPromptLab(root, view);
 
         if (view.location.characters.length > 0) {
             const interactions = document.createElement("div");
@@ -353,13 +572,15 @@
             setup.AIRuntimeSettings.readSaved();
             aiSettingsInitialized = true;
         }
-        const aiQueue = setup.AITurnQueue.getStatus();
+        const aiQueue = setup.AITurnScheduler.getQueueView();
         const aiSettings = setup.AIRuntimeSettings.getStatus();
-        const aiBusy = setup.AIController.isInFlight();
+        const aiBusy = setup.AIController.isInFlight() || setup.AIRequestExecutor.getStatus().busy;
         const usage = setup.AITransientDebug.lastUsage;
         const usageText = usage ? `Usage: ${escapeHtml(JSON.stringify(usage))}` : "";
         const queueText = aiQueue.head
-            ? `Next AI turn: ${escapeHtml(aiQueue.head.name)}<br>Pending AI characters: ${aiQueue.count}`
+            ? `Next recipient: ${escapeHtml(aiQueue.head.recipientName)}<br>` +
+                `Event: ${escapeHtml(aiQueue.head.primaryObservation && aiQueue.head.primaryObservation.summary || aiQueue.head.reason)}<br>` +
+                `Pending character turns: ${aiQueue.count}`
             : "No pending AI turns";
 
         root.innerHTML = `
@@ -399,9 +620,9 @@
                 <div id="ai-settings-status" class="framework-status">${escapeHtml(aiSettings.warning || "")}</div>
             </div>
             <div class="framework-sidebar-block" id="ai-turn-panel">
-                <strong>Manual AI queue</strong><br>
+                <strong>AI turn scheduler</strong><br>
                 <span id="ai-queue-status">${queueText}</span><br>
-                <button id="take-next-ai-turn"${(!aiQueue.head || !aiSettings.hasKey || aiBusy) ? " disabled" : ""}>Take next AI turn</button>
+                <button id="take-next-ai-turn"${(!aiQueue.head || !aiSettings.hasKey || aiBusy) ? " disabled" : ""}>Process next AI event</button>
                 <div id="ai-turn-status" class="framework-status">${escapeHtml(setup.AITransientDebug.lastSafeError || "")}</div>
                 <div id="ai-usage-status" class="framework-status">${usageText}</div>
             </div>
@@ -457,8 +678,8 @@
 
         $("#take-next-ai-turn").on("click", async function () {
             $(this).prop("disabled", true);
-            $("#ai-turn-status").text("Taking one AI turn...");
-            const result = await setup.AIController.takeNextTurn();
+            $("#ai-turn-status").text("Scheduler is processing the next AI event...");
+            const result = await setup.AITurnScheduler.processNext();
             setup.AITransientDebug.lastSafeError = result.ok ? "" : result.error.message;
             renderSidebar();
             renderLocationView();
@@ -532,6 +753,24 @@
             <div id="framework-action-status" class="framework-status"></div>
 
             <div class="framework-action-grid">
+                <fieldset class="framework-narrative-action">
+                    <legend>Speak / narrative action</legend>
+                    <textarea id="action-narrative-text" rows="8" placeholder="Speech outside *asterisks*, actions inside them."></textarea>
+                    <div class="framework-narrative-controls">
+                        <select id="action-narrative-target">
+                            <option value="">No addressee</option>
+                            ${visibleTargets.map(function (target) {
+                                return `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`;
+                            }).join("")}
+                        </select>
+                        <select id="action-narrative-noticeability">
+                            <option value="noticeable">Noticeable</option>
+                            <option value="hidden">Hidden</option>
+                        </select>
+                        <button id="action-narrate">Submit</button>
+                    </div>
+                </fieldset>
+
                 <fieldset>
                     <legend>Move</legend>
                     <select id="action-move-destination">
@@ -600,21 +839,6 @@
                     <button id="action-pour-ale">Pour a mug of ale</button>
                 </fieldset>
 
-                <fieldset>
-                    <legend>Speak / narrative action</legend>
-                    <textarea id="action-narrative-text" rows="3" placeholder="Speech outside *asterisks*, actions inside them."></textarea>
-                    <select id="action-narrative-target">
-                        <option value="">No addressee</option>
-                        ${visibleTargets.map(function (target) {
-                            return `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`;
-                        }).join("")}
-                    </select>
-                    <select id="action-narrative-noticeability">
-                        <option value="noticeable">Noticeable</option>
-                        <option value="hidden">Hidden</option>
-                    </select>
-                    <button id="action-narrate">Submit</button>
-                </fieldset>
             </div>
 
             <details class="framework-debug">
@@ -733,6 +957,11 @@
 
         return true;
     }
+
+    setup.PromptLabUIModel = {
+        traceMarkup: promptLabTraceMarkup,
+        queueMarkup: promptLabQueueMarkup
+    };
 
     setup.AbilityUIModel = {
         discoverAvailableAbilities: discoverAvailableAbilities,

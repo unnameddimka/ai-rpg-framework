@@ -23,13 +23,15 @@ function queueHooded() {
 }
 
 load("src/generated/world-data.js"); load("src/10-game-api.js"); load("src/21-ai-settings.js");
-load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/20-controllers.js");
+load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js");
 
 async function main() {
     let world = fresh();
-    assert(world.entities.player.defaultControllerId === "ai" && world.entities.hoodedWoman.defaultControllerId === "ai" &&
-        world.control.assignments.hoodedWoman === "ai" && world.control.assignments.innkeeper === "dummy",
-        "sample permanent defaults and initial controllers should match the integration fixture");
+    Object.values(setup.GeneratedWorldData.characters).forEach(function (authored) {
+        assert(world.entities[authored.id].defaultControllerId === authored.defaultControllerId &&
+            world.control.assignments[authored.id] === authored.initialControllerId,
+        `runtime controllers for ${authored.id} should match the authoritative world fixture`);
+    });
     assert(!Object.prototype.hasOwnProperty.call(world.control, "controllerBeforeHuman") &&
         !JSON.stringify(world).includes("controllerBeforeHuman"), "world must not contain controllerBeforeHuman state");
     world.entities.player.mind.pendingObservations.push({ id: world.nextObservationId++, kind: "event", text: "Pending", data: {} });
@@ -41,7 +43,8 @@ async function main() {
     assert(world.control.assignments.hoodedWoman === "ai" && setup.AITurnQueue.getStatus().entries.some(function (e) { return e.characterId === "hoodedWoman"; }),
         "released hooded woman should return to AI default and queue");
     ok(setup.Game.takeHumanControl("player"), "return human control to player");
-    assert(world.control.assignments.innkeeper === "dummy", "released innkeeper should return directly to dummy default and not queue");
+    assert(world.control.assignments.innkeeper === world.entities.innkeeper.defaultControllerId,
+        "released innkeeper should return directly to its authored permanent default");
 
     world = fresh();
     ok(setup.Game.assignNonHumanController("innkeeper", "ai"), "test fixture makes innkeeper an AI observer");
@@ -91,6 +94,17 @@ async function main() {
         const result = await setup.OpenRouterClient.chat([], function () { return statusFetch(pair[0]); });
         assert(result.error.code === pair[1] && !JSON.stringify(result).includes(sentinel), `status ${pair[0]} should normalize safely`);
     }
+    const rateLimited = await setup.OpenRouterClient.chat([], async function () {
+        return {
+            ok: false,
+            status: 429,
+            headers: { get: function (name) { return name === "Retry-After" ? "2" : null; } },
+            json: async function () { return {}; }
+        };
+    });
+    assert(rateLimited.error.code === "RATE_LIMITED" && rateLimited.retryAfterMs === 2000 &&
+        rateLimited.error.message.includes("2 seconds"),
+        "OpenRouter Retry-After should be normalized for the shared executor cooldown");
     const network = await setup.OpenRouterClient.chat([], async function () { throw new Error(sentinel); });
     assert(network.error.code === "NETWORK_ERROR" && !JSON.stringify(network).includes(sentinel), "network errors must not leak key or raw exception");
     const malformed = await setup.OpenRouterClient.chat([], async function () { return { ok: true, status: 200, json: async function () { return {}; } }; });
@@ -107,18 +121,70 @@ async function main() {
     assert(!setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null,
         memoryUpdates: { recentMemoriesToAdd: [{ summary: "bad", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }, available).ok,
         "action-stage memory updates should be rejected");
+    const detailedValidation = setup.AIProtocol.validateDecision({
+        action: null,
+        publicNarrative: null,
+        spokenText: null,
+        memoryUpdates: { recentMemoriesToAdd: [{ text: "wrong field", importance: 3 }] }
+    }, available);
+    assert(!detailedValidation.ok &&
+        detailedValidation.errors.some(function (error) { return error.includes("beliefsToUpsert is required"); }) &&
+        detailedValidation.errors.some(function (error) { return error.includes("summary is required"); }) &&
+        detailedValidation.errors.some(function (error) { return error.includes("importance must be a finite number from 0 to 1"); }),
+        "protocol validation should expose concrete JSON paths and record errors");
     assert(!setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates(), chainOfThought: "secret" }, available).ok,
         "chain-of-thought or arbitrary protocol fields should be rejected");
     let repairCalls = 0;
-    const repairClient = { chat: async function () { repairCalls++; return repairCalls === 1 ? { ok: true, content: "not json" } : response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }); } };
-    assert((await setup.AIProtocol.requestValidated([], "decision", available, repairClient)).ok && repairCalls === 2,
-        "malformed JSON should trigger exactly one successful repair request");
+    let repairMessages = null;
+    const repairClient = { chat: async function (messages) {
+        repairCalls++;
+        repairMessages = messages;
+        return repairCalls === 1 ? { ok: true, content: "not json" } : response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
+    } };
+    const repairedProtocol = await setup.AIProtocol.requestValidated([], "decision", available, repairClient);
+    assert(repairedProtocol.ok && repairCalls === 2 && repairedProtocol.trace.attempts.length === 2 &&
+        repairMessages.some(function (message) { return message.role === "user" && message.content.includes("Model response must contain one JSON object only"); }),
+        "malformed JSON should trigger one repair request containing the concrete validation error");
     repairCalls = 0;
     const badRepair = { chat: async function () { repairCalls++; return { ok: true, content: "still bad" }; } };
     assert(!(await setup.AIProtocol.requestValidated([], "decision", available, badRepair)).ok && repairCalls === 2,
         "second invalid response should abort after one repair");
 
     world = queueHooded();
+    const schedulerView = setup.AITurnScheduler.getQueueView();
+    assert(schedulerView.count === 1 && schedulerView.head.characterId === "hoodedWoman" &&
+        schedulerView.head.recipientName === world.entities.hoodedWoman.name &&
+        schedulerView.head.observationPreview.some(function (item) { return item.summary.includes("Hello there."); }),
+        "scheduler queue view should identify the next recipient and the event that will enter its request");
+    const scheduledRequest = setup.AITurnScheduler.buildDecisionRequest("hoodedWoman");
+    assert(scheduledRequest.ok && scheduledRequest.actorId === "hoodedWoman" &&
+        scheduledRequest.messages[1].content.includes("Hello there.") &&
+        scheduledRequest.observationIds.length === schedulerView.head.requestObservationCount,
+        "scheduler should build the exact decision request represented by the queue head");
+
+    const executionOrder = [];
+    const executorSpec = function (name, delay) {
+        return {
+            actorId: name,
+            purpose: "executor-order-test",
+            messages: [],
+            stage: "decision",
+            availableActions: {},
+            client: { chat: async function () {
+                executionOrder.push(`${name}:start`);
+                if (delay) await new Promise(function (resolve) { setTimeout(resolve, delay); });
+                executionOrder.push(`${name}:end`);
+                return response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
+            } }
+        };
+    };
+    const concurrentA = setup.AIRequestExecutor.execute(executorSpec("first", 15));
+    const concurrentB = setup.AIRequestExecutor.execute(executorSpec("second", 0));
+    const concurrentResults = await Promise.all([concurrentA, concurrentB]);
+    assert(concurrentResults.every(function (result) { return result.ok; }) &&
+        executionOrder.join(",") === "first:start,first:end,second:start,second:end",
+        "shared request executor should serialize game, sphere, repair, and future scheduler requests");
+
     const oneStage = { chat: async function () { return response({ action: null, publicNarrative: "She nods.", spokenText: "Greetings.", memoryUpdates: {
         recentMemoriesToAdd: [{ summary: "The traveller greeted me.", importance: .5 }], beliefsToUpsert: [{ id: "belief_greeting", text: "The traveller is civil.", confidence: "medium" }], relationshipsToUpsert: [{ targetCharacterId: "player", summary: "A civil new acquaintance." }]
     } }, { total_tokens: 10 }); } };
@@ -180,14 +246,74 @@ async function main() {
     const beforeBadMemory = JSON.stringify(world);
     assert(!(await setup.AIController.takeNextTurn(badMemoryClient)).ok && JSON.stringify(setup.Game.getWorld()) === beforeBadMemory,
         "memory-validation failure should roll back the whole turn");
+    assert(setup.AITransientDebug.lastTrace && setup.AITransientDebug.lastTrace.attempts.length === 2 &&
+        setup.AITransientDebug.lastTrace.attempts[1].validationErrors.some(function (error) { return error.includes("importance"); }),
+        "failed game requests should retain a transient detailed protocol trace");
+
+    world = queueHooded();
+    const promptLabBefore = JSON.stringify(world);
+    const dryRunClient = { chat: async function () { return response({
+        action: null,
+        publicNarrative: "A dry-run answer.",
+        spokenText: null,
+        memoryUpdates: emptyUpdates()
+    }, { total_tokens: 4 }); } };
+    const dryRun = await setup.PromptLab.testNextQueued(dryRunClient);
+    assert(dryRun.ok && JSON.stringify(setup.Game.getWorld()) === promptLabBefore &&
+        setup.AITurnQueue.peek().characterId === "hoodedWoman" &&
+        setup.PromptLab.getSnapshot().lastRun.trace.attempts.length === 1,
+        "prompt lab should test the real next queued prompt without changing world state or advancing the queue");
+    let editedMessages = null;
+    const editedPrompt = "Return exact JSON for this dry-run test.";
+    const editedRun = await setup.PromptLab.retryEdited(editedPrompt, { chat: async function (messages) {
+        editedMessages = messages;
+        return response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
+    } });
+    assert(editedRun.ok && editedMessages[0].role === "system" && editedMessages[0].content === editedPrompt &&
+        JSON.stringify(setup.Game.getWorld()) === promptLabBefore,
+        "prompt lab should retry with an edited system prompt through the same validator without applying the result");
+
+    world = queueHooded();
+    const liveFromSphere = await setup.PromptLab.processNextLive({ chat: async function () { return response({
+        action: null,
+        publicNarrative: "The sphere permits the scheduled reaction.",
+        spokenText: null,
+        memoryUpdates: emptyUpdates()
+    }); } });
+    assert(liveFromSphere.ok && setup.AITurnQueue.peek() === null &&
+        setup.PromptLab.getSnapshot().status.includes("queue advanced"),
+        "crystal sphere live processing should invoke the same manual scheduler and advance only its queue head");
 
     setup.AIRuntimeSettings.save(sentinel, false, storage, 1);
     const serializedWorld = JSON.stringify(setup.Game.getWorld());
     const contextJson = JSON.stringify(setup.ContextBuilder.build("hoodedWoman"));
     const generated = fs.readFileSync(path.join(root, "src/generated/world-data.js"), "utf8");
     assert(!serializedWorld.includes(sentinel) && !contextJson.includes(sentinel) && !JSON.stringify(setup.Game.getWorld().debug).includes(sentinel) &&
-        !generated.includes(sentinel) && !JSON.stringify(setup.AITransientDebug.lastContext || {}).includes(sentinel),
-        "API key sentinel must never enter saveable world, context, logs, generated data, or copied AI context");
+        !generated.includes(sentinel) && !JSON.stringify(setup.AITransientDebug.lastContext || {}).includes(sentinel) &&
+        !JSON.stringify(setup.PromptLab.getSnapshot()).includes(sentinel),
+        "API key sentinel must never enter saveable world, context, logs, generated data, copied AI context, or prompt-lab traces");
+
+    const timedStarts = [];
+    const timedClient = {
+        enforceRequestTiming: true,
+        chat: async function () {
+            timedStarts.push(Date.now());
+            return response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
+        }
+    };
+    const timedSpec = {
+        actorId: "timing-test",
+        purpose: "minimum-interval-test",
+        messages: [],
+        stage: "decision",
+        availableActions: {},
+        client: timedClient
+    };
+    await setup.AIRequestExecutor.execute(timedSpec);
+    await setup.AIRequestExecutor.execute(timedSpec);
+    assert(timedStarts.length === 2 && timedStarts[1] - timedStarts[0] >= 900,
+        "shared request executor should leave approximately one second between live transport calls");
+
     ok(setup.Game.validateWorld(), "world remains valid after mocked AI tests");
     console.log("All AI integration tests passed.");
 }
