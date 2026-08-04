@@ -121,14 +121,16 @@ Narrative output remains separate. A model or human may describe an attempt, but
 
 ## AI turn queue and controller integration
 
-- AI turns are manual in this milestone. The normal/debug UI exposes one `Take next AI turn` control, never a character picker.
+- AI turns are manual in this milestone. The sidebar exposes one `Process next AI event` control, never a character picker. The temporary sphere may inspect the whole queue, but only the queue head may be processed live.
 - Objective events and feedback may enqueue eligible characters whose current controller assignment is `ai`.
 - The queue must be deterministic, JSON-serializable, saveable with SugarCube, and deduplicated by character ID.
 - Direct addressees and formal-action targets are enqueued before other perceiving AI characters; remaining order follows deterministic event delivery order.
 - A queued entry is eligible only while that character is currently assigned `ai` and has pending observations. Skip or remove stale entries.
 - When HumanController leaves a character and that character returns to `defaultControllerId: "ai"`, enqueue it if it already has pending observations.
 - Do not enqueue a human-controlled or dummy-controlled character.
-- One button press processes at most one queued character and at most one formal action.
+- One scheduler invocation processes at most one queued character and at most one formal action.
+- `setup.AITurnScheduler` owns queue-head selection and exact decision-request construction. It has no timer yet.
+- `setup.AIRequestExecutor` is the only path for game, repair, and prompt-lab model requests. It serializes calls, leaves at least one second between live transports, and honors `Retry-After` without automatically retrying a 429.
 - A failed API call, invalid model response, or failed transaction must preserve the queue entry and all unconsumed observations for retry.
 
 ## OpenRouter and API-key rules
@@ -192,7 +194,7 @@ Validate in the editor, build generator, and runtime where applicable:
 
 Implement and preserve:
 
-- existing tavern entrance, bar, common room, and street;
+- existing tavern entrance, bar, common room, street, and the temporary village-temple prompt-lab room;
 - generated major physical passages;
 - sublocations, capacity, reachability, table inventories, and behind-bar capability;
 - inventories, wallets, movement, item transfer, money transfer, `place_item`, and `pour_ale`;
@@ -201,7 +203,7 @@ Implement and preserve:
 - authorable characters, initial minds, and individual abilities;
 - one sample grounded individual ability, `read_aura`;
 - direct browser OpenRouter integration with fixed Cydonia;
-- one deterministic saved AI turn queue and a manual `Take next AI turn` control;
+- one deterministic saved AI turn queue, a manual `AITurnScheduler`, and a `Process next AI event` control;
 - validated one- or two-stage AI turns and bounded memory updates;
 - 24-hour optional local API-key persistence outside SugarCube.
 
@@ -220,7 +222,7 @@ Do not add yet:
 
 - Keep engine logic in `src/10-game-api.js` unless a small additional numerically prefixed engine module clearly improves separation.
 - Keep controller behavior in `src/20-controllers.js`.
-- Put the browser-only OpenRouter client, prompt/protocol parsing, and transient AI settings in one or more small numerically prefixed source modules before `src/30-game-ui.js`; do not place secrets or promises in SugarCube state.
+- Put the browser-only OpenRouter client, prompt/protocol parsing, shared request executor, manual turn scheduler, transient AI settings, and prompt-lab state in small numerically prefixed source modules before `src/30-game-ui.js`; do not place secrets or promises in SugarCube state.
 - Keep browser/debug UI in `src/30-game-ui.js`.
 - Keep hand-authored non-generated Twee metadata and nonphysical passages in `src/story.twee`.
 - Keep authoritative authoring data in `data/world.json`.
@@ -236,6 +238,6 @@ Do not add yet:
 5. Build with Tweego when installed.
 6. Verify `setup.Game.validateWorld()` succeeds after all tested actions.
 7. Verify a JSON serialize/parse round trip preserves every character mind.
-8. Test queue ordering, deduplication, stale-entry handling, successful one-stage turns, successful two-stage turns, malformed JSON repair, failed-request rollback, consumed-observation removal by ID, and 24-hour key expiry.
+8. Test queue ordering, deduplication, stale-entry handling, scheduler request projection, executor serialization/minimum interval, successful one-stage turns, successful two-stage turns, malformed JSON repair, failed-request rollback, consumed-observation removal by ID, and 24-hour key expiry.
 9. Verify no API key appears in a save, world dump, generated artifact, debug log, or copied AI context.
 10. Update `README.md` and `docs/status.md` with implemented results and remaining limitations.
