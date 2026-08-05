@@ -29,8 +29,12 @@ if not defined TWEEGO_PATH if exist "%LOCALAPPDATA%\Tweego\storyformats" (
     set "TWEEGO_PATH=%LOCALAPPDATA%\Tweego\storyformats"
 )
 
+echo Generating model list...
+"%NODE_EXE%" tools\generate-model-list.js
+if errorlevel 1 exit /b 1
+
 echo Generating world data...
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\generate-world-data.ps1
+"%NODE_EXE%" tools\generate-world-data.js
 if errorlevel 1 exit /b 1
 
 if not exist dist mkdir dist

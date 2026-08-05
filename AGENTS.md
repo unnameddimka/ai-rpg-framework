@@ -13,7 +13,8 @@
 ## Static authoring data and runtime state
 
 - `data/world.json` is the authoritative authoring source for locations, sublocations, characters, initial character minds, and character ability definitions.
-- `src/generated/world-data.js`, generated physical passages, generated StoryData, and `dist/game.html` are build outputs. Never edit them directly.
+- `data/model_list.json` is the authoritative source for selectable OpenRouter models and `defaultModelId`.
+- `src/00-model-list.js`, `src/generated/world-data.js`, generated physical passages, generated StoryData, and `dist/game.html` are build outputs. Never edit them directly.
 - Authoring data is copied into JSON-serializable runtime state at new-game initialization.
 - Runtime character state, including `mind`, must live inside `State.variables.world` so SugarCube saves restore it with the rest of the world.
 - Never store functions, controller objects, class instances, DOM nodes, promises, API clients, or other non-serializable values in SugarCube state.
@@ -24,7 +25,7 @@ The controller types are:
 
 - `human` — receives commands from the browser UI;
 - `dummy` — performs no autonomous actions and may write debug logs;
-- `ai` — uses the browser-side OpenRouter adapter and the fixed Cydonia model only when a manual queued AI turn is requested.
+- `ai` — uses the browser-side OpenRouter adapter and the currently selected validated catalog model only when a manual queued AI turn is requested.
 
 ### Critical HumanController invariant
 
@@ -136,8 +137,10 @@ Narrative output remains separate. A model or human may describe an attempt, but
 ## OpenRouter and API-key rules
 
 - The game calls OpenRouter directly from the browser through `POST https://openrouter.ai/api/v1/chat/completions`.
-- The fixed model for this milestone is `thedrummer/cydonia-24b-v4.1`.
-- Streaming is disabled. Do not add provider selection or model selection yet.
+- The provider remains fixed to OpenRouter. Models must come only from validated `data/model_list.json`; never accept an arbitrary model ID typed into the game UI.
+- `defaultModelId` must reference one entry in the model list. Unknown or removed saved selections fall back to that default.
+- Model selection is transient runtime configuration outside SugarCube state and may be persisted separately in namespaced `localStorage` without an expiry.
+- Streaming is disabled. Do not add provider selection yet.
 - The API key is entered in the game UI. It must never enter `world.json`, generated files, SugarCube state, saves, exported data, controller logs, request-debug dumps, or error text.
 - Without opt-in persistence, the key exists only in a non-SugarCube runtime object for the lifetime of the page.
 - `Remember for 24 hours` stores a record in `localStorage` with an explicit expiry timestamp. Expired records are deleted when read. Provide `Forget saved key`.
@@ -155,7 +158,9 @@ Narrative output remains separate. A model or human may describe an attempt, but
 - Apply public narrative only through `setup.CharacterAPI.narrate()`.
 - Apply model memory changes only through an engine-owned validator supporting bounded append/upsert operations.
 - Remove only observation IDs actually consumed by a successfully committed turn. Never clear an entire inbox blindly.
-- Raw request and response bodies may be kept only in transient debug memory and must be redacted of credentials.
+- Raw request and response bodies may be kept only in transient debug memory or an explicit user-requested exchange-log export. They must be sanitized before storage or display.
+- Strip API keys, Authorization/Bearer values, OpenRouter `user_id` properties, and `user_...` identifiers from provider diagnostics. Preserve non-secret diagnostic fields such as HTTP status, `provider_name`, `limit_source`, retry information, and provider error text.
+- Redaction must happen in the transport/client layer before diagnostics are copied into protocol traces, executor history, UI state, or exports; export-time redaction is only defense in depth.
 
 ## Dynamic player-facing UI and passages
 
@@ -202,7 +207,7 @@ Implement and preserve:
 - debug takeover of any character by the one HumanController;
 - authorable characters, initial minds, and individual abilities;
 - one sample grounded individual ability, `read_aura`;
-- direct browser OpenRouter integration with fixed Cydonia;
+- direct browser OpenRouter integration with a validated two-model catalog and authored default;
 - one deterministic saved AI turn queue, a manual `AITurnScheduler`, and a `Process next AI event` control;
 - validated one- or two-stage AI turns and bounded memory updates;
 - 24-hour optional local API-key persistence outside SugarCube.
@@ -210,7 +215,7 @@ Implement and preserve:
 Do not add yet:
 
 - autonomous or timer-driven NPC execution;
-- model/provider selection;
+- arbitrary model IDs or provider selection;
 - memory compression, token budgeting, embeddings, or vector search;
 - combat, health changes, or damage;
 - buying and selling;
@@ -225,7 +230,8 @@ Do not add yet:
 - Put the browser-only OpenRouter client, prompt/protocol parsing, shared request executor, manual turn scheduler, transient AI settings, and prompt-lab state in small numerically prefixed source modules before `src/30-game-ui.js`; do not place secrets or promises in SugarCube state.
 - Keep browser/debug UI in `src/30-game-ui.js`.
 - Keep hand-authored non-generated Twee metadata and nonphysical passages in `src/story.twee`.
-- Keep authoritative authoring data in `data/world.json`.
+- Keep authoritative world authoring data in `data/world.json` and the OpenRouter model catalog in `data/model_list.json`.
+- Generate `src/00-model-list.js` only through `tools/generate-model-list.js`; the standalone HTML must embed the validated catalog rather than fetching it at runtime.
 - Keep the standalone editor in `editor/world-editor.html`.
 - Preserve deterministic source ordering.
 
@@ -234,7 +240,7 @@ Do not add yet:
 1. Run `node --check` on every JavaScript file.
 2. Run `node tests/run-tests.js`.
 3. Run `node tests/run-editor-tests.js`.
-4. Run the PowerShell world-data generator.
+4. Run the cross-platform Node world-data generator (`node tools/generate-world-data.js`).
 5. Build with Tweego when installed.
 6. Verify `setup.Game.validateWorld()` succeeds after all tested actions.
 7. Verify a JSON serialize/parse round trip preserves every character mind.

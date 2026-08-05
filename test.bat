@@ -1,9 +1,6 @@
 @echo off
 setlocal
 
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\generate-world-data.ps1
-if errorlevel 1 exit /b 1
-
 set "NODE_EXE=node"
 where node >nul 2>nul
 if errorlevel 1 (
@@ -15,6 +12,12 @@ if errorlevel 1 (
     )
 )
 
+"%NODE_EXE%" tools\generate-model-list.js
+if errorlevel 1 exit /b 1
+
+"%NODE_EXE%" tools\generate-world-data.js
+if errorlevel 1 exit /b 1
+
 "%NODE_EXE%" tests\run-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-editor-tests.js
@@ -24,4 +27,5 @@ if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-ai-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-generator-tests.js
+if errorlevel 1 exit /b 1
 endlocal

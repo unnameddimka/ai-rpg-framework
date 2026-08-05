@@ -13,9 +13,12 @@
 - A JSON-serializable, saveable, deduplicated AI queue orders direct targets before other
   observers, repairs stale entries, and is advanced only by one manual `AITurnScheduler`
   operation. No timer or autonomous drain exists yet.
-- The browser uses fixed OpenRouter/Cydonia, non-streaming requests. The API key remains in
-  transient memory, with optional expiring 24-hour `localStorage` persistence and a forget
-  control. Storage failures degrade safely to memory-only operation.
+- The browser uses fixed OpenRouter with non-streaming requests and a build-validated model
+  catalog from `data/model_list.json`. Cydonia is the authored default and Llama 3.3 Euryale
+  70B is the second candidate. The sidebar selector applies immediately; the selected model
+  persists separately from the API key and falls back to the authored default when invalid.
+  The API key remains in transient memory, with optional expiring 24-hour `localStorage`
+  persistence and a forget control. Storage failures degrade safely to memory-only operation.
 - One shared `AIRequestExecutor` serializes game, repair, and prompt-lab traffic. It leaves at
   least one second between live transport calls, honors `Retry-After` after HTTP 429, exposes
   transient busy/cooldown status, and performs no automatic rate-limit retry.
@@ -32,7 +35,14 @@
 - Safe transient UI status reports the next scheduler recipient and event preview, key
   availability, errors, provider usage, and reported cost data without saving credentials in
   SugarCube state.
-- A temporary village-temple room contains a crystal-sphere scheduler/prompt lab. It renders
+- OpenRouter failures now preserve a sanitized `providerResponse` end to end: HTTP status,
+  diagnostic headers, raw/parsed error body, retry information, and provider metadata remain
+  available in the sphere and exchange-log export. API keys, Authorization values, OpenRouter
+  `user_id` fields, and `user_...` identifiers are redacted before the diagnostics leave the
+  client layer. Failed requests leave their queue item and observations intact.
+- A temporary village-temple room contains a crystal-sphere scheduler/prompt lab. It can
+  download/import versioned JSON exchange logs and replay recorded raw responses offline
+  through the current parser and validator. It renders
   the ordered queue as recipient/event cards, marks the exact next live request, allows any
   entry to be inspected or dry-run, and lets only the queue head be processed live through the
   same scheduler as the sidebar. Exact and edited-system-prompt dry runs show original/repair
@@ -41,14 +51,15 @@
   passes concrete validation failures into the single repair request.
 - The primary speak/narrative input is the first full-width framework control, with a larger
   vertically resizable text area; compact formal debug actions remain in the grid below it.
-- Engine, UI, editor, generator, settings, client, protocol, executor, scheduler, queue,
+- Engine, UI, editor, world/model-list generators, settings, client, protocol, executor, scheduler, queue,
   transaction, privacy, and rollback tests use mocked fetch and preserve the deterministic
   baseline.
 
 ## Remaining limitations
 
 - AI turns require an explicit button press; there is no autonomous or timer-driven loop.
-- Provider and model are fixed to OpenRouter and Cydonia; there is no streaming or selection.
+- The provider is fixed to OpenRouter and streaming is disabled. Model choice is limited to
+  the authored catalog; there is no arbitrary model entry or provider selector.
 - One AI turn may choose at most one formal action.
 - Browser `file://` network/CORS and localStorage behavior depends on the browser.
 - There is no memory compression, token budgeting, local token counting, embeddings, or

@@ -22,7 +22,7 @@ function queueHooded() {
     return world;
 }
 
-load("src/generated/world-data.js"); load("src/10-game-api.js"); load("src/21-ai-settings.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/10-game-api.js"); load("src/21-ai-settings.js");
 load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js");
 
 async function main() {
@@ -83,12 +83,33 @@ async function main() {
     const degraded = setup.AIRuntimeSettings.save(sentinel, true, brokenStorage, 1);
     assert(degraded.ok && degraded.warning && setup.AIRuntimeSettings.getKey() === sentinel, "storage failure should degrade to memory-only");
 
+    const modelIds = setup.AIRuntimeSettings.getModels().map(function (model) { return model.id; });
+    assert(modelIds.join(",") === "thedrummer/cydonia-24b-v4.1,sao10k/l3.3-euryale-70b" &&
+        setup.AIRuntimeSettings.getDefaultModelId() === "thedrummer/cydonia-24b-v4.1" &&
+        setup.AIRuntimeSettings.getSelectedModelId() === "thedrummer/cydonia-24b-v4.1",
+        "generated model list should expose two candidates and select its authored default");
+    const euryaleId = "sao10k/l3.3-euryale-70b";
+    const selectedEuryale = setup.AIRuntimeSettings.selectModel(euryaleId, storage);
+    assert(selectedEuryale.ok && selectedEuryale.persisted &&
+        storageData[setup.AIRuntimeSettings.MODEL_STORAGE_KEY] === euryaleId &&
+        setup.AIRuntimeSettings.getSelectedModel().name === "Llama 3.3 Euryale 70B",
+        "model selection should validate against model_list.json and persist independently of the API key");
+    const rejectedModel = setup.AIRuntimeSettings.selectModel("unknown/model", storage);
+    assert(!rejectedModel.ok && rejectedModel.error.code === "UNKNOWN_MODEL" &&
+        setup.AIRuntimeSettings.getSelectedModelId() === euryaleId,
+        "unknown models must be rejected without changing the active selection");
+    storageData[setup.AIRuntimeSettings.MODEL_STORAGE_KEY] = "thedrummer/cydonia-24b-v4.1";
+    setup.AIRuntimeSettings.readSaved(storage, 1001);
+    assert(setup.AIRuntimeSettings.getSelectedModelId() === "thedrummer/cydonia-24b-v4.1",
+        "saved model selection should restore when it still exists in model_list.json");
+    setup.AIRuntimeSettings.selectModel(euryaleId, storage);
+
     let captured;
     const fetchOk = async function (url, options) { captured = { url: url, options: options }; return { ok: true, status: 200, json: async function () { return { choices: [{ message: { content: "{}" } }], usage: { total_tokens: 3 } }; } }; };
     const clientOk = await setup.OpenRouterClient.chat([{ role: "user", content: "test" }], fetchOk);
     const requestBody = JSON.parse(captured.options.body);
     assert(clientOk.ok && captured.url === setup.OpenRouterClient.ENDPOINT && captured.options.headers.Authorization === `Bearer ${sentinel}` &&
-        requestBody.model === setup.OpenRouterClient.MODEL && requestBody.stream === false, "client should use fixed endpoint/model, Bearer key, and non-streaming request");
+        requestBody.model === euryaleId && setup.OpenRouterClient.MODEL === euryaleId && requestBody.stream === false, "client should use the selected model from model_list.json, Bearer key, and non-streaming request");
     async function statusFetch(status) { return { ok: false, status: status, json: async function () { return {}; } }; }
     for (const pair of [[401,"AUTHENTICATION_FAILED"],[402,"INSUFFICIENT_CREDITS"],[429,"RATE_LIMITED"],[503,"PROVIDER_UNAVAILABLE"]]) {
         const result = await setup.OpenRouterClient.chat([], function () { return statusFetch(pair[0]); });
@@ -105,6 +126,44 @@ async function main() {
     assert(rateLimited.error.code === "RATE_LIMITED" && rateLimited.retryAfterMs === 2000 &&
         rateLimited.error.message.includes("2 seconds"),
         "OpenRouter Retry-After should be normalized for the shared executor cooldown");
+    const rawProviderError = '{"error":{"message":"Provider quota exceeded","metadata":{"error_type":"rate_limit_exceeded","provider_name":"Parasail"}},"request_id":"req_test_429","user_id":"user_test_fixture_123456"}';
+    const sanitizedRawProviderError = '{"error":{"message":"Provider quota exceeded","metadata":{"error_type":"rate_limit_exceeded","provider_name":"Parasail"}},"request_id":"req_test_429","user_id":"[REDACTED_OPENROUTER_USER_ID]"}';
+    const detailedRateLimited = await setup.OpenRouterClient.chat([], async function () {
+        return {
+            ok: false,
+            status: 429,
+            statusText: "Too Many Requests",
+            url: "https://openrouter.ai/api/v1/chat/completions",
+            headers: {
+                forEach: function (callback) {
+                    callback("application/json", "content-type");
+                    callback("req_header_429", "x-request-id");
+                    callback("3", "retry-after");
+                },
+                get: function (name) {
+                    const values = {
+                        "Retry-After": "3",
+                        "retry-after": "3",
+                        "content-type": "application/json",
+                        "x-request-id": "req_header_429"
+                    };
+                    return values[name] || null;
+                }
+            },
+            text: async function () { return rawProviderError; }
+        };
+    });
+    assert(detailedRateLimited.error.code === "RATE_LIMITED" &&
+        detailedRateLimited.error.message.includes("Provider quota exceeded") &&
+        detailedRateLimited.error.providerResponse.status === 429 &&
+        detailedRateLimited.error.providerResponse.statusText === "Too Many Requests" &&
+        detailedRateLimited.error.providerResponse.headers["x-request-id"] === "req_header_429" &&
+        detailedRateLimited.error.providerResponse.rawBody === sanitizedRawProviderError &&
+        detailedRateLimited.error.providerResponse.parsedBody.error.metadata.provider_name === "Parasail" &&
+        detailedRateLimited.error.providerResponse.parsedBody.user_id === "[REDACTED_OPENROUTER_USER_ID]" &&
+        !JSON.stringify(detailedRateLimited).includes("user_test_fixture_123456") &&
+        detailedRateLimited.retryAfterMs === 3000,
+        "OpenRouter failures should retain the complete browser-visible HTTP status, headers, raw body, parsed body, and provider message");
     const network = await setup.OpenRouterClient.chat([], async function () { throw new Error(sentinel); });
     assert(network.error.code === "NETWORK_ERROR" && !JSON.stringify(network).includes(sentinel), "network errors must not leak key or raw exception");
     const malformed = await setup.OpenRouterClient.chat([], async function () { return { ok: true, status: 200, json: async function () { return {}; } }; });
@@ -112,6 +171,13 @@ async function main() {
 
     assert(setup.AIProtocol.extractObject("```json\n{\"action\":null}\n```").action === null, "protocol should extract fenced JSON");
     const available = { move: { schema: { properties: { type: {}, destination_id: {} }, required: ["type", "destination_id"] } } };
+    const tracedProviderFailure = await setup.AIProtocol.requestValidated([], "decision", available, {
+        chat: async function () { return detailedRateLimited; }
+    });
+    assert(!tracedProviderFailure.ok &&
+        tracedProviderFailure.error.providerResponse.rawBody === sanitizedRawProviderError &&
+        tracedProviderFailure.trace.attempts[0].providerResponse.parsedBody.error.metadata.error_type === "rate_limit_exceeded",
+        "AI protocol traces should preserve provider HTTP diagnostics instead of collapsing them to code and message");
     assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available).ok,
         "valid no-action decision should pass");
     assert(setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available).ok,
@@ -273,6 +339,33 @@ async function main() {
         JSON.stringify(setup.Game.getWorld()) === promptLabBefore,
         "prompt lab should retry with an edited system prompt through the same validator without applying the result");
 
+    const exchangeHistory = setup.AIRequestExecutor.getExchangeHistory();
+    assert(exchangeHistory.count > 0 && exchangeHistory.entries.some(function (entry) { return entry.request.purpose === "game-decision"; }) &&
+        exchangeHistory.entries.some(function (entry) { return entry.request.purpose === "game-result"; }) &&
+        exchangeHistory.entries.some(function (entry) { return entry.request.purpose === "prompt-lab-dry-run"; }),
+        "transient exchange history should retain decision, result, and sphere dry-run requests");
+    const exportedExchange = setup.PromptLab.exportExchangeLog(Date.UTC(2026, 7, 4, 19, 0, 0));
+    assert(exportedExchange.ok && exportedExchange.filename === "ai-rpg-ai-exchange-20260804-190000Z.json" &&
+        exportedExchange.data.schema === setup.PromptLab.EXCHANGE_LOG_SCHEMA &&
+        exportedExchange.data.exchangeHistory.count === exchangeHistory.count &&
+        exportedExchange.data.runtime.model === euryaleId &&
+        exportedExchange.data.security.apiKeyIncluded === false,
+        "sphere should export a versioned portable exchange log with the complete transient executor history");
+    setup.PromptLab.clear();
+    const importedExchange = setup.PromptLab.importExchangeLog(exportedExchange.text, "shared-ai-log.json");
+    assert(importedExchange.ok && setup.PromptLab.getSnapshot().hasImportedExchange &&
+        setup.PromptLab.getSnapshot().importedFilename === "shared-ai-log.json" &&
+        setup.PromptLab.getSnapshot().canReplayImported &&
+        JSON.stringify(setup.Game.getWorld()) === promptLabBefore,
+        "importing a shared exchange log should restore its focused request and trace without changing the world");
+    setup.AIRuntimeSettings.forget(storage);
+    const replayedExchange = await setup.PromptLab.replayImportedExchange();
+    assert(replayedExchange.ok && JSON.stringify(setup.Game.getWorld()) === promptLabBefore &&
+        setup.PromptLab.getSnapshot().lastRun.label === "Replaying recorded exchange",
+        "an imported exchange should replay recorded raw replies through the current validator without a key or world mutation");
+    assert(!setup.PromptLab.importExchangeLog('{"schema":"wrong"}', "wrong.json").ok,
+        "sphere should reject JSON files that are not supported exchange logs");
+
     world = queueHooded();
     const liveFromSphere = await setup.PromptLab.processNextLive({ chat: async function () { return response({
         action: null,
@@ -285,6 +378,9 @@ async function main() {
         "crystal sphere live processing should invoke the same manual scheduler and advance only its queue head");
 
     setup.AIRuntimeSettings.save(sentinel, false, storage, 1);
+    const safeExportWithKey = setup.PromptLab.exportExchangeLog();
+    assert(safeExportWithKey.ok && !safeExportWithKey.text.includes(sentinel) && safeExportWithKey.text.includes("apiKeyIncluded"),
+        "portable exchange logs must redact the current API key and declare that no key is included");
     const serializedWorld = JSON.stringify(setup.Game.getWorld());
     const contextJson = JSON.stringify(setup.ContextBuilder.build("hoodedWoman"));
     const generated = fs.readFileSync(path.join(root, "src/generated/world-data.js"), "utf8");

@@ -2,367 +2,333 @@
 (function () {
     "use strict";
     setup.GeneratedWorldData = {
-    "schemaVersion":  2,
-    "startLocationId":  "tavernEntrance",
-    "protectedLocationIds":  [
-                                 "tavernEntrance",
-                                 "bar",
-                                 "commonRoom",
-                                 "villageTemple"
-                             ],
-    "protectedSublocationIds":  [
-                                    "tavernEntranceFloor",
-                                    "barBehindCounter",
-                                    "commonRoomTableOne",
-                                    "templeSanctum"
-                                ],
-    "protectedCharacterIds":  [
-                                  "player",
-                                  "hoodedWoman",
-                                  "innkeeper"
-                              ],
-    "protectedAbilityIds":  [
-                                "readAura"
-                            ],
-    "locations":  {
-                      "tavernEntrance":  {
-                                             "id":  "tavernEntrance",
-                                             "type":  "location",
-                                             "name":  "Tavern entrance",
-                                             "passage":  "The Tavern",
-                                             "description":  [
-                                                                 "You stand in the entrance of a modest roadside tavern.",
-                                                                 "The room smells of smoke, spilled ale, and wet wool."
-                                                             ],
-                                             "defaultSublocationId":  "tavernEntranceFloor",
-                                             "inventoryId":  "inventory_tavernEntrance",
-                                             "exits":  {
-                                                           "bar":  "bar",
-                                                           "commonRoom":  "commonRoom",
-                                                           "street":  "street"
-                                                       },
-                                             "sublocations":  {
-                                                                  "tavernEntranceFloor":  {
-                                                                                              "id":  "tavernEntranceFloor",
-                                                                                              "type":  "sublocation",
-                                                                                              "locationId":  "tavernEntrance",
-                                                                                              "name":  "Tavern floor",
-                                                                                              "enterLabel":  "Stand by the tavern entrance",
-                                                                                              "selfText":  "You are standing near the tavern entrance.",
-                                                                                              "occupantTemplate":  "{name} stands near the tavern entrance.",
-                                                                                              "capacity":  20,
-                                                                                              "reachableSublocationIds":  [
-                                                                                                                              "tavernEntranceFloor"
-                                                                                                                          ]
-                                                                                          }
-                                                              }
-                                         },
-                      "bar":  {
-                                  "id":  "bar",
-                                  "type":  "location",
-                                  "name":  "The bar",
-                                  "passage":  "The Bar",
-                                  "description":  [
-                                                      "The bar counter is dark with age and spilled ale.",
-                                                      "Shelves of mismatched bottles line the wall behind it."
-                                                  ],
-                                  "defaultSublocationId":  "barPublicSide",
-                                  "inventoryId":  "inventory_bar",
-                                  "exits":  {
-                                                "tavernEntrance":  "tavernEntrance",
-                                                "commonRoom":  "commonRoom"
-                                            },
-                                  "sublocations":  {
-                                                       "barPublicSide":  {
-                                                                             "id":  "barPublicSide",
-                                                                             "type":  "sublocation",
-                                                                             "locationId":  "bar",
-                                                                             "name":  "Public side of the bar",
-                                                                             "publicText":  "The public side of the counter is worn smooth by years of elbows and spilled drink.",
-                                                                             "enterLabel":  "Step to the public side of the bar",
-                                                                             "selfText":  "You are standing on the public side of the counter.",
-                                                                             "occupantTemplate":  "{name} stands on the public side of the counter.",
-                                                                             "capacity":  20,
-                                                                             "reachableSublocationIds":  [
-                                                                                                             "barPublicSide",
-                                                                                                             "barBehindCounter"
-                                                                                                         ]
-                                                                         },
-                                                       "barBehindCounter":  {
-                                                                                "id":  "barBehindCounter",
-                                                                                "type":  "sublocation",
-                                                                                "locationId":  "bar",
-                                                                                "name":  "Behind the bar",
-                                                                                "publicText":  "A narrow working space behind the counter holds taps, bottles, and clean mugs.",
-                                                                                "enterLabel":  "Step behind the bar",
-                                                                                "selfText":  "You are standing behind the bar.",
-                                                                                "occupantTemplate":  "{name} stands behind the bar.",
-                                                                                "capacity":  2,
-                                                                                "capabilities":  [
-                                                                                                     "pour_ale"
-                                                                                                 ],
-                                                                                "reachableSublocationIds":  [
-                                                                                                                "barBehindCounter",
-                                                                                                                "barPublicSide"
-                                                                                                            ]
-                                                                            }
-                                                   }
-                              },
-                      "commonRoom":  {
-                                         "id":  "commonRoom",
-                                         "type":  "location",
-                                         "name":  "The common room",
-                                         "passage":  "The Common Room",
-                                         "description":  [
-                                                             "Several travellers sit near the fire while two merchants argue quietly over a map.",
-                                                             "Smoke gathers beneath the rafters above scarred tables and mismatched chairs."
-                                                         ],
-                                         "defaultSublocationId":  "commonRoomFloor",
-                                         "inventoryId":  "inventory_commonRoom",
-                                         "exits":  {
-                                                       "tavernEntrance":  "tavernEntrance",
-                                                       "bar":  "bar"
-                                                   },
-                                         "sublocations":  {
-                                                              "commonRoomFloor":  {
-                                                                                      "id":  "commonRoomFloor",
-                                                                                      "type":  "sublocation",
-                                                                                      "locationId":  "commonRoom",
-                                                                                      "name":  "Common-room floor",
-                                                                                      "enterLabel":  "Stand in the common room",
-                                                                                      "selfText":  "You are standing in the common room.",
-                                                                                      "occupantTemplate":  "{name} stands in the common room.",
-                                                                                      "capacity":  20,
-                                                                                      "reachableSublocationIds":  [
-                                                                                                                      "commonRoomFloor",
-                                                                                                                      "commonRoomTableOne",
-                                                                                                                      "commonRoomTableTwo"
-                                                                                                                  ]
-                                                                                  },
-                                                              "commonRoomTableOne":  {
-                                                                                         "id":  "commonRoomTableOne",
-                                                                                         "type":  "sublocation",
-                                                                                         "locationId":  "commonRoom",
-                                                                                         "name":  "First table",
-                                                                                         "publicText":  "The first table stands close to the fire.",
-                                                                                         "enterLabel":  "Sit at the first table",
-                                                                                         "selfText":  "You are sitting at the first table.",
-                                                                                         "occupantTemplate":  "{name} sits at the first table.",
-                                                                                         "capacity":  4,
-                                                                                         "capabilities":  [
-                                                                                                              "place_item"
-                                                                                                          ],
-                                                                                         "inventoryId":  "inventory_commonRoomTableOne",
-                                                                                         "reachableSublocationIds":  [
-                                                                                                                         "commonRoomTableOne",
-                                                                                                                         "commonRoomFloor"
-                                                                                                                     ]
-                                                                                     },
-                                                              "commonRoomTableTwo":  {
-                                                                                         "id":  "commonRoomTableTwo",
-                                                                                         "type":  "sublocation",
-                                                                                         "locationId":  "commonRoom",
-                                                                                         "name":  "Second table",
-                                                                                         "publicText":  "The second table sits nearer the shadowed wall.",
-                                                                                         "enterLabel":  "Sit at the second table",
-                                                                                         "selfText":  "You are sitting at the second table.",
-                                                                                         "occupantTemplate":  "{name} sits at the second table.",
-                                                                                         "capacity":  4,
-                                                                                         "capabilities":  [
-                                                                                                              "place_item"
-                                                                                                          ],
-                                                                                         "inventoryId":  "inventory_commonRoomTableTwo",
-                                                                                         "reachableSublocationIds":  [
-                                                                                                                         "commonRoomTableTwo",
-                                                                                                                         "commonRoomFloor"
-                                                                                                                     ]
-                                                                                     }
-                                                          }
-                                     },
-                      "street":  {
-                                     "id":  "street",
-                                     "type":  "location",
-                                     "name":  "The street",
-                                     "passage":  "The Street",
-                                     "description":  [
-                                                         "Cold rain falls upon the empty village street.",
-                                                         "The tavern\u0027s windows glow warmly behind you."
-                                                     ],
-                                     "defaultSublocationId":  "streetCenter",
-                                     "inventoryId":  "inventory_street",
-                                     "exits":  {
-                                                   "tavernEntrance":  "tavernEntrance",
-                                                   "villageTemple":  "villageTemple"
-                                               },
-                                     "sublocations":  {
-                                                          "streetCenter":  {
-                                                                               "id":  "streetCenter",
-                                                                               "type":  "sublocation",
-                                                                               "locationId":  "street",
-                                                                               "name":  "Village street",
-                                                                               "enterLabel":  "Stand in the street",
-                                                                               "selfText":  "You are standing in the village street.",
-                                                                               "occupantTemplate":  "{name} stands in the village street.",
-                                                                               "capacity":  20,
-                                                                               "reachableSublocationIds":  [
-                                                                                                               "streetCenter"
-                                                                                                           ]
-                                                                           }
-                                                      }
-                                 },
-                      "villageTemple":  {
-                                            "id":  "villageTemple",
-                                            "type":  "location",
-                                            "name":  "Village temple",
-                                            "passage":  "The Village Temple",
-                                            "description":  [
-                                                                "A tiny stone temple crouches at the edge of the village, smelling of cold incense and rain.",
-                                                                "At the far end, beneath a soot-darkened icon, a crystal sphere rests on a crooked brass stand."
-                                                            ],
-                                            "defaultSublocationId":  "templeSanctum",
-                                            "inventoryId":  "inventory_villageTemple",
-                                            "exits":  {
-                                                          "street":  "street"
-                                                      },
-                                            "sublocations":  {
-                                                                 "templeSanctum":  {
-                                                                                       "id":  "templeSanctum",
-                                                                                       "type":  "sublocation",
-                                                                                       "locationId":  "villageTemple",
-                                                                                       "name":  "Before the crystal sphere",
-                                                                                       "publicText":  "Pale light moves inside the sphere like a thought trying to remember its shape.",
-                                                                                       "enterLabel":  "Stand before the crystal sphere",
-                                                                                       "selfText":  "You are standing before the crystal sphere.",
-                                                                                       "occupantTemplate":  "{name} stands before the crystal sphere.",
-                                                                                       "capacity":  20,
-                                                                                       "reachableSublocationIds":  [
-                                                                                                                       "templeSanctum"
-                                                                                                                   ]
-                                                                                   }
-                                                             }
-                                        }
-                  },
-    "characters":  {
-                       "player":  {
-                                      "id":  "player",
-                                      "name":  "You",
-                                      "playerDescription":  "A rain-soaked traveller takes in the surroundings.",
-                                      "interactionLabel":  "Speak with the traveller",
-                                      "aiDescription":  "You are a traveller newly arrived at a roadside tavern.",
-                                      "locationId":  "tavernEntrance",
-                                      "sublocationId":  "tavernEntranceFloor",
-                                      "inventoryId":  "inventory_player",
-                                      "wallet":  10,
-                                      "initialControllerId":  "human",
-                                      "defaultControllerId":  "ai",
-                                      "abilityIds":  [
-
-                                                     ],
-                                      "engineFacts":  {
-                                                          "aura":  "A faint current of unrealized potential surrounds the traveller."
-                                                      },
-                                      "initialMind":  {
-                                                          "knownFacts":  [
-
-                                                                         ],
-                                                          "beliefs":  [
-
-                                                                      ],
-                                                          "relationships":  [
-
-                                                                            ],
-                                                          "recentMemories":  [
-
-                                                                             ],
-                                                          "longTermMemories":  [
-
-                                                                               ]
-                                                      }
-                                  },
-                       "hoodedWoman":  {
-                                           "id":  "hoodedWoman",
-                                           "name":  "Hooded woman",
-                                           "playerDescription":  "A hooded woman watches the room from beneath the edge of her hood.",
-                                           "interactionLabel":  "Speak with the hooded woman",
-                                           "aiDescription":  "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.",
-                                           "locationId":  "commonRoom",
-                                           "sublocationId":  "commonRoomTableOne",
-                                           "inventoryId":  "inventory_hoodedWoman",
-                                           "wallet":  8,
-                                           "initialControllerId":  "ai",
-                                           "defaultControllerId":  "ai",
-                                           "abilityIds":  [
-                                                              "readAura"
-                                                          ],
-                                           "engineFacts":  {
-                                                               "aura":  "A quiet, disciplined magical presence surrounds her."
-                                                           },
-                                           "initialMind":  {
-                                                               "knownFacts":  [
-
-                                                                              ],
-                                                               "beliefs":  [
-
-                                                                           ],
-                                                               "relationships":  [
-                                                                                     {
-                                                                                         "targetCharacterId":  "player",
-                                                                                         "summary":  "You do not know this traveller yet."
-                                                                                     }
-                                                                                 ],
-                                                               "recentMemories":  [
-
-                                                                                  ],
-                                                               "longTermMemories":  [
-
-                                                                                    ]
-                                                           }
-                                       },
-                       "innkeeper":  {
-                                         "id":  "innkeeper",
-                                         "name":  "Innkeeper",
-                                         "playerDescription":  "The innkeeper wipes a wooden mug with a worn cloth.",
-                                         "interactionLabel":  "Speak with the innkeeper",
-                                         "aiDescription":  "You are the practical innkeeper of this roadside tavern.",
-                                         "locationId":  "bar",
-                                         "sublocationId":  "barBehindCounter",
-                                         "inventoryId":  "inventory_innkeeper",
-                                         "wallet":  25,
-                                         "initialControllerId":  "ai",
-                                         "defaultControllerId":  "ai",
-                                         "abilityIds":  [
-
-                                                        ],
-                                         "engineFacts":  {
-
-                                                         },
-                                         "initialMind":  {
-                                                             "knownFacts":  [
-
-                                                                            ],
-                                                             "beliefs":  [
-
-                                                                         ],
-                                                             "relationships":  [
-
-                                                                               ],
-                                                             "recentMemories":  [
-
-                                                                                ],
-                                                             "longTermMemories":  [
-
-                                                                                  ]
-                                                         }
-                                     }
-                   },
-    "abilities":  {
-                      "readAura":  {
-                                       "id":  "readAura",
-                                       "name":  "Read aura",
-                                       "actionType":  "read_aura",
-                                       "playerDescription":  "Sense the hidden auras of everyone you can currently perceive.",
-                                       "aiDescription":  "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
-                                   }
-                  }
+  "schemaVersion": 2,
+  "startLocationId": "tavernEntrance",
+  "protectedLocationIds": [
+    "tavernEntrance",
+    "bar",
+    "commonRoom",
+    "villageTemple"
+  ],
+  "protectedSublocationIds": [
+    "tavernEntranceFloor",
+    "barBehindCounter",
+    "commonRoomTableOne",
+    "templeSanctum"
+  ],
+  "protectedCharacterIds": [
+    "player",
+    "hoodedWoman",
+    "innkeeper"
+  ],
+  "protectedAbilityIds": [
+    "readAura"
+  ],
+  "locations": {
+    "tavernEntrance": {
+      "id": "tavernEntrance",
+      "type": "location",
+      "name": "Tavern entrance",
+      "passage": "The Tavern",
+      "description": [
+        "You stand in the entrance of a modest roadside tavern.",
+        "The room smells of smoke, spilled ale, and wet wool."
+      ],
+      "defaultSublocationId": "tavernEntranceFloor",
+      "inventoryId": "inventory_tavernEntrance",
+      "exits": {
+        "bar": "bar",
+        "commonRoom": "commonRoom",
+        "street": "street"
+      },
+      "sublocations": {
+        "tavernEntranceFloor": {
+          "id": "tavernEntranceFloor",
+          "type": "sublocation",
+          "locationId": "tavernEntrance",
+          "name": "Tavern floor",
+          "enterLabel": "Stand by the tavern entrance",
+          "selfText": "You are standing near the tavern entrance.",
+          "occupantTemplate": "{name} stands near the tavern entrance.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "tavernEntranceFloor"
+          ]
+        }
+      }
+    },
+    "bar": {
+      "id": "bar",
+      "type": "location",
+      "name": "The bar",
+      "passage": "The Bar",
+      "description": [
+        "The bar counter is dark with age and spilled ale.",
+        "Shelves of mismatched bottles line the wall behind it."
+      ],
+      "defaultSublocationId": "barPublicSide",
+      "inventoryId": "inventory_bar",
+      "exits": {
+        "tavernEntrance": "tavernEntrance",
+        "commonRoom": "commonRoom"
+      },
+      "sublocations": {
+        "barPublicSide": {
+          "id": "barPublicSide",
+          "type": "sublocation",
+          "locationId": "bar",
+          "name": "Public side of the bar",
+          "publicText": "The public side of the counter is worn smooth by years of elbows and spilled drink.",
+          "enterLabel": "Step to the public side of the bar",
+          "selfText": "You are standing on the public side of the counter.",
+          "occupantTemplate": "{name} stands on the public side of the counter.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "barPublicSide",
+            "barBehindCounter"
+          ]
+        },
+        "barBehindCounter": {
+          "id": "barBehindCounter",
+          "type": "sublocation",
+          "locationId": "bar",
+          "name": "Behind the bar",
+          "publicText": "A narrow working space behind the counter holds taps, bottles, and clean mugs.",
+          "enterLabel": "Step behind the bar",
+          "selfText": "You are standing behind the bar.",
+          "occupantTemplate": "{name} stands behind the bar.",
+          "capacity": 2,
+          "capabilities": [
+            "pour_ale"
+          ],
+          "reachableSublocationIds": [
+            "barBehindCounter",
+            "barPublicSide"
+          ]
+        }
+      }
+    },
+    "commonRoom": {
+      "id": "commonRoom",
+      "type": "location",
+      "name": "The common room",
+      "passage": "The Common Room",
+      "description": [
+        "Several travellers sit near the fire while two merchants argue quietly over a map.",
+        "Smoke gathers beneath the rafters above scarred tables and mismatched chairs."
+      ],
+      "defaultSublocationId": "commonRoomFloor",
+      "inventoryId": "inventory_commonRoom",
+      "exits": {
+        "tavernEntrance": "tavernEntrance",
+        "bar": "bar"
+      },
+      "sublocations": {
+        "commonRoomFloor": {
+          "id": "commonRoomFloor",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Common-room floor",
+          "enterLabel": "Stand in the common room",
+          "selfText": "You are standing in the common room.",
+          "occupantTemplate": "{name} stands in the common room.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "commonRoomFloor",
+            "commonRoomTableOne",
+            "commonRoomTableTwo"
+          ]
+        },
+        "commonRoomTableOne": {
+          "id": "commonRoomTableOne",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "First table",
+          "publicText": "The first table stands close to the fire.",
+          "enterLabel": "Sit at the first table",
+          "selfText": "You are sitting at the first table.",
+          "occupantTemplate": "{name} sits at the first table.",
+          "capacity": 4,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_commonRoomTableOne",
+          "reachableSublocationIds": [
+            "commonRoomTableOne",
+            "commonRoomFloor"
+          ]
+        },
+        "commonRoomTableTwo": {
+          "id": "commonRoomTableTwo",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Second table",
+          "publicText": "The second table sits nearer the shadowed wall.",
+          "enterLabel": "Sit at the second table",
+          "selfText": "You are sitting at the second table.",
+          "occupantTemplate": "{name} sits at the second table.",
+          "capacity": 4,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_commonRoomTableTwo",
+          "reachableSublocationIds": [
+            "commonRoomTableTwo",
+            "commonRoomFloor"
+          ]
+        }
+      }
+    },
+    "street": {
+      "id": "street",
+      "type": "location",
+      "name": "The street",
+      "passage": "The Street",
+      "description": [
+        "Cold rain falls upon the empty village street.",
+        "The tavern's windows glow warmly behind you."
+      ],
+      "defaultSublocationId": "streetCenter",
+      "inventoryId": "inventory_street",
+      "exits": {
+        "tavernEntrance": "tavernEntrance",
+        "villageTemple": "villageTemple"
+      },
+      "sublocations": {
+        "streetCenter": {
+          "id": "streetCenter",
+          "type": "sublocation",
+          "locationId": "street",
+          "name": "Village street",
+          "enterLabel": "Stand in the street",
+          "selfText": "You are standing in the village street.",
+          "occupantTemplate": "{name} stands in the village street.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "streetCenter"
+          ]
+        }
+      }
+    },
+    "villageTemple": {
+      "id": "villageTemple",
+      "type": "location",
+      "name": "Village temple",
+      "passage": "The Village Temple",
+      "description": [
+        "A tiny stone temple crouches at the edge of the village, smelling of cold incense and rain.",
+        "At the far end, beneath a soot-darkened icon, a crystal sphere rests on a crooked brass stand."
+      ],
+      "defaultSublocationId": "templeSanctum",
+      "inventoryId": "inventory_villageTemple",
+      "exits": {
+        "street": "street"
+      },
+      "sublocations": {
+        "templeSanctum": {
+          "id": "templeSanctum",
+          "type": "sublocation",
+          "locationId": "villageTemple",
+          "name": "Before the crystal sphere",
+          "publicText": "Pale light moves inside the sphere like a thought trying to remember its shape.",
+          "enterLabel": "Stand before the crystal sphere",
+          "selfText": "You are standing before the crystal sphere.",
+          "occupantTemplate": "{name} stands before the crystal sphere.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "templeSanctum"
+          ]
+        }
+      }
+    }
+  },
+  "characters": {
+    "player": {
+      "id": "player",
+      "name": "You",
+      "playerDescription": "A rain-soaked traveller takes in the surroundings.",
+      "interactionLabel": "Speak with the traveller",
+      "aiDescription": "You are a traveller newly arrived at a roadside tavern.",
+      "locationId": "tavernEntrance",
+      "sublocationId": "tavernEntranceFloor",
+      "inventoryId": "inventory_player",
+      "wallet": 10,
+      "initialControllerId": "human",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "A faint current of unrealized potential surrounds the traveller."
+      },
+      "initialMind": {
+        "knownFacts": [],
+        "beliefs": [],
+        "relationships": [],
+        "recentMemories": [],
+        "longTermMemories": []
+      }
+    },
+    "hoodedWoman": {
+      "id": "hoodedWoman",
+      "name": "Hooded woman",
+      "playerDescription": "A hooded woman watches the room from beneath the edge of her hood.",
+      "interactionLabel": "Speak with the hooded woman",
+      "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.",
+      "locationId": "commonRoom",
+      "sublocationId": "commonRoomTableOne",
+      "inventoryId": "inventory_hoodedWoman",
+      "wallet": 8,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [
+        "readAura"
+      ],
+      "engineFacts": {
+        "aura": "A quiet, disciplined magical presence surrounds her."
+      },
+      "initialMind": {
+        "knownFacts": [],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "player",
+            "summary": "You do not know this traveller yet."
+          }
+        ],
+        "recentMemories": [],
+        "longTermMemories": []
+      }
+    },
+    "innkeeper": {
+      "id": "innkeeper",
+      "name": "Innkeeper",
+      "playerDescription": "The innkeeper wipes a wooden mug with a worn cloth.",
+      "interactionLabel": "Speak with the innkeeper",
+      "aiDescription": "You are the practical innkeeper of this roadside tavern.",
+      "locationId": "bar",
+      "sublocationId": "barBehindCounter",
+      "inventoryId": "inventory_innkeeper",
+      "wallet": 25,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {},
+      "initialMind": {
+        "knownFacts": [],
+        "beliefs": [],
+        "relationships": [],
+        "recentMemories": [],
+        "longTermMemories": []
+      }
+    }
+  },
+  "abilities": {
+    "readAura": {
+      "id": "readAura",
+      "name": "Read aura",
+      "actionType": "read_aura",
+      "playerDescription": "Sense the hidden auras of everyone you can currently perceive.",
+      "aiDescription": "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
+    }
+  }
 };
 }());

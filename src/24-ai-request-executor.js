@@ -3,6 +3,7 @@
 
     const MIN_INTERVAL_MS = 1000;
     const DEFAULT_RATE_LIMIT_MS = 10000;
+    const MAX_EXCHANGE_HISTORY = 50;
     let chain = Promise.resolve();
     let queuedExecutions = 0;
     let activeExecutions = 0;
@@ -10,6 +11,8 @@
     let nextTransportAt = 0;
     let lastStartedAt = 0;
     let lastFinishedAt = 0;
+    let nextExchangeId = 1;
+    let exchangeHistory = [];
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -22,6 +25,41 @@
 
     function usesLiveTiming(client) {
         return !client || client === setup.OpenRouterClient || client.enforceRequestTiming === true;
+    }
+
+    function safeResult(result) {
+        return {
+            ok: Boolean(result && result.ok),
+            value: result && result.ok ? clone(result.value) : null,
+            error: result && !result.ok ? clone(result.error) : null,
+            repaired: Boolean(result && result.repaired),
+            modelId: result && result.modelId || null,
+            usage: result && result.usage ? clone(result.usage) : null,
+            rawContent: result && typeof result.rawContent === "string" ? result.rawContent : "",
+            trace: result && result.trace ? clone(result.trace) : null,
+            execution: result && result.execution ? clone(result.execution) : null
+        };
+    }
+
+    function recordExchange(spec, result, startedAt, finishedAt) {
+        exchangeHistory.push({
+            id: nextExchangeId++,
+            startedAt: new Date(startedAt).toISOString(),
+            finishedAt: new Date(finishedAt).toISOString(),
+            durationMs: Math.max(0, finishedAt - startedAt),
+            request: {
+                actorId: spec.actorId || null,
+                purpose: spec.purpose || "unspecified",
+                stage: spec.stage || null,
+                modelId: result && result.modelId || null,
+                messages: clone(spec.messages || []),
+                availableActions: clone(spec.availableActions || {})
+            },
+            result: safeResult(result)
+        });
+        if (exchangeHistory.length > MAX_EXCHANGE_HISTORY) {
+            exchangeHistory = exchangeHistory.slice(exchangeHistory.length - MAX_EXCHANGE_HISTORY);
+        }
     }
 
     async function chatWithPolicy(messages, client) {
@@ -71,13 +109,15 @@
         const work = chain.catch(function () {}).then(async function () {
             queuedExecutions--;
             activeExecutions++;
+            const executionStartedAt = Date.now();
+            let result;
             try {
                 const policyClient = {
                     chat: function (messages) {
                         return chatWithPolicy(messages, spec.client || setup.OpenRouterClient);
                     }
                 };
-                const result = await setup.AIProtocol.requestValidated(
+                result = await setup.AIProtocol.requestValidated(
                     clone(spec.messages || []),
                     spec.stage,
                     clone(spec.availableActions || {}),
@@ -86,11 +126,16 @@
                 if (result && typeof result === "object") {
                     result.execution = {
                         purpose: spec.purpose || "unspecified",
-                        actorId: spec.actorId || null
+                        actorId: spec.actorId || null,
+                        modelId: result.modelId || null
                     };
                 }
                 return result;
             } finally {
+                const executionFinishedAt = Date.now();
+                if (result && typeof result === "object") {
+                    recordExchange(spec, result, executionStartedAt, executionFinishedAt);
+                }
                 activeExecutions--;
             }
         });
@@ -109,14 +154,32 @@
             nextTransportAt: nextTransportAt,
             cooldownRemainingMs: Math.max(0, nextTransportAt - now),
             lastStartedAt: lastStartedAt,
-            lastFinishedAt: lastFinishedAt
+            lastFinishedAt: lastFinishedAt,
+            exchangeHistoryCount: exchangeHistory.length
         };
+    }
+
+    function getExchangeHistory() {
+        return {
+            maxEntries: MAX_EXCHANGE_HISTORY,
+            count: exchangeHistory.length,
+            entries: clone(exchangeHistory)
+        };
+    }
+
+    function clearExchangeHistory() {
+        exchangeHistory = [];
+        nextExchangeId = 1;
+        return { ok: true };
     }
 
     setup.AIRequestExecutor = {
         MIN_INTERVAL_MS: MIN_INTERVAL_MS,
         DEFAULT_RATE_LIMIT_MS: DEFAULT_RATE_LIMIT_MS,
+        MAX_EXCHANGE_HISTORY: MAX_EXCHANGE_HISTORY,
         execute: execute,
-        getStatus: getStatus
+        getStatus: getStatus,
+        getExchangeHistory: getExchangeHistory,
+        clearExchangeHistory: clearExchangeHistory
     };
 }());

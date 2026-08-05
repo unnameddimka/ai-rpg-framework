@@ -67,11 +67,12 @@ assert(model.getActorAbilityResult(state, "player").marker === "private-player" 
     "displayed private results should be isolated by controlled actor ID");
 
 const aiPanelSource = uiSource.slice(uiSource.indexOf('id="ai-settings-panel"'), uiSource.indexOf("`;", uiSource.indexOf('id="ai-settings-panel"')));
-assert(aiPanelSource.includes("Provider: OpenRouter") && aiPanelSource.includes("Model: Cydonia 24B V4.1") &&
-    aiPanelSource.includes('type="password"') && aiPanelSource.includes("Process next AI event"),
-    "AI panel should show fixed provider/model, password key input, and one global scheduler button");
-assert(!aiPanelSource.includes("<select") && !uiSource.includes("ai-character-select"),
-    "AI queue UI must not contain a character picker");
+assert(aiPanelSource.includes("Provider: OpenRouter") && aiPanelSource.includes('id="openrouter-model-select"') &&
+    aiPanelSource.includes("${modelOptions}") && aiPanelSource.includes('type="password"') &&
+    aiPanelSource.includes("Process next AI event"),
+    "AI panel should show a model selector backed by generated options, password key input, and one global scheduler button");
+assert(uiSource.includes("setup.AIRuntimeSettings.selectModel") && !uiSource.includes("ai-character-select"),
+    "model selection should update runtime settings while the AI queue UI remains free of a character picker");
 assert(uiSource.includes("!aiQueue.head || !aiSettings.hasKey || aiBusy"),
     "queue button should disable for empty queue, missing key, or in-flight request");
 
@@ -81,18 +82,26 @@ assert(uiSource.includes('view.location.id !== "villageTemple"') &&
     uiSource.includes("Dry-run exact request") &&
     uiSource.includes("Process live"),
     "the village-temple crystal sphere should expose the scheduler queue and dry-run/live controls only in its special room");
+assert(uiSource.includes("Download AI log") && uiSource.includes("Import AI log") &&
+    uiSource.includes("Replay recorded exchange") && uiSource.includes('accept="application/json,.json"') &&
+    uiSource.includes("API keys and authorization headers are excluded") &&
+    uiSource.includes("complete browser-visible OpenRouter HTTP error details") &&
+    uiSource.includes("OpenRouter HTTP response"),
+    "the sphere should expose safe JSON download, import, and offline replay controls");
 const escapedTrace = promptLabModel.traceMarkup({ trace: { attempts: [{
     attempt: 1,
     kind: "initial",
     messages: [{ role: "user", content: "<unsafe request>" }],
+    providerResponse: { status: 429, rawBody: "<unsafe provider error>" },
     rawContent: "<img src=x onerror=alert(1)>",
     parsedValue: { text: "<unsafe parsed>" },
     validationErrors: ["<unsafe error>"],
     usage: null
 }] } });
 assert(!escapedTrace.includes("<img") && escapedTrace.includes("&lt;img") &&
-    escapedTrace.includes("&lt;unsafe error&gt;") && escapedTrace.includes("&lt;unsafe request&gt;"),
-    "prompt-lab request, response, parsed JSON, and validation errors should be HTML escaped");
+    escapedTrace.includes("&lt;unsafe error&gt;") && escapedTrace.includes("&lt;unsafe request&gt;") &&
+    escapedTrace.includes("&lt;unsafe provider error&gt;"),
+    "prompt-lab request, provider diagnostics, response, parsed JSON, and validation errors should be HTML escaped");
 
 const escapedQueue = promptLabModel.queueMarkup({
     busy: false,

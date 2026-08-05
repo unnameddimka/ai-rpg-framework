@@ -4,7 +4,7 @@
 
 Build a deterministic Twine/SugarCube RPG framework that supplies a stateless language model with everything required to behave as one specific character while the engine remains authoritative.
 
-The current integration milestone adds a narrow manual OpenRouter/Cydonia vertical slice on top of the existing deterministic foundation:
+The current integration milestone adds a narrow manual OpenRouter vertical slice with a small validated model catalog on top of the existing deterministic foundation:
 
 - authorable characters;
 - separate public and AI-private descriptions;
@@ -600,7 +600,7 @@ The task does not introduce a second persistence system.
 The following remain later work:
 
 - automatic queue draining or autonomous/timer-driven NPC activity;
-- provider or model selection beyond fixed OpenRouter/Cydonia;
+- provider selection or arbitrary model IDs outside the authored model catalog;
 - streaming;
 - multiple formal actions in one AI turn;
 - memory compression and token budgeting;
@@ -655,15 +655,33 @@ If HumanController leaves a character and its `defaultControllerId` is `ai`, enq
 
 The queue is runtime game state and must survive SugarCube save/load. In-flight requests, promises, API settings, raw prompts, and raw responses are transient and must not be saved.
 
-## 22. OpenRouter client and key lifecycle
+## 22. OpenRouter client, model catalog, and key lifecycle
 
-The browser sends a non-streaming chat-completions request to OpenRouter using the fixed model:
+The browser sends non-streaming chat-completions requests to OpenRouter. Provider choice is
+fixed, but the model comes from the build-validated `data/model_list.json` catalog:
 
-```text
-thedrummer/cydonia-24b-v4.1
+```json
+{
+  "schemaVersion": 1,
+  "defaultModelId": "thedrummer/cydonia-24b-v4.1",
+  "models": [
+    { "id": "thedrummer/cydonia-24b-v4.1", "name": "Cydonia 24B V4.1" },
+    { "id": "sao10k/l3.3-euryale-70b", "name": "Llama 3.3 Euryale 70B" }
+  ]
+}
 ```
 
-The user enters an OpenRouter API key in an `AI Settings` panel. The key is stored in a transient object outside `State.variables`.
+`tools/generate-model-list.js` rejects malformed, duplicate, empty, or default-missing
+catalogs and emits `src/00-model-list.js`. The standalone `dist/game.html` embeds that output;
+it does not fetch sibling JSON under `file://`.
+
+The AI Settings panel renders a selector from the generated list. The selected model ID is
+stored outside `State.variables`, applied to the next request, and persisted independently in
+a namespaced localStorage value when available. A missing or obsolete saved ID is deleted and
+falls back to `defaultModelId`. Each transport result and exchange-history record captures the
+model ID actually used so logs remain meaningful after later selection changes.
+
+The user enters an OpenRouter API key in the same panel. The key is stored in a transient object outside `State.variables`.
 
 Optional `Remember for 24 hours` persistence uses `localStorage`, not cookies:
 
@@ -810,15 +828,17 @@ Because a formal action occurs before the second request, the implementation mus
 The AI panel should show:
 
 - key status without revealing the key;
-- fixed provider and model;
+- fixed provider plus the current validated model selection and raw model ID;
 - next scheduler recipient, first-event preview, and queue length;
 - `Process next AI event`;
 - shared executor busy/cooldown information where useful;
 - last safe error;
 - last token usage and cost when returned by OpenRouter;
-- optional transient request/response diagnostics, with credentials excluded.
+- optional transient request/response diagnostics, with credentials and user-scoped provider identifiers excluded.
 
-Raw prompts and responses are never saved.
+Raw prompts and responses are never written to SugarCube state, game saves, world data, or
+generated source files. They may appear in closure-owned transient diagnostics and in an
+explicit user-requested exchange-log export after transport-layer sanitization.
 
 ## 29. Still out of scope
 
@@ -828,7 +848,7 @@ This integration does not add:
 - timer-based NPC activity;
 - initiative without pending observations;
 - multiple actions in one turn;
-- model/provider selection;
+- provider selection or arbitrary unvalidated model IDs;
 - streaming;
 - memory compression or token budgeting;
 - target-form generation for human abilities;
@@ -861,3 +881,27 @@ The protocol returns a transient trace containing:
 The trace and edited prompt are closure-owned browser debug data. They are not stored in
 `State.variables.world`, saves, authoring data, or generated world files, and they never
 contain the API key.
+
+OpenRouter failures attach a sanitized `providerResponse` containing the endpoint, HTTP status,
+accessible diagnostic headers, retry information, raw body, parsed body, and provider metadata.
+Sanitization occurs inside `src/22-openrouter-client.js` before the object is returned: API keys,
+Authorization/Bearer values, `user_id` properties, and `user_...` identifier strings are
+replaced. Provider diagnostics required for operation remain intact, including
+`provider_name`, `limit_source`, error text, and retry hints.
+
+`AIRequestExecutor` also keeps a closure-owned FIFO history of the latest 50 validated request
+executions. Each entry records purpose, actor, stage, exact messages, available actions,
+timestamps, duration, normalized result, raw content, usage, and the full initial/repair
+trace. No transport client or credentials are retained.
+
+The sphere exports a versioned `ai-rpg.ai-exchange-log` JSON document containing the focused
+request/run, executor history, scheduler projection, and a minimal game summary. The export is
+constructed from an explicit allow-list of debug data, redacts the current in-memory key,
+OpenRouter/Bearer-shaped secrets, OpenRouter `user_id` fields, and `user_...` identifiers, and
+fails rather than returning a file if the current key is still present. Transport-layer
+sanitization is the primary boundary; export redaction is defense in depth. Import validates
+schema, version, size, stage, messages, and action data before
+loading the request into the sphere. Import never writes world state. Offline replay uses the
+recorded raw attempt content as a mock client and routes it through the current `AIProtocol`
+parser and validator; it does not call the network or commit actions, narrative, memory, or
+observation consumption.

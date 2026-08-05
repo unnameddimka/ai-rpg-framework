@@ -2,19 +2,66 @@
     "use strict";
 
     const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-    const MODEL = "thedrummer/cydonia-24b-v4.1";
     const MAX_TOKENS = 1200;
     const TEMPERATURE = 0.4;
 
+    function clone(value) {
+        return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    }
+
+    function redactSecretText(value) {
+        let text = String(value === undefined || value === null ? "" : value);
+        const currentKey = setup.AIRuntimeSettings && typeof setup.AIRuntimeSettings.getKey === "function"
+            ? setup.AIRuntimeSettings.getKey()
+            : "";
+        if (currentKey && currentKey.length >= 8) text = text.split(currentKey).join("[REDACTED_API_KEY]");
+        return text
+            .replace(/sk-or-v1-[A-Za-z0-9_-]{12,}/g, "[REDACTED_OPENROUTER_KEY]")
+            .replace(/Bearer\s+[A-Za-z0-9._~-]{12,}/gi, "Bearer [REDACTED]")
+            .replace(/\buser_[A-Za-z0-9_-]{8,}\b/g, "[REDACTED_OPENROUTER_USER_ID]");
+    }
+
+    function sanitizeValue(value) {
+        if (typeof value === "string") return redactSecretText(value);
+        if (Array.isArray(value)) return value.map(sanitizeValue);
+        if (value && typeof value === "object") {
+            const output = {};
+            Object.keys(value).forEach(function (key) {
+                const normalized = key.toLowerCase().replace(/[^a-z]/g, "");
+                output[key] = ["apikey", "openrouterkey", "authorization", "accesstoken"].includes(normalized)
+                    ? "[REDACTED]"
+                    : normalized === "userid"
+                        ? "[REDACTED_OPENROUTER_USER_ID]"
+                        : sanitizeValue(value[key]);
+            });
+            return output;
+        }
+        return value;
+    }
+
     function safeFailure(code, message, status, extra) {
+        const additions = extra || {};
+        const providerResponse = additions.providerResponse ? sanitizeValue(additions.providerResponse) : null;
+        const error = {
+            code: code,
+            message: redactSecretText(message)
+        };
+        if (providerResponse) error.providerResponse = clone(providerResponse);
         return Object.assign({
             ok: false,
             status: status || 0,
+            modelId: additions.modelId || (setup.AIRuntimeSettings && setup.AIRuntimeSettings.getSelectedModelId
+                ? setup.AIRuntimeSettings.getSelectedModelId()
+                : null),
             content: "",
             usage: null,
             retryAfterMs: null,
-            error: { code: code, message: message }
-        }, extra || {});
+            providerResponse: providerResponse,
+            error: error
+        }, additions, {
+            providerResponse: providerResponse,
+            error: error
+        });
     }
 
     function retryAfterMilliseconds(response) {
@@ -28,7 +75,101 @@
         return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
     }
 
+    function exposedHeaders(response) {
+        const result = {};
+        const headers = response && response.headers;
+        if (!headers) return result;
+        if (typeof headers.forEach === "function") {
+            try {
+                headers.forEach(function (value, name) {
+                    result[String(name).toLowerCase()] = redactSecretText(value);
+                });
+            } catch (error) {}
+        }
+        if (typeof headers.get === "function") {
+            [
+                "content-type",
+                "date",
+                "retry-after",
+                "server",
+                "cf-ray",
+                "x-request-id",
+                "x-openrouter-request-id",
+                "x-generation-id"
+            ].forEach(function (name) {
+                try {
+                    const value = headers.get(name);
+                    if (value !== null && value !== undefined && value !== "") result[name] = redactSecretText(value);
+                } catch (error) {}
+            });
+        }
+        return result;
+    }
+
+    async function readBody(response) {
+        let rawBody = "";
+        let parsedBody = null;
+        let bodyReadError = null;
+        try {
+            if (response && typeof response.text === "function") {
+                rawBody = await response.text();
+                if (rawBody) {
+                    try { parsedBody = JSON.parse(rawBody); }
+                    catch (error) { parsedBody = null; }
+                }
+            } else if (response && typeof response.json === "function") {
+                parsedBody = await response.json();
+                rawBody = JSON.stringify(parsedBody);
+            }
+        } catch (error) {
+            bodyReadError = {
+                name: error && error.name || "Error",
+                message: redactSecretText(error && error.message || "Response body could not be read.")
+            };
+        }
+        const sanitizedParsedBody = sanitizeValue(parsedBody);
+        const sanitizedRawBody = parsedBody && typeof parsedBody === "object"
+            ? JSON.stringify(sanitizedParsedBody)
+            : redactSecretText(rawBody);
+        return {
+            rawBody: sanitizedRawBody,
+            parsedBody: sanitizedParsedBody,
+            bodyReadError: bodyReadError
+        };
+    }
+
+    function providerDiagnostics(response, body, retryAfterMs) {
+        const diagnostics = {
+            endpoint: ENDPOINT,
+            url: response && response.url || ENDPOINT,
+            status: response && Number.isFinite(response.status) ? response.status : 0,
+            statusText: response && typeof response.statusText === "string" ? response.statusText : "",
+            headers: exposedHeaders(response),
+            retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : null,
+            rawBody: body && body.rawBody || "",
+            parsedBody: body && body.parsedBody !== undefined ? body.parsedBody : null
+        };
+        if (body && body.bodyReadError) diagnostics.bodyReadError = clone(body.bodyReadError);
+        return sanitizeValue(diagnostics);
+    }
+
+    function providerMessage(body) {
+        const parsed = body && body.parsedBody;
+        const message = parsed && parsed.error && parsed.error.message;
+        return typeof message === "string" && message.trim() ? redactSecretText(message.trim()) : "";
+    }
+
+    function messageWithProvider(base, body) {
+        const detail = providerMessage(body);
+        return detail ? `${base} OpenRouter says: ${detail}` : base;
+    }
+
+    function selectedModelId() {
+        return setup.AIRuntimeSettings.getSelectedModelId();
+    }
+
     async function chat(messages, fetchOverride) {
+        const modelId = selectedModelId();
         const key = setup.AIRuntimeSettings.getKey();
         if (!key) return safeFailure("API_KEY_MISSING", "Enter an OpenRouter API key before taking an AI turn.");
         const fetchFunction = fetchOverride || (typeof fetch === "function" ? fetch : null);
@@ -38,30 +179,68 @@
             response = await fetchFunction(ENDPOINT, {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ model: MODEL, stream: false, max_tokens: MAX_TOKENS, temperature: TEMPERATURE, messages: messages })
+                body: JSON.stringify({ model: modelId, stream: false, max_tokens: MAX_TOKENS, temperature: TEMPERATURE, messages: messages })
             });
         } catch (error) {
-            return safeFailure("NETWORK_ERROR", "OpenRouter could not be reached. Check browser network or CORS access.");
+            return safeFailure("NETWORK_ERROR", "OpenRouter could not be reached. Check browser network or CORS access.", 0, {
+                providerResponse: {
+                    endpoint: ENDPOINT,
+                    url: ENDPOINT,
+                    status: 0,
+                    statusText: "",
+                    headers: {},
+                    retryAfterMs: null,
+                    rawBody: "",
+                    parsedBody: null,
+                    networkError: {
+                        name: error && error.name || "Error",
+                        message: redactSecretText(error && error.message || "Network request failed.")
+                    }
+                }
+            });
         }
+
+        const retryAfterMs = retryAfterMilliseconds(response);
+        const body = await readBody(response);
+        const diagnostics = providerDiagnostics(response, body, retryAfterMs);
+
         if (!response.ok) {
-            if (response.status === 401) return safeFailure("AUTHENTICATION_FAILED", "OpenRouter authentication failed.", 401);
-            if (response.status === 402) return safeFailure("INSUFFICIENT_CREDITS", "OpenRouter reports insufficient credits.", 402);
+            if (response.status === 401) return safeFailure("AUTHENTICATION_FAILED", messageWithProvider("OpenRouter authentication failed.", body), 401, { providerResponse: diagnostics });
+            if (response.status === 402) return safeFailure("INSUFFICIENT_CREDITS", messageWithProvider("OpenRouter reports insufficient credits.", body), 402, { providerResponse: diagnostics });
             if (response.status === 429) {
-                const retryAfterMs = retryAfterMilliseconds(response);
                 const suffix = Number.isFinite(retryAfterMs)
                     ? ` Retry after ${Math.max(1, Math.ceil(retryAfterMs / 1000))} seconds.`
                     : "";
-                return safeFailure("RATE_LIMITED", `OpenRouter rate limited the request.${suffix}`, 429, { retryAfterMs: retryAfterMs });
+                return safeFailure("RATE_LIMITED", messageWithProvider(`OpenRouter rate limited the request.${suffix}`, body), 429, {
+                    retryAfterMs: retryAfterMs,
+                    providerResponse: diagnostics
+                });
             }
-            if (response.status >= 500) return safeFailure("PROVIDER_UNAVAILABLE", "OpenRouter is temporarily unavailable.", response.status);
-            return safeFailure("PROVIDER_REQUEST_FAILED", "OpenRouter rejected the request.", response.status);
+            if (response.status >= 500) return safeFailure("PROVIDER_UNAVAILABLE", messageWithProvider("OpenRouter is temporarily unavailable.", body), response.status, { providerResponse: diagnostics });
+            return safeFailure("PROVIDER_REQUEST_FAILED", messageWithProvider("OpenRouter rejected the request.", body), response.status, { providerResponse: diagnostics });
         }
-        let body;
-        try { body = await response.json(); } catch (error) { return safeFailure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned an unreadable response.", response.status); }
-        const content = body && body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content;
-        if (typeof content !== "string") return safeFailure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned no assistant content.", response.status);
-        return { ok: true, status: response.status, content: content, usage: body.usage || null, retryAfterMs: null, error: null };
+
+        const parsed = body.parsedBody;
+        if (!parsed || typeof parsed !== "object") {
+            return safeFailure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned an unreadable response.", response.status, { providerResponse: diagnostics });
+        }
+        const content = parsed && parsed.choices && parsed.choices[0] && parsed.choices[0].message && parsed.choices[0].message.content;
+        if (typeof content !== "string") {
+            return safeFailure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned no assistant content.", response.status, { providerResponse: diagnostics });
+        }
+        return {
+            ok: true,
+            status: response.status,
+            modelId: modelId,
+            content: content,
+            usage: parsed.usage || null,
+            retryAfterMs: null,
+            providerResponse: diagnostics,
+            error: null
+        };
     }
 
-    setup.OpenRouterClient = { ENDPOINT: ENDPOINT, MODEL: MODEL, chat: chat };
+    const client = { ENDPOINT: ENDPOINT, getModelId: selectedModelId, chat: chat };
+    Object.defineProperty(client, "MODEL", { enumerable: true, get: selectedModelId });
+    setup.OpenRouterClient = client;
 }());

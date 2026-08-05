@@ -1,3 +1,8 @@
+> Historical milestone note: this document specified the original fixed-Cydonia vertical slice.
+> The current implementation supersedes only its fixed-model UI/client requirements with
+> `docs/task-openrouter-model-list.md`; its scheduler, protocol, safety, and transaction rules
+> remain applicable.
+
 # Task: OpenRouter Cydonia Integration with a Manual AI Turn Queue
 
 ## 1. Objective
@@ -484,7 +489,7 @@ Expose concise player-safe messages:
 - model selected invalid protocol data;
 - unexpected transaction failure.
 
-Do not include the API key, Authorization header, full request headers, or unsafe provider payload in the visible error.
+Do not include the API key, Authorization header, full request headers, OpenRouter `user_id`, or other user-scoped provider identifiers in the visible error. Preserve sanitized provider diagnostics needed to distinguish authentication, credit, shared upstream rate-limit, provider, and network failures.
 
 Store only the latest safe error in transient UI state.
 
@@ -499,7 +504,7 @@ Transient browser-only debug state may retain:
 - last usage data;
 - last safe error.
 
-Never save this data into SugarCube. Always redact Authorization data and never include the key in request-body debug data.
+Never save this data into SugarCube. Always redact Authorization data, API keys, OpenRouter `user_id` properties, and `user_...` identifiers before diagnostics enter traces or exports. Keep non-secret fields such as HTTP status, `provider_name`, `limit_source`, retry hints, and provider error text.
 
 Show token usage and reported cost when present. Do not implement local token counting or cost estimation.
 

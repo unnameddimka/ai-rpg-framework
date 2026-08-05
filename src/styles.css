@@ -10,6 +10,14 @@
     margin-top: 0.35rem;
 }
 
+.framework-model-id {
+    display: inline-block;
+    max-width: 100%;
+    font-size: 0.82em;
+    overflow-wrap: anywhere;
+    opacity: 0.8;
+}
+
 .framework-panel {
     margin-top: 2rem;
     padding: 1rem;
@@ -193,6 +201,7 @@
     flex: 1 1 12rem;
 }
 
+.prompt-lab-transfer,
 .prompt-lab-source,
 .prompt-lab-results {
     margin-top: 1rem;

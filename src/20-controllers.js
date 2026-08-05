@@ -81,7 +81,10 @@
     function recordFailure(error) {
         const safe = error && error.code && error.message ? error.message : "Unexpected AI turn failure.";
         setup.AITransientDebug.lastSafeError = safe;
-        return { ok: false, error: { code: error && error.code || "AI_TURN_FAILED", message: safe } };
+        const normalized = { code: error && error.code || "AI_TURN_FAILED", message: safe };
+        if (error && Array.isArray(error.details)) normalized.details = clone(error.details);
+        if (error && error.providerResponse) normalized.providerResponse = clone(error.providerResponse);
+        return { ok: false, error: normalized };
     }
 
     function recordProtocolResult(actorId, stage, messages, availableActions, result) {

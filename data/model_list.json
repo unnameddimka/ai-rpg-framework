@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "defaultModelId": "thedrummer/cydonia-24b-v4.1",
+  "models": [
+    {
+      "id": "thedrummer/cydonia-24b-v4.1",
+      "name": "Cydonia 24B V4.1"
+    },
+    {
+      "id": "sao10k/l3.3-euryale-70b",
+      "name": "Llama 3.3 Euryale 70B"
+    }
+  ]
+}

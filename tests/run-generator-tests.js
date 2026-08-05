@@ -14,10 +14,11 @@ function rejects(mutator, expected) {
         const document = clone(source); mutator(document);
         const input = path.join(directory, "world.json");
         fs.writeFileSync(input, JSON.stringify(document), "utf8");
-        const result = childProcess.spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-            path.join(root, "tools/generate-world-data.ps1"), "-InputPath", input,
-            "-OutputPath", path.join(directory, "data.js"), "-PassagesPath", path.join(directory, "passages.twee"),
-            "-StoryDataPath", path.join(directory, "storydata.twee")], { encoding: "utf8" });
+        const result = childProcess.spawnSync(process.execPath, [
+            path.join(root, "tools/generate-world-data.js"), "--input", input,
+            "--output", path.join(directory, "data.js"), "--passages", path.join(directory, "passages.twee"),
+            "--story-data", path.join(directory, "storydata.twee")
+        ], { encoding: "utf8" });
         const output = `${result.stdout}\n${result.stderr}`;
         assert(result.status !== 0 && output.includes(expected), `generator should reject fixture with ${expected}: ${output}`);
         assert(!fs.existsSync(path.join(directory, "data.js")), "failed validation must not partially write generated output");
@@ -28,4 +29,24 @@ rejects(function (doc) { doc.locations.bar.passage = doc.locations.tavernEntranc
 rejects(function (doc) { doc.characters.player.inventoryId = doc.locations.bar.inventoryId; }, "Duplicate inventory");
 rejects(function (doc) { doc.characters.player.initialControllerId = "dummy"; }, "Exactly one");
 rejects(function (doc) { doc.abilities.readAura.actionType = "execute_code"; }, "unknown action");
-console.log("All world generator tests passed.");
+
+const modelSource = JSON.parse(fs.readFileSync(path.join(root, "data/model_list.json"), "utf8"));
+function rejectsModelList(mutator, expected) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ai-rpg-model-list-generator-"));
+    try {
+        const document = clone(modelSource); mutator(document);
+        const input = path.join(directory, "model_list.json");
+        fs.writeFileSync(input, JSON.stringify(document), "utf8");
+        const outputPath = path.join(directory, "model-list.js");
+        const result = childProcess.spawnSync(process.execPath, [
+            path.join(root, "tools/generate-model-list.js"), "--input", input, "--output", outputPath
+        ], { encoding: "utf8" });
+        const output = `${result.stdout}\n${result.stderr}`;
+        assert(result.status !== 0 && output.includes(expected), `model-list generator should reject fixture with ${expected}: ${output}`);
+        assert(!fs.existsSync(outputPath), "failed model-list validation must not partially write generated output");
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+}
+rejectsModelList(function (doc) { doc.defaultModelId = "missing/model"; }, "not present in models");
+rejectsModelList(function (doc) { doc.models.push(clone(doc.models[0])); }, "Duplicate model ID");
+rejectsModelList(function (doc) { doc.models[0].name = ""; }, "name must be a non-empty string");
+console.log("All world and model-list generator tests passed.");

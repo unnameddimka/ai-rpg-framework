@@ -207,8 +207,10 @@
                 attempt: attempt + 1,
                 kind: attempt === 0 ? "initial" : "repair",
                 messages: clone(currentMessages),
+                modelId: response && response.modelId || null,
                 rawContent: response && typeof response.content === "string" ? response.content : "",
                 usage: response && response.usage || null,
+                providerResponse: response && response.providerResponse ? clone(response.providerResponse) : null,
                 parsedValue: null,
                 validationErrors: []
             };
@@ -216,7 +218,7 @@
             if (!response || !response.ok) {
                 trace.finalStatus = "request_failed";
                 trace.safeError = clone(response && response.error || { code: "AI_REQUEST_FAILED", message: "AI request failed." });
-                return { ok: false, error: trace.safeError, trace: trace };
+                return { ok: false, error: trace.safeError, modelId: response && response.modelId || null, trace: trace };
             }
 
             let value;
@@ -235,6 +237,7 @@
                 return {
                     ok: true,
                     value: validation.value,
+                    modelId: response.modelId || null,
                     usage: response.usage,
                     rawContent: response.content,
                     repaired: attempt === 1,
@@ -250,7 +253,7 @@
                     message: "The model returned invalid JSON protocol data.",
                     details: attemptTrace.validationErrors.slice()
                 };
-                return { ok: false, error: trace.safeError, trace: trace };
+                return { ok: false, error: trace.safeError, modelId: response && response.modelId || null, trace: trace };
             }
             currentMessages = buildRepairMessages(messages, response.content, stage, attemptTrace.validationErrors);
         }

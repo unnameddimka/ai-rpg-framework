@@ -224,11 +224,16 @@
                     return `<li>${escapeHtml(error)}</li>`;
                 }).join("")}</ul>`
                 : `<p>Protocol validation passed for this response.</p>`;
+            const provider = attempt.providerResponse
+                ? `<h5>OpenRouter HTTP response</h5>
+                    <pre>${promptLabJson(attempt.providerResponse, "No provider diagnostics")}</pre>`
+                : "";
             return `
                 <details class="prompt-lab-attempt"${attempt.attempt === attempts.length ? " open" : ""}>
                     <summary>Attempt ${escapeHtml(attempt.attempt)} &mdash; ${escapeHtml(attempt.kind)}</summary>
                     <h5>Messages sent</h5>
                     <pre>${promptLabJson(attempt.messages, "No messages")}</pre>
+                    ${provider}
                     <h5>Raw model content</h5>
                     <pre>${escapeHtml(attempt.rawContent || "(empty response)")}</pre>
                     <h5>Parsed JSON</h5>
@@ -308,8 +313,13 @@
             : "No request is loaded.";
         const keyWarning = hasKey ? "" : "Enter and save an OpenRouter key in the sidebar before sending a request.";
         const lastRunSummary = snapshot.lastRun
-            ? `<strong>Last dry run:</strong> ${snapshot.lastRun.ok ? "valid" : "failed"}`
-            : "<strong>Last dry run:</strong> none";
+            ? `<strong>Last recorded run:</strong> ${snapshot.lastRun.ok
+                ? "valid"
+                : `failed &mdash; ${escapeHtml(snapshot.lastRun.error && snapshot.lastRun.error.code || "UNKNOWN_ERROR")}: ${escapeHtml(snapshot.lastRun.error && snapshot.lastRun.error.message || "Unknown failure.")}`}`
+            : "<strong>Last recorded run:</strong> none";
+        const importedSummary = snapshot.hasImportedExchange
+            ? `Imported file: ${escapeHtml(snapshot.importedFilename || "exchange log")}`
+            : "No exchange log is imported.";
         const executorStatus = snapshot.executor && snapshot.executor.cooldownRemainingMs > 0
             ? `Shared request executor: next network call waits about ${Math.max(1, Math.ceil(snapshot.executor.cooldownRemainingMs / 1000))} second(s).`
             : `Shared request executor: ready; minimum interval ${escapeHtml(setup.AIRequestExecutor.MIN_INTERVAL_MS)} ms.`;
@@ -341,6 +351,18 @@
                 <button id="prompt-lab-clear"${snapshot.busy ? " disabled" : ""}>Clear sphere</button>
             </div>
 
+            <section class="prompt-lab-transfer">
+                <h4>Portable AI exchange log</h4>
+                <p>The file contains the loaded request, raw model replies, complete browser-visible OpenRouter HTTP error details, parser and validation results, usage data, queue snapshot, and up to ${escapeHtml(setup.AIRequestExecutor.MAX_EXCHANGE_HISTORY)} executor exchanges from this page. API keys and authorization headers are excluded.</p>
+                <p><strong>${escapeHtml(snapshot.exchangeHistoryCount)}</strong> exchange(s) recorded. ${importedSummary}</p>
+                <div class="prompt-lab-button-row">
+                    <button id="prompt-lab-download-log"${(!snapshot.canExport || snapshot.busy) ? " disabled" : ""}>Download AI log</button>
+                    <button id="prompt-lab-import-log"${snapshot.busy ? " disabled" : ""}>Import AI log</button>
+                    <button id="prompt-lab-clear-log"${(!snapshot.exchangeHistoryCount || snapshot.busy) ? " disabled" : ""}>Clear exchange history</button>
+                    <input id="prompt-lab-import-file" type="file" accept="application/json,.json" hidden>
+                </div>
+            </section>
+
             <section class="prompt-lab-source">
                 <h4>Loaded request</h4>
                 <p>${sourceInfo}</p>
@@ -363,6 +385,10 @@
             <section class="prompt-lab-results">
                 <h4>Protocol trace</h4>
                 <p>${lastRunSummary}</p>
+                <div class="prompt-lab-button-row">
+                    <button id="prompt-lab-replay-imported"${(!snapshot.canReplayImported || snapshot.busy) ? " disabled" : ""}>Replay recorded exchange</button>
+                </div>
+                <p class="prompt-lab-more">Replay feeds the recorded raw model replies through the current parser and validator. It uses no network, needs no API key, and never changes the game world.</p>
                 ${promptLabTraceMarkup(snapshot.lastRun)}
             </section>
         `;
@@ -415,6 +441,59 @@
             const prompt = $("#prompt-lab-system-prompt").val();
             showImmediateStatus("The crystal sphere is dry-running the request with the edited system prompt...");
             await setup.PromptLab.retryEdited(prompt);
+            redraw();
+        });
+
+        $("#prompt-lab-download-log").on("click", function () {
+            const result = setup.PromptLab.exportExchangeLog();
+            if (!result.ok) {
+                showImmediateStatus(result.error.message);
+                return;
+            }
+            try {
+                const blob = new Blob([result.text], { type: "application/json;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = result.filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+                showImmediateStatus(`Downloaded ${result.filename}.`);
+            } catch (error) {
+                showImmediateStatus("The browser could not download the AI exchange log.");
+            }
+        });
+
+        $("#prompt-lab-import-log").on("click", function () {
+            const input = document.getElementById("prompt-lab-import-file");
+            if (input) input.click();
+        });
+
+        $("#prompt-lab-import-file").on("change", async function () {
+            const file = this.files && this.files[0];
+            if (!file) return;
+            showImmediateStatus(`Importing ${file.name}...`);
+            try {
+                const text = await file.text();
+                const result = setup.PromptLab.importExchangeLog(text, file.name);
+                if (!result.ok) showImmediateStatus(result.error.message);
+            } catch (error) {
+                showImmediateStatus("The selected AI exchange log could not be read.");
+            }
+            this.value = "";
+            redraw();
+        });
+
+        $("#prompt-lab-replay-imported").on("click", async function () {
+            showImmediateStatus("Replaying the recorded model response through the current protocol validator...");
+            await setup.PromptLab.replayImportedExchange();
+            redraw();
+        });
+
+        $("#prompt-lab-clear-log").on("click", function () {
+            setup.PromptLab.clearExchangeHistory();
             redraw();
         });
 
@@ -577,6 +656,11 @@
         const aiBusy = setup.AIController.isInFlight() || setup.AIRequestExecutor.getStatus().busy;
         const usage = setup.AITransientDebug.lastUsage;
         const usageText = usage ? `Usage: ${escapeHtml(JSON.stringify(usage))}` : "";
+        const modelOptions = aiSettings.models.map(function (model) {
+            const selected = model.id === aiSettings.selectedModelId ? " selected" : "";
+            const defaultLabel = model.id === aiSettings.defaultModelId ? " (default)" : "";
+            return `<option value="${escapeHtml(model.id)}"${selected}>${escapeHtml(model.name + defaultLabel)}</option>`;
+        }).join("");
         const queueText = aiQueue.head
             ? `Next recipient: ${escapeHtml(aiQueue.head.recipientName)}<br>` +
                 `Event: ${escapeHtml(aiQueue.head.primaryObservation && aiQueue.head.primaryObservation.summary || aiQueue.head.reason)}<br>` +
@@ -611,11 +695,14 @@
             <div class="framework-sidebar-block" id="ai-settings-panel">
                 <strong>AI Settings</strong><br>
                 Provider: OpenRouter<br>
-                Model: Cydonia 24B V4.1<br>
+                <label>Model
+                    <select id="openrouter-model-select"${aiBusy ? " disabled" : ""}>${modelOptions}</select>
+                </label><br>
+                <span class="framework-model-id">${escapeHtml(aiSettings.selectedModelId)}</span><br>
                 Key status: ${aiSettings.hasKey ? "available" : "not set"}<br>
                 <label>API key <input id="openrouter-api-key" type="password" autocomplete="off"></label><br>
                 <label><input id="remember-openrouter-key" type="checkbox"> Remember for 24 hours</label><br>
-                <button id="save-ai-settings">Save settings</button>
+                <button id="save-ai-settings">Save key</button>
                 <button id="forget-ai-key">Forget saved key</button>
                 <div id="ai-settings-status" class="framework-status">${escapeHtml(aiSettings.warning || "")}</div>
             </div>
@@ -656,6 +743,17 @@
             setup.Game.resetWorld();
             delete State.variables.frameworkUI;
             Engine.play(currentPassageForHuman());
+        });
+
+        $("#openrouter-model-select").on("change", function () {
+            const result = setup.AIRuntimeSettings.selectModel($(this).val());
+            if (!result.ok) {
+                $("#ai-settings-status").text(result.error.message);
+                $(this).val(setup.AIRuntimeSettings.getSelectedModelId());
+                return;
+            }
+            $("#ai-settings-status").text(result.warning || `Model selected: ${result.model.name}.`);
+            $(".framework-model-id").text(result.model.id);
         });
 
         $("#save-ai-settings").on("click", function () {
