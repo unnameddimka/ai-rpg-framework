@@ -61,34 +61,71 @@ assertFails(setup.Game.assignNonHumanController("hoodedWoman", "dummy"), "CANNOT
     "generic assignment must not remove only human");
 assertOk(setup.Game.takeHumanControl("player"), "control should return to player");
 
-const innkeeperPour = perform("innkeeper", { type: "pour_ale" }, "innkeeper should pour from initial behind-bar position");
-assert(world.inventories.inventory_innkeeper.itemIds.includes(innkeeperPour.events[0].itemId),
-    "innkeeper's generated mug should enter innkeeper inventory");
+assert(world.inventories.inventory_bar.itemIds.length === 0,
+    "bar floor should no longer contain a magically pre-created mug of ale");
+assert(world.inventories.inventory_barMugCabinet.itemIds.length === 10,
+    "mug cabinet should start with ten empty mug instances");
+assert(!setup.CharacterAPI.getAvailableActions("innkeeper").fill,
+    "fill should not be granted before the innkeeper owns an empty mug");
 
 perform("player", { type: "move", destination_id: "bar" }, "player should enter bar");
 assert(world.entities.player.locationId === "bar", "major move should change location");
 assert(world.entities.player.sublocationId === "barPublicSide", "major move should assign default sublocation");
-perform("player", { type: "take_item", item_id: "beerMug" }, "player should take existing bar-floor item");
-perform("player", { type: "drop_item", item_id: "beerMug" }, "drop should return item to major-location floor");
-assert(world.inventories.inventory_bar.itemIds.includes("beerMug"), "dropped item should be in bar floor inventory");
-assertFails(setup.CharacterAPI.perform("player", { type: "pour_ale" }), "ACTION_NOT_AVAILABLE",
-    "pouring should fail on public side");
+assertFails(setup.CharacterAPI.perform("player", { type: "take_item", item_id: "emptyMug_1" }),
+    "ITEM_NOT_ACCESSIBLE", "public-side actor should not reach the behind-bar mug cabinet");
+
+perform("innkeeper", { type: "take_item", item_id: "emptyMug_1" },
+    "innkeeper should take an empty mug from the cabinet");
+const innkeeperFillActions = setup.CharacterAPI.getAvailableActions("innkeeper");
+assert(innkeeperFillActions.fill && innkeeperFillActions.fill.options.item_ids.includes("emptyMug_1"),
+    "owned empty mug plus ale source should grant fill");
+const innkeeperFill = perform("innkeeper", { type: "fill", item_id: "emptyMug_1" },
+    "innkeeper should fill the existing empty mug");
+assert(world.entities.emptyMug_1.definitionId === "mugOfAle",
+    "fill should transform the same instance into a mug of ale");
+assert(world.inventories.inventory_innkeeper.itemIds.includes("emptyMug_1"),
+    "filled mug should remain in the innkeeper inventory");
+assert(innkeeperFill.events[0].itemId === "emptyMug_1" &&
+    innkeeperFill.events[0].fromDefinitionId === "emptyMug" &&
+    innkeeperFill.events[0].toDefinitionId === "mugOfAle",
+    "fill event should report the item-state transition");
+assert(innkeeperFill.events[0].recipients.includes("player"),
+    "fill event should be visible to the player across reachable bar positions");
+perform("innkeeper", { type: "give_item", target_id: "player", item_id: "emptyMug_1" },
+    "innkeeper should hand the filled mug to the player");
+const consumed = perform("player", { type: "consume", item_id: "emptyMug_1" },
+    "player should drink the ale");
+assert(world.entities.emptyMug_1.definitionId === "emptyMug",
+    "consume should preserve the instance and transform it into an empty mug");
+assert(consumed.events[0].fromDefinitionId === "mugOfAle" &&
+    consumed.events[0].toDefinitionId === "emptyMug",
+    "consume event should report the reverse transition");
+assertFails(setup.CharacterAPI.perform("player", { type: "fill", item_id: "emptyMug_1" }),
+    "ACTION_NOT_AVAILABLE", "empty mug should not be fillable on the public side");
 
 perform("player", { type: "move_within_location", destination_id: "barBehindCounter" },
     "player should step behind bar");
 assert(world.entities.player.locationId === "bar", "internal move should preserve major location");
 assert(world.entities.player.sublocationId === "barBehindCounter", "internal move should change sublocation");
 
-const pourOne = perform("player", { type: "pour_ale" }, "player should pour first ale");
-const pourTwo = perform("player", { type: "pour_ale" }, "player should pour second ale");
-const mugOne = pourOne.events[0].itemId;
-const mugTwo = pourTwo.events[0].itemId;
-assert(mugOne !== mugTwo, "consecutive pours should generate unique IDs");
-assert(world.entities[mugOne].templateId === "mugOfAle", "generated mug should retain template ID");
-assert(world.inventories.inventory_player.itemIds.includes(mugOne), "first mug should enter player inventory");
+const refill = perform("player", { type: "fill", item_id: "emptyMug_1" },
+    "player should refill the same empty mug behind the bar");
+const mugOne = refill.events[0].itemId;
+perform("player", { type: "take_item", item_id: "emptyMug_2" },
+    "player should take a second empty mug from the cabinet");
+const fillTwo = perform("player", { type: "fill", item_id: "emptyMug_2" },
+    "player should fill the second existing mug");
+const mugTwo = fillTwo.events[0].itemId;
+assert(mugOne === "emptyMug_1" && mugTwo === "emptyMug_2",
+    "fill should reuse authored instance IDs instead of creating new items");
+assert(world.entities[mugOne].definitionId === "mugOfAle" && world.entities[mugTwo].definitionId === "mugOfAle",
+    "both reused instances should now have the mug-of-ale definition");
+assert(world.inventories.inventory_barMugCabinet.itemIds.length === 8,
+    "two physical mugs should have left the cabinet");
+assert(world.inventories.inventory_player.itemIds.includes(mugOne), "first mug should remain in player inventory");
 assert(world.inventories.inventory_player.itemIds.includes(mugTwo), "second mug should enter player inventory");
-assert(pourOne.events[0].recipients.includes("innkeeper"), "bar event should reach innkeeper across sublocations");
-assert(!pourOne.events[0].recipients.includes("hoodedWoman"), "bar event must not reach common room");
+assert(fillTwo.events[0].recipients.includes("innkeeper"), "bar event should reach innkeeper across sublocations");
+assert(!fillTwo.events[0].recipients.includes("hoodedWoman"), "bar event must not reach common room");
 
 perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "hooded woman should leave common room");
 perform("hoodedWoman", { type: "move", destination_id: "bar" }, "hooded woman should enter bar public side");
@@ -105,8 +142,8 @@ assert(world.entities.player.wallet === playerMoney - 1, "money transfer should 
 perform("player", { type: "move", destination_id: "tavernEntrance" }, "player should leave bar");
 perform("player", { type: "move", destination_id: "commonRoom" }, "player should enter common room floor");
 assert(world.entities.player.sublocationId === "commonRoomFloor", "major movement should reset sublocation");
-assertFails(setup.CharacterAPI.perform("player", { type: "pour_ale" }), "ACTION_NOT_AVAILABLE",
-    "pouring should fail outside bar");
+assertFails(setup.CharacterAPI.perform("player", { type: "fill", item_id: mugTwo }), "ACTION_NOT_AVAILABLE",
+    "filling should fail outside the ale-source environment");
 
 perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "hooded woman should leave bar");
 perform("hoodedWoman", { type: "move", destination_id: "commonRoom" }, "hooded woman should enter common room floor");
@@ -186,7 +223,10 @@ const baseActions = setup.CharacterAPI.getAvailableActions("player");
 assert(baseActions.move.sources.some(function (source) { return source.kind === "base"; }),
     "base action should identify its grant source");
 assert(!baseActions.read_aura, "player should not receive read_aura");
-assert(!baseActions.pour_ale, "player outside behind-bar position should not receive pour_ale");
+assert(!baseActions.fill, "player outside the ale-source environment should not receive fill");
+assert(baseActions.consume && baseActions.consume.sources.some(function (source) {
+    return source.kind === "item" && source.id === mugTwo;
+}), "owned mug of ale should grant consume through its current item definition");
 assertFails(setup.CharacterAPI.perform("player", { type: "read_aura" }),
     "ACTION_NOT_AVAILABLE", "ungranted aura action should be rejected before hidden data is read");
 

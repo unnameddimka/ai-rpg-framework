@@ -3,7 +3,12 @@
 ## Implemented
 
 - `data/world.json` authoritatively defines locations, characters, initial minds, permanent
-  nonhuman controller defaults, abilities, and hidden engine facts.
+  nonhuman controller defaults, abilities, item definitions, persistent item instances, and hidden engine facts.
+- Item instances keep stable IDs while state transitions replace only their `definitionId`. The authored
+  mug cycle uses `emptyMug -> mugOfAle` through `fill` at an `ale_source`, and `mugOfAle -> emptyMug`
+  through `consume`. The bar cabinet begins with ten physical empty mugs; filling never creates a mug.
+- The standalone editor exposes **Item types** and **Items**, including consumable, fillable, and
+  equippable metadata, explicit transition targets, environment requirements, and starting containers.
 - Exactly one HumanController remains an atomic temporary override. Released characters
   return directly to their authored `defaultControllerId`; no controller stack is stored.
 - The sample player, hooded woman, and innkeeper use permanent AI defaults so temporary
@@ -85,7 +90,7 @@
 - Browser `file://` network/CORS and localStorage behavior depends on the browser.
 - There is no memory compression, token budgeting, local token counting, embeddings, or
   retrieval. Usage/cost is shown only when OpenRouter reports it.
-- Editable ability effects, arbitrary author code, combat, economy, equipment, quests, and
+- Editable ability effects, arbitrary author code, combat, economy, equip/unequip runtime mechanics, quests, and
   dialogue trees remain out of scope.
 - The village temple and crystal-sphere laboratory are temporary development scaffolding.
 - Automated tests never make live OpenRouter requests.

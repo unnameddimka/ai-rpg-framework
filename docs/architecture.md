@@ -289,6 +289,7 @@ For an actor, the currently available action types are:
 base actions
 + current sublocation capabilities
 + action types from actor abilityIds
++ actions exposed by owned item definitions when their environment requirements are met
 ```
 
 Examples:
@@ -298,8 +299,9 @@ move                    base
 move_within_location    base
 take_item               base
 give_item               base
-pour_ale                granted by barBehindCounter
-place_item               granted by a table sublocation
+fill                    granted by an owned fillable item while the current position supplies its required environment capability
+consume                 granted by an owned consumable item
+place_item              granted by a table sublocation
 read_aura               granted by the actor's assigned readAura ability
 ```
 
@@ -524,7 +526,15 @@ Main sections:
 Locations
 Characters
 Abilities
+Item types
+Items
 ```
+
+### Item model
+
+`itemDefinitions` describe item states such as `emptyMug` and `mugOfAle`. `items` describe persistent physical instances such as `emptyMug_1` and point to their current state through `definitionId`. A successful transform changes only that reference, so the item keeps its stable instance ID, ownership, and history.
+
+Consumable and fillable components declare explicit transitions. Environment requirements such as `ale_source` are supplied by the current sublocation rather than hard-coded to a location ID. Equippable slot metadata is authorable, but equip/unequip runtime mechanics are not implemented yet.
 
 ### Character form
 
@@ -574,7 +584,8 @@ The same core problems must be rejected before build and at runtime when relevan
 - default controller set to `human`;
 - invalid ability reference;
 - ability references an unknown action type;
-- deletion of referenced locations, sublocations, characters, or abilities;
+- deletion of referenced locations, sublocations, characters, abilities, item definitions, or item containers;
+- missing item definitions, invalid item transitions, and missing starting inventories;
 - malformed mind records;
 - restricted-view leaks of AI-private or engine-hidden data.
 

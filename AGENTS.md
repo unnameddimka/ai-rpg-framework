@@ -77,7 +77,8 @@ The available formal action set for a character is the deduplicated union of:
 
 1. engine-defined base action types;
 2. action types granted by the current sublocation's `capabilities`;
-3. action types granted by the character's individual `abilityIds` through the ability catalog.
+3. action types granted by the character's individual `abilityIds` through the ability catalog;
+4. action types granted by owned item definitions, with any required environment capability checked against the current sublocation.
 
 Rules:
 
@@ -196,7 +197,8 @@ Validate in the editor, build generator, and runtime where applicable:
 - exactly one initial human-controlled character;
 - valid ability references;
 - ability `actionType` values that exist in the known engine action allowlist/registry;
-- no deleted location, sublocation, character, or ability still referenced by another record.
+- no deleted location, sublocation, character, ability, item definition, or item still referenced by another record;
+- valid item-definition transitions and valid starting inventory references for every item instance.
 
 ## Current scope
 
@@ -205,7 +207,8 @@ Implement and preserve:
 - existing tavern entrance, bar, common room, street, and the temporary village-temple prompt-lab room;
 - generated major physical passages;
 - sublocations, capacity, reachability, table inventories, and behind-bar capability;
-- inventories, wallets, movement, item transfer, money transfer, `place_item`, and `pour_ale`;
+- inventories, wallets, movement, item transfer, money transfer, `place_item`, and item-state transitions through `consume` and `fill`;
+- authorable item definitions and persistent item instances whose `definitionId` changes without replacing the instance;
 - confirmed events and restricted views;
 - debug takeover of any character by the one HumanController;
 - authorable characters, initial minds, and individual abilities;
@@ -222,7 +225,7 @@ Do not add yet:
 - memory compression, token budgeting, embeddings, or vector search;
 - combat, health changes, or damage;
 - buying and selling;
-- item use effects or equipment;
+- equipment state and equip/unequip mechanics beyond authoring the `equippable` metadata;
 - quests or dialogue trees;
 - arbitrary author scripts.
 

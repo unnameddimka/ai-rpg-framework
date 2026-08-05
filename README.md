@@ -48,8 +48,9 @@ The numeric JavaScript prefixes make the dependency order explicit when Tweego r
 
 `data/world.json` (schema version 2) is the single authoritative source for the start
 location, major locations, sublocations, characters, initial minds, controller defaults,
-hidden engine facts, and individual ability grants. The editor exposes separate Locations,
-Characters, and Abilities sections and blocks structurally invalid downloads.
+hidden engine facts, individual ability grants, item definitions, and persistent item instances.
+The editor exposes separate Locations, Characters, Abilities, Item types, and Items sections and
+blocks structurally invalid downloads.
 
 `src/generated/world-data.js`, `src/generated/world-passages.twee`,
 `src/generated/world-storydata.twee`, and `src/00-model-list.js` are derived build files and
@@ -70,6 +71,13 @@ Administrator steps:
 The build invokes both cross-platform Node validation/generation steps before tests and story
 compilation. The resulting `dist/game.html` embeds the world and model catalog and remains
 self-contained; it does not fetch `world.json` or `model_list.json` at runtime.
+
+Items use a definition/instance split. An instance keeps its stable ID and container while its
+`definitionId` may change through an engine-confirmed transition. In the sample world, ten authored
+empty mugs begin in the cabinet behind the bar. `fill` is available only for an owned empty mug while
+the actor stands at a position with `ale_source`; it transforms that same instance into `mugOfAle`.
+`consume` transforms the same mug back into `emptyMug`. No full mug is created without consuming an
+existing empty mug. Equippable slot metadata is editable, but equip/unequip mechanics are deferred.
 
 ## Build on Windows
 
@@ -210,7 +218,7 @@ node tests/run-generator-tests.js
 
 The tests verify the HumanController invariant, action grants, generic ability discovery,
 targetless aura scans, escaped and actor-isolated private result display, normalized feedback,
-observation privacy, restricted views and context, mind save round trips, movement, inventory
+observation privacy, restricted views and context, mind save round trips, movement, inventory, item-state transitions,
 and money transfer, editor validation, world/model-list generator rejection, model default/selection persistence,
 queue ordering and repair, mocked OpenRouter responses, key expiry/leak prevention, detailed protocol diagnostics,
 scheduler request projection, executor serialization and timing, prompt-lab dry-run isolation,
