@@ -5,7 +5,7 @@
 - The deterministic game engine owns objective world state.
 - Controllers choose intentions; they never mutate world state or character mind directly.
 - All formal actions must pass through `setup.CharacterAPI.perform()`.
-- Free narrative input must pass through `setup.CharacterAPI.narrate()` and must not create objective facts by itself.
+- Human and AI turns may submit one combined intent through `setup.CharacterAPI.submitIntent()`: optional narrative plus at most one formal action. `narrate()` remains the lower-level narrative primitive. Narrative never creates objective facts by itself.
 - `ActionRegistry` is the single source of truth for executable formal action mechanics.
 - A formal action may mutate the world, emit public events, return private actor feedback, do any combination of those, or fail with grounded feedback.
 - Do not split physical and perceptual actions into separate execution systems.
@@ -25,7 +25,7 @@ The controller types are:
 
 - `human` — receives commands from the browser UI;
 - `dummy` — performs no autonomous actions and may write debug logs;
-- `ai` — uses the browser-side OpenRouter adapter and the currently selected validated catalog model only when a manual queued AI turn is requested.
+- `ai` — uses the browser-side OpenRouter adapter and the currently selected validated catalog model when a user-triggered reaction wave or manual sphere/sidebar step processes its queue entry.
 
 ### Critical HumanController invariant
 
@@ -60,7 +60,7 @@ Required conceptual partitions:
 - `longTermMemories` — older or already compressed memories;
 - `pendingObservations` — objective events and action feedback not yet interpreted by a AI controller.
 
-The AI controller may interpret a bounded snapshot of `pendingObservations` during an explicitly requested queued AI turn. The deterministic engine must never invent attitudes or interpretations itself.
+The AI controller may interpret a bounded snapshot of `pendingObservations` during a user-triggered queued reaction turn. The deterministic engine must never invent attitudes or interpretations itself.
 
 The current milestone still must not:
 
@@ -109,7 +109,7 @@ Examples include:
 - a failed attempt that reveals a locked door or unreachable object;
 - `read_aura`, which may change no world state and primarily returns private feedback.
 
-Narrative output remains separate. A model or human may describe an attempt, but only a successful formal action result establishes objective consequences or hidden information.
+Narrative and a formal action may be submitted together in one intent envelope. Their authority remains separate: narrative may express speech, gestures, or an attempted act, but only a successful formal action result establishes objective consequences or hidden information.
 
 ## Restricted views and AI context
 
@@ -122,17 +122,19 @@ Narrative output remains separate. A model or human may describe an attempt, but
 
 ## AI turn queue and controller integration
 
-- AI turns are manual in this milestone. The sidebar exposes one `Process next AI event` control, never a character picker. The temporary sphere may inspect the whole queue, but only the queue head may be processed live.
+- Human `Submit` and explicit `Pass / Next turn` are the only normal triggers for an AI reaction wave. There is still no timer or background loop.
+- The sidebar checkbox `Stop automatic AI request processing` pauses the wave that normally follows `Submit`; `Pass`, the sidebar step, and the sphere remain explicit manual controls.
 - Objective events and feedback may enqueue eligible characters whose current controller assignment is `ai`.
 - The queue must be deterministic, JSON-serializable, saveable with SugarCube, and deduplicated by character ID.
-- Direct addressees and formal-action targets are enqueued before other perceiving AI characters; remaining order follows deterministic event delivery order.
+- Direct addressees and formal-action targets have priority over other perceiving AI characters. Remaining order is stable and deterministic.
 - A queued entry is eligible only while that character is currently assigned `ai` and has pending observations. Skip or remove stale entries.
 - When HumanController leaves a character and that character returns to `defaultControllerId: "ai"`, enqueue it if it already has pending observations.
 - Do not enqueue a human-controlled or dummy-controlled character.
-- One scheduler invocation processes at most one queued character and at most one formal action.
-- `setup.AITurnScheduler` owns queue-head selection and exact decision-request construction. It has no timer yet.
+- One reaction wave may process many queued characters, but each character may react at most once in that wave and may choose at most one formal action. New observations for an already-reacted character remain queued for the next wave.
+- Later characters in the same wave must see confirmed events produced by earlier reactions.
+- `setup.AITurnScheduler` owns queue projection, exact request construction, single-head manual processing, and full-wave processing.
 - `setup.AIRequestExecutor` is the only path for game, repair, and prompt-lab model requests. It serializes calls, leaves at least one second between live transports, and honors `Retry-After` without automatically retrying a 429.
-- A failed API call, invalid model response, or failed transaction must preserve the queue entry and all unconsumed observations for retry.
+- A failed API call, invalid model response, or failed transaction must preserve the affected queue entry and all unconsumed observations for retry.
 
 ## OpenRouter and API-key rules
 
@@ -152,10 +154,11 @@ Narrative output remains separate. A model or human may describe an attempt, but
 - Never treat model prose as objective world state.
 - Parse and locally validate model JSON. Do not depend on native provider strict-schema support.
 - Permit at most one repair request for malformed or schema-invalid JSON. No general automatic retries.
-- An AI turn may return no formal action. If it returns an action, pass that action through `setup.CharacterAPI.perform()` exactly like a human action.
-- If a formal action is attempted, provide the normalized grounded result to a second model call before accepting final reaction text or memory updates. Both calls together are one AI turn.
-- Hold all model-produced narrative and memory changes until the complete turn succeeds. Avoid partial commits.
-- Apply public narrative only through `setup.CharacterAPI.narrate()`.
+- One AI request returns optional narrative, optional speech, bounded memory updates, and no more than one available formal action.
+- There is no immediate result-stage model call. Execute the formal action locally, record its normalized grounded result as a new observation for the actor, and let the actor interpret that result during a later reaction wave.
+- Do not let model narrative claim that an unexecuted formal action succeeded. Objective consequences come only from `CharacterAPI.perform()`.
+- Commit the validated response atomically against a pre-turn snapshot. A request or commit failure must not consume observations or partially mutate the turn.
+- Apply combined narrative/action through `setup.CharacterAPI.submitIntent()`; lower-level public narrative still flows through `narrate()` internally.
 - Apply model memory changes only through an engine-owned validator supporting bounded append/upsert operations.
 - Remove only observation IDs actually consumed by a successfully committed turn. Never clear an entire inbox blindly.
 - Raw request and response bodies may be kept only in transient debug memory or an explicit user-requested exchange-log export. They must be sanitized before storage or display.
@@ -168,9 +171,9 @@ Narrative output remains separate. A model or human may describe an attempt, but
 - Passage names and the start passage are generated from validated `data/world.json` data.
 - Do not use or restore the obsolete "one generic physical-location passage" architecture.
 - Physical location prose, nearby-character presence, interaction links, and exits must be rendered from the restricted character view and runtime world state.
-- Normal movement UI must call the registered `move` action through `setup.CharacterAPI.perform()`.
+- Normal movement UI must submit the registered `move` action through the same combined turn flow as other human intents.
 - Never show the controlled character as a nearby character or interaction target.
-- Keep the formal action panel as a developer/debug interface below the player-facing view.
+- Keep the formal action panel as a developer/debug interface below the player-facing view. It uses one narrative area, addressee/loudness controls, radio buttons for at most one formal action, and shared `Submit` / `Pass` controls.
 - Assigned character abilities are an exception: currently available zero-input abilities must also appear as normal player-facing controls above the debug panel.
 
 ## World editor
@@ -208,13 +211,13 @@ Implement and preserve:
 - authorable characters, initial minds, and individual abilities;
 - one sample grounded individual ability, `read_aura`;
 - direct browser OpenRouter integration with a validated two-model catalog and authored default;
-- one deterministic saved AI turn queue, a manual `AITurnScheduler`, and a `Process next AI event` control;
-- validated one- or two-stage AI turns and bounded memory updates;
+- one deterministic saved AI turn queue, user-triggered reaction waves, manual scheduler stepping, and an auto-processing pause checkbox;
+- validated single-request AI turns with combined narrative/action and bounded memory updates;
 - 24-hour optional local API-key persistence outside SugarCube.
 
 Do not add yet:
 
-- autonomous or timer-driven NPC execution;
+- autonomous or timer-driven NPC execution unrelated to a user-triggered Submit/Pass wave;
 - arbitrary model IDs or provider selection;
 - memory compression, token budgeting, embeddings, or vector search;
 - combat, health changes, or damage;
@@ -244,6 +247,6 @@ Do not add yet:
 5. Build with Tweego when installed.
 6. Verify `setup.Game.validateWorld()` succeeds after all tested actions.
 7. Verify a JSON serialize/parse round trip preserves every character mind.
-8. Test queue ordering, deduplication, stale-entry handling, scheduler request projection, executor serialization/minimum interval, successful one-stage turns, successful two-stage turns, malformed JSON repair, failed-request rollback, consumed-observation removal by ID, and 24-hour key expiry.
+8. Test queue ordering, deduplication, stale-entry handling, scheduler request projection, executor serialization/minimum interval, combined human intents, interaction grouping, reaction-wave once-per-character behavior, single-request action turns, malformed JSON repair, failed-request rollback, consumed-observation removal by ID, and 24-hour key expiry.
 9. Verify no API key appears in a save, world dump, generated artifact, debug log, or copied AI context.
 10. Update `README.md` and `docs/status.md` with implemented results and remaining limitations.

@@ -1,3 +1,5 @@
+> **Superseded architecture note (2026-08-05):** This document records the earlier manual, two-stage `decision -> result` milestone. The live implementation now uses unified narrative-plus-action intents, one model request per AI reaction, and user-triggered reaction waves. See `docs/architecture.md`, `docs/status.md`, and `docs/task-single-request-reaction-waves.md`.
+
 > Historical milestone note: this document specified the original fixed-Cydonia vertical slice.
 > The current implementation supersedes only its fixed-model UI/client requirements with
 > `docs/task-openrouter-model-list.md`; its scheduler, protocol, safety, and transaction rules

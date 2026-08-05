@@ -119,6 +119,7 @@
             nextObservationId: 1,
             nextMemoryId: 1,
             nextGeneratedItemId: 1,
+            nextIntentId: 1,
             ai: { turnQueue: [] },
 
             debug: {
@@ -166,6 +167,15 @@
         return ok({ characterId: characterId });
     }
 
+    function hasDirectPendingObservation(characterId, world) {
+        const character = getCharacter(characterId, world);
+        if (!character || !character.mind || !Array.isArray(character.mind.pendingObservations)) return false;
+        return character.mind.pendingObservations.some(function (observation) {
+            const targetId = observation.targetId || observation.data && observation.data.targetId || null;
+            return targetId === characterId;
+        });
+    }
+
     function repairAIQueue(world) {
         if (!world.ai || !Array.isArray(world.ai.turnQueue)) world.ai = { turnQueue: [] };
         const seen = new Set();
@@ -177,7 +187,13 @@
             entry.characterId = characterId;
             entry.reason = typeof entry.reason === "string" ? entry.reason : "observation";
             return true;
-        }).map(function (entry) { return typeof entry === "string" ? { characterId: entry, reason: "repaired" } : entry; });
+        }).map(function (entry, index) {
+            const normalized = typeof entry === "string" ? { characterId: entry, reason: "repaired" } : entry;
+            return { entry: normalized, index: index, direct: hasDirectPendingObservation(normalized.characterId, world) };
+        }).sort(function (left, right) {
+            if (left.direct !== right.direct) return left.direct ? -1 : 1;
+            return left.index - right.index;
+        }).map(function (record) { return record.entry; });
         return world.ai.turnQueue;
     }
 
@@ -521,6 +537,10 @@
             }
         }
 
+        if (!Number.isInteger(world.nextIntentId) || world.nextIntentId < 1) {
+            world.nextIntentId = 1;
+        }
+
         repairAIQueue(world);
 
         return world;
@@ -675,7 +695,7 @@
         return record;
     }
 
-    function routeFeedback(feedback, action, world) {
+    function routeFeedback(feedback, action, world, metadata) {
         for (const entry of feedback) {
             enqueueObservation(entry.recipientId, {
                 kind: "action_feedback",
@@ -685,7 +705,8 @@
                 targetId: entry.data && entry.data.targetId ? entry.data.targetId : null,
                 text: entry.text,
                 data: clone(entry.data || {}),
-                code: entry.code
+                code: entry.code,
+                interactionId: metadata && metadata.interactionId || null
             }, world);
         }
     }
@@ -1379,7 +1400,7 @@
         };
     }
 
-    function executeAction(actorId, action) {
+    function executeAction(actorId, action, metadata) {
         let world = ensureWorld();
         const actor = getCharacter(actorId, world);
         const attempted = action && typeof action === "object" ? clone(action) : {};
@@ -1414,7 +1435,7 @@
                 recipientId: actor.id, kind: "observation", code: validation.error.code,
                 text: validation.error.message, data: clone(action)
             }];
-            routeFeedback(feedback, action, world);
+            routeFeedback(feedback, action, world, metadata);
             const result = { ok: false, action: clone(action), events: [], feedback: feedback, error: clone(validation.error) };
             world.debug.lastActionResult = result;
             return result;
@@ -1433,9 +1454,24 @@
             }
 
             const events = rawEvents.map(function (eventData) {
-                return emitEvent(eventData, world);
+                const enriched = Object.assign({}, eventData);
+                if (metadata && metadata.interactionId) enriched.interactionId = metadata.interactionId;
+                return emitEvent(enriched, world);
             });
-            routeFeedback(feedback, action, world);
+            routeFeedback(feedback, action, world, metadata);
+            if (world.control.assignments[actor.id] === "ai") {
+                enqueueObservation(actor.id, {
+                    kind: "action_result",
+                    actionType: action.type,
+                    turn: events.length > 0 ? events[events.length - 1].id : world.nextEventId,
+                    actorId: actor.id,
+                    targetId: action.target_id || null,
+                    text: events.map(function (event) { return event.text; }).filter(Boolean).join(" ") || `Your ${action.type} action succeeded.`,
+                    data: { ok: true, action: clone(action), events: clone(events) },
+                    code: "ACTION_SUCCEEDED",
+                    interactionId: metadata && metadata.interactionId || null
+                }, world);
+            }
 
             const result = { ok: true, action: clone(action), events: clone(events), feedback: feedback, error: null };
             world.debug.lastActionResult = result;
@@ -1449,7 +1485,7 @@
         }
     }
 
-    function submitNarrative(actorId, input) {
+    function submitNarrative(actorId, input, metadata) {
         const world = ensureWorld();
         const actor = getCharacter(actorId, world);
 
@@ -1466,9 +1502,10 @@
         }
 
         const targetId = input.target_id || "";
+        const narrativeLocationId = metadata && metadata.locationId || actor.locationId;
         if (targetId) {
             const target = getCharacter(targetId, world);
-            if (!target || target.locationId !== actor.locationId) {
+            if (!target || target.locationId !== narrativeLocationId) {
                 return fail("TARGET_NOT_NEARBY", "Narrative target is not nearby.");
             }
         }
@@ -1481,14 +1518,63 @@
             type: "narrative_input",
             actorId: actor.id,
             targetId: targetId,
-            locationId: actor.locationId,
+            locationId: narrativeLocationId,
             noticeability: noticeability,
+            interactionId: metadata && metadata.interactionId || null,
             text: text
         }, world);
 
         const result = ok({ event: clone(event) });
         world.debug.lastActionResult = result;
         return result;
+    }
+
+
+    function submitIntent(actorId, input) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+
+        input = input && typeof input === "object" ? input : {};
+        const text = typeof input.text === "string" ? input.text.trim() : "";
+        const action = input.action && typeof input.action === "object" ? clone(input.action) : null;
+        if (!text && !action) return fail("EMPTY_INTENT", "Submit a narrative, one formal action, or both.");
+
+        const snapshot = clone(world);
+        const interactionId = world.nextIntentId++;
+        const originLocationId = actor.locationId;
+        let actionResult = null;
+        let narrativeResult = null;
+
+        try {
+            if (action) {
+                actionResult = executeAction(actorId, action, { interactionId: interactionId });
+            }
+            if (text) {
+                narrativeResult = submitNarrative(actorId, {
+                    text: text,
+                    target_id: input.target_id || "",
+                    noticeability: input.noticeability || "noticeable"
+                }, {
+                    interactionId: interactionId,
+                    locationId: action && action.type === "move" ? originLocationId : getCharacter(actorId, world).locationId
+                });
+                if (!narrativeResult.ok) throw narrativeResult.error;
+            }
+            const validation = validateWorld(world);
+            if (!validation.ok) throw validation.error;
+            const result = ok({
+                interactionId: interactionId,
+                action: action,
+                actionResult: actionResult,
+                narrativeResult: narrativeResult
+            });
+            world.debug.lastActionResult = clone(result);
+            return result;
+        } catch (error) {
+            State.variables.world = snapshot;
+            return fail(error && error.code || "INTENT_EXECUTION_FAILED", error && error.message || "The combined intent could not be executed.");
+        }
     }
 
     function getPendingEventsFor(characterId) {
@@ -1628,7 +1714,8 @@
         getView: getCharacterView,
         getAvailableActions: getAvailableActions,
         perform: executeAction,
-        narrate: submitNarrative
+        narrate: submitNarrative,
+        submitIntent: submitIntent
     };
     setup.ContextBuilder = { build: buildContext };
 }());

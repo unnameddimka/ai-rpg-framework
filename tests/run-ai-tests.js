@@ -23,7 +23,7 @@ function queueHooded() {
 }
 
 load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/10-game-api.js"); load("src/21-ai-settings.js");
-load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js");
+load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
 
 async function main() {
     let world = fresh();
@@ -184,9 +184,9 @@ async function main() {
         "valid single action decision should pass");
     assert(!setup.AIProtocol.validateDecision({ action: [{ type: "move" }], publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available).ok,
         "multiple actions should be rejected");
-    assert(!setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null,
-        memoryUpdates: { recentMemoriesToAdd: [{ summary: "bad", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }, available).ok,
-        "action-stage memory updates should be rejected");
+    assert(setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
+        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I decided to leave.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }, available).ok,
+        "one response may combine narrative, one formal action, and memory updates");
     const detailedValidation = setup.AIProtocol.validateDecision({
         action: null,
         publicNarrative: null,
@@ -228,6 +228,56 @@ async function main() {
         scheduledRequest.observationIds.length === schedulerView.head.requestObservationCount,
         "scheduler should build the exact decision request represented by the queue head");
 
+    world = fresh();
+    ok(setup.Game.assignNonHumanController("innkeeper", "ai"), "make innkeeper AI for combined-intent test");
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "bar" }), "player enters bar for combined-intent test");
+    world.ai.turnQueue = [];
+    world.entities.innkeeper.mind.pendingObservations = [];
+    const combinedIntent = setup.CharacterAPI.submitIntent("player", {
+        text: "Pour me an ale.",
+        target_id: "innkeeper",
+        noticeability: "noticeable",
+        action: { type: "give_money", target_id: "innkeeper", amount: 2 }
+    });
+    ok(combinedIntent, "combined human intent should be accepted");
+    assert(combinedIntent.actionResult.ok && combinedIntent.actionResult.events[0].interactionId === combinedIntent.interactionId &&
+        combinedIntent.narrativeResult.event.interactionId === combinedIntent.interactionId,
+        "formal and narrative parts should share one interaction ID");
+    const combinedRequest = setup.AITurnScheduler.buildDecisionRequest("innkeeper");
+    assert(combinedRequest.ok && combinedRequest.observations.length === 1 &&
+        combinedRequest.observations[0].kind === "intent" &&
+        combinedRequest.observations[0].text.includes("gave 2 gold") &&
+        combinedRequest.observations[0].text.includes("Pour me an ale"),
+        "scheduler should present one combined intent observation instead of unrelated action and speech records");
+
+    world = fresh();
+    ok(setup.Game.assignNonHumanController("innkeeper", "ai"), "make innkeeper AI for reaction-wave test");
+    world.entities.hoodedWoman.locationId = "bar";
+    world.entities.hoodedWoman.sublocationId = "barPublicSide";
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "bar" }), "player enters bar for reaction-wave test");
+    world.ai.turnQueue = [];
+    world.entities.innkeeper.mind.pendingObservations = [];
+    world.entities.hoodedWoman.mind.pendingObservations = [];
+    ok(setup.CharacterAPI.submitIntent("player", {
+        text: "Serve me.", target_id: "innkeeper", noticeability: "noticeable", action: null
+    }), "player intent should queue all AI observers");
+    const waveCalls = [];
+    const waveClient = { chat: async function (messages) {
+        const payload = JSON.parse(messages[1].content);
+        const actorId = payload.context.character.id;
+        waveCalls.push({ actorId: actorId, content: messages[1].content });
+        if (actorId === "innkeeper") {
+            return response({ action: null, publicNarrative: "The innkeeper answers first.", spokenText: "One moment.", memoryUpdates: emptyUpdates() });
+        }
+        return response({ action: null, publicNarrative: "The hooded woman watches the exchange.", spokenText: null, memoryUpdates: emptyUpdates() });
+    } };
+    const waveResult = await setup.AITurnScheduler.processWave(waveClient);
+    assert(waveResult.ok && waveResult.processedCount === 2 &&
+        waveCalls.map(function (call) { return call.actorId; }).join(",") === "innkeeper,hoodedWoman" &&
+        waveCalls[1].content.includes("The innkeeper answers first") &&
+        setup.AITurnQueue.getStatus().entries.some(function (entry) { return entry.characterId === "innkeeper"; }),
+        "one reaction wave should process each observer once in priority order, expose earlier reactions to later observers, and defer repeat reactions");
+
     const executionOrder = [];
     const executorSpec = function (name, delay) {
         return {
@@ -251,6 +301,7 @@ async function main() {
         executionOrder.join(",") === "first:start,first:end,second:start,second:end",
         "shared request executor should serialize game, sphere, repair, and future scheduler requests");
 
+    world = queueHooded();
     const oneStage = { chat: async function () { return response({ action: null, publicNarrative: "She nods.", spokenText: "Greetings.", memoryUpdates: {
         recentMemoriesToAdd: [{ summary: "The traveller greeted me.", importance: .5 }], beliefsToUpsert: [{ id: "belief_greeting", text: "The traveller is civil.", confidence: "medium" }], relationshipsToUpsert: [{ targetCharacterId: "player", summary: "A civil new acquaintance." }]
     } }, { total_tokens: 10 }); } };
@@ -269,41 +320,46 @@ async function main() {
 
     world = queueHooded();
     let stage = 0;
-    const twoStage = { chat: async function () { stage++; return stage === 1
-        ? response({ action: { type: "read_aura" }, publicNarrative: "She concentrates.", spokenText: null, memoryUpdates: emptyUpdates() })
-        : response({ publicNarrative: "Her gaze sharpens.", spokenText: "Curious.", memoryUpdates: { recentMemoriesToAdd: [{ summary: "I read the traveller's aura.", importance: .7 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }); } };
-    const twoResult = await setup.AIController.takeNextTurn(twoStage);
-    assert(twoResult.ok && twoResult.stages === 2 && twoResult.actionResult.feedback[0].code === "AURA_SCAN_RESULT" && stage === 2,
-        "two-stage action turn should ground one formal action before final reaction");
+    const singleAction = { chat: async function () { stage++; return response({
+        action: { type: "read_aura" },
+        publicNarrative: "She concentrates.",
+        spokenText: "Curious.",
+        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I chose to read the traveller's aura.", importance: .7 }], beliefsToUpsert: [], relationshipsToUpsert: [] }
+    }); } };
+    const actionResult = await setup.AIController.takeNextTurn(singleAction);
+    assert(actionResult.ok && actionResult.stages === 1 && actionResult.actionResult.feedback[0].code === "AURA_SCAN_RESULT" && stage === 1 &&
+        setup.AITurnQueue.peek().characterId === "hoodedWoman" &&
+        world.entities.hoodedWoman.mind.pendingObservations.some(function (item) { return item.kind === "action_result" || item.kind === "action_feedback"; }),
+        "single-request action turn should execute one formal action and queue its grounded result for a later reaction");
 
     world = queueHooded(); stage = 0;
-    const selectiveClient = { chat: async function () { stage++; if (stage === 1) return response({
-        action: { type: "read_aura" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates()
-    });
-        ok(setup.CharacterAPI.narrate("player", { text: "A new unrelated observation arrives." }), "inject observation during second stage");
-        return response({ publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
+    const selectiveClient = { chat: async function () {
+        stage++;
+        ok(setup.CharacterAPI.narrate("player", { text: "A new unrelated observation arrives." }), "inject observation while request is in flight");
+        return response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
     } };
     const selectiveResult = await setup.AIController.takeNextTurn(selectiveClient);
-    assert(selectiveResult.ok && world.entities.hoodedWoman.mind.pendingObservations.some(function (item) {
+    assert(selectiveResult.ok && stage === 1 && world.entities.hoodedWoman.mind.pendingObservations.some(function (item) {
         return item.text === "A new unrelated observation arrives.";
     }) && setup.AITurnQueue.peek().characterId === "hoodedWoman",
-    "successful two-stage turn should consume supplied IDs only and requeue the actor for unrelated new observations");
+    "successful single-request turn should consume supplied IDs only and requeue the actor for observations that arrived during the request");
 
     world = queueHooded(); stage = 0;
-    const failedActionClient = { chat: async function () { stage++; return stage === 1
-        ? response({ action: { type: "take_item", item_id: "missing" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() })
-        : response({ publicNarrative: "She finds nothing to take.", spokenText: null, memoryUpdates: emptyUpdates() }); } };
+    const failedActionClient = { chat: async function () { stage++; return response({
+        action: { type: "take_item", item_id: "missing" }, publicNarrative: "She reaches for something that is not there.", spokenText: null, memoryUpdates: emptyUpdates()
+    }); } };
     const failedActionTurn = await setup.AIController.takeNextTurn(failedActionClient);
-    assert(failedActionTurn.ok && failedActionTurn.actionResult.error.code === "ITEM_NOT_FOUND" && stage === 2,
-        "grounded formal-action failure should still reach and complete result stage");
+    assert(failedActionTurn.ok && failedActionTurn.actionResult.error.code === "ITEM_NOT_FOUND" && stage === 1 &&
+        setup.AITurnQueue.peek().characterId === "hoodedWoman",
+        "grounded formal-action failure should complete the turn and remain as an observation for the next reaction wave");
 
-    world = queueHooded(); const beforeRollback = JSON.stringify(world); stage = 0;
-    const rollbackClient = { chat: async function () { stage++; return stage === 1
-        ? response({ action: { type: "move", destination_id: "tavernEntrance" }, publicNarrative: "She starts to leave.", spokenText: null, memoryUpdates: emptyUpdates() })
-        : { ok: false, error: { code: "PROVIDER_UNAVAILABLE", message: "OpenRouter is temporarily unavailable." } }; } };
-    const rolledBack = await setup.AIController.takeNextTurn(rollbackClient);
-    assert(!rolledBack.ok && JSON.stringify(setup.Game.getWorld()) === beforeRollback,
-        "second-stage request failure must restore the complete pre-action world and queue");
+    world = queueHooded();
+    const beforeRollback = JSON.stringify(world);
+    const failedRequest = await setup.AIController.takeNextTurn({ chat: async function () {
+        return { ok: false, error: { code: "PROVIDER_UNAVAILABLE", message: "OpenRouter is temporarily unavailable." } };
+    } });
+    assert(!failedRequest.ok && JSON.stringify(setup.Game.getWorld()) === beforeRollback,
+        "a failed single model request must preserve the complete pre-turn world and queue");
 
     world = queueHooded();
     const badMemoryClient = { chat: async function () { return response({ action: null, publicNarrative: "Uncommitted.", spokenText: null, memoryUpdates: {
@@ -341,9 +397,9 @@ async function main() {
 
     const exchangeHistory = setup.AIRequestExecutor.getExchangeHistory();
     assert(exchangeHistory.count > 0 && exchangeHistory.entries.some(function (entry) { return entry.request.purpose === "game-decision"; }) &&
-        exchangeHistory.entries.some(function (entry) { return entry.request.purpose === "game-result"; }) &&
+        !exchangeHistory.entries.some(function (entry) { return entry.request.purpose === "game-result"; }) &&
         exchangeHistory.entries.some(function (entry) { return entry.request.purpose === "prompt-lab-dry-run"; }),
-        "transient exchange history should retain decision, result, and sphere dry-run requests");
+        "transient exchange history should retain single-request game decisions and sphere dry-runs without a game-result request");
     const exportedExchange = setup.PromptLab.exportExchangeLog(Date.UTC(2026, 7, 4, 19, 0, 0));
     assert(exportedExchange.ok && exportedExchange.filename === "ai-rpg-ai-exchange-20260804-190000Z.json" &&
         exportedExchange.data.schema === setup.PromptLab.EXCHANGE_LOG_SCHEMA &&
@@ -373,9 +429,31 @@ async function main() {
         spokenText: null,
         memoryUpdates: emptyUpdates()
     }); } });
+    const liveNarrativeSnapshot = setup.PromptLab.getSnapshot();
     assert(liveFromSphere.ok && setup.AITurnQueue.peek() === null &&
-        setup.PromptLab.getSnapshot().status.includes("queue advanced"),
+        liveNarrativeSnapshot.status.includes("queue advanced"),
         "crystal sphere live processing should invoke the same manual scheduler and advance only its queue head");
+    assert(liveNarrativeSnapshot.narrativeHistory.length === 1 &&
+        liveNarrativeSnapshot.narrativeHistory[0].actorId === "hoodedWoman" &&
+        liveNarrativeSnapshot.narrativeHistory[0].fragments.includes("The sphere permits the scheduled reaction."),
+        "successful sphere live processing should append its public narrative to the transient narrative history");
+
+    ok(setup.CharacterAPI.narrate("player", { text: "Please leave the room.", target_id: "hoodedWoman" }),
+        "second narrative queues another sphere live turn");
+    const liveActionFromSphere = await setup.PromptLab.processNextLive({ chat: async function () { return response({
+        action: { type: "move", destination_id: "tavernEntrance" },
+        publicNarrative: "The hooded woman rises and leaves.",
+        spokenText: null,
+        memoryUpdates: emptyUpdates()
+    }); } });
+    const liveActionEventTexts = liveActionFromSphere.actionResult.events.map(function (event) { return event.text; });
+    const liveActionSnapshot = setup.PromptLab.getSnapshot();
+    assert(liveActionFromSphere.ok && liveActionEventTexts.length > 0 &&
+        liveActionSnapshot.narrativeHistory.length === 2 &&
+        liveActionEventTexts.every(function (text) { return liveActionSnapshot.narrativeHistory[1].fragments.includes(text); }),
+        "sphere narrative history should include confirmed formal-action event text as well as model narrative");
+    assert(setup.PromptLab.clearNarrativeHistory().ok && setup.PromptLab.getSnapshot().narrativeHistory.length === 0,
+        "the sphere narrative history should have an independent clear control");
 
     setup.AIRuntimeSettings.save(sentinel, false, storage, 1);
     const safeExportWithKey = setup.PromptLab.exportExchangeLog();

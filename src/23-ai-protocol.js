@@ -141,9 +141,6 @@
                 if (!actionDefinition) errors.push(`response.action.type selected unavailable action ${JSON.stringify(value.action.type)}.`);
                 else errors.push.apply(errors, validateActionProperties(value.action, actionDefinition, "response.action"));
             }
-            if (isPlainObject(value.memoryUpdates) && UPDATE_KEYS.every(function (key) { return Array.isArray(value.memoryUpdates[key]); }) && !updatesEmpty(value.memoryUpdates)) {
-                errors.push("response.memoryUpdates must contain three empty arrays when response.action is not null.");
-            }
         }
         return finishValidation(value, errors);
     }
@@ -159,7 +156,7 @@
 
     function baseSystem(stage) {
         const stageRule = stage === "decision"
-            ? "Return exactly the keys action, publicNarrative, spokenText, and memoryUpdates. action is null or one available formal action. If action is not null, every memoryUpdates array must be empty."
+            ? "Return exactly the keys action, publicNarrative, spokenText, and memoryUpdates. action is null or one available formal action and may accompany speech or narrative behavior. Prefer action null unless a formal action clearly serves the character's goals or answers the situation; never choose an action merely because it is available. The engine executes the action after this response. Do not claim that the formal action succeeded; its grounded result will arrive later as an ordinary observation."
             : "Return exactly the keys publicNarrative, spokenText, and memoryUpdates. Do not choose another action; react only to the supplied grounded action result.";
         return `You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else: no markdown fence, prose, chain-of-thought, hidden reasoning, patches, or extra fields. ${stageRule} memoryUpdates must always contain exactly recentMemoriesToAdd, beliefsToUpsert, and relationshipsToUpsert, even when all are empty arrays. A recent memory record is {"summary":"...","importance":0.0}; use summary, never text, and importance must be from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. A relationship record is {"targetCharacterId":"character_id","summary":"..."}.`;
     }

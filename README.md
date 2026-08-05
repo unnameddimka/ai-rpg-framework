@@ -2,8 +2,8 @@
 
 This repository is the framework-first rewrite of the original Twine tavern proof of concept.
 
-The current version provides a deterministic world plus a narrow, manually triggered AI
-integration. It supports authored characters and abilities, saved per-character minds,
+The current version provides a deterministic world plus a narrow, user-triggered AI
+reaction-wave integration. It supports authored characters and abilities, saved per-character minds,
 grounded observations, restricted context bundles, inventories, movement, transfers,
 confirmed events, and debug takeover of any character.
 
@@ -20,13 +20,14 @@ keeps each character's displayed private result isolated from the others.
 src/story.twee          Twine passages and prose
 src/00-model-list.js    Generated embedded model catalog
 src/10-game-api.js      World, ActionRegistry, CharacterAPI, invariants
-src/20-controllers.js   Human, Dummy, and manual AI-turn orchestration
+src/20-controllers.js   Human, Dummy, and single-request AI reaction orchestration
 src/21-ai-settings.js   Transient key plus selected-model runtime settings
 src/22-openrouter-client.js Browser-side OpenRouter client
 src/23-ai-protocol.js   JSON-only prompt protocol, parsing, validation, repair
 src/24-ai-request-executor.js Shared serialized request transport and cooldown policy
-src/24-ai-turn-scheduler.js Manual scheduler facade and queue/request projections
+src/24-ai-turn-scheduler.js Reaction-wave scheduler and queue/request projections
 src/24-prompt-lab.js    Transient scheduler/prompt debugger
+src/25-turn-flow.js     Unified human Submit/Pass and AI reaction-wave flow
 src/30-game-ui.js       Browser controls, scheduler queue, sphere lab, and takeover UI
 src/styles.css          Framework UI styles
 data/world.json         Authoritative locations, characters, minds, and abilities
@@ -103,7 +104,7 @@ When Tweego is unavailable, the script can still rebuild the project by reusing 
 runtime already embedded in the tracked `dist/game.html`. A clean build with no existing
 `dist/game.html` still requires Tweego.
 
-## Manual OpenRouter AI turns
+## OpenRouter reaction waves
 
 The built game calls OpenRouter directly from the browser. The provider remains fixed to
 OpenRouter, while the model is chosen from the validated catalog in `data/model_list.json`.
@@ -112,16 +113,35 @@ The same file names the default model. The initial catalog contains:
 - `thedrummer/cydonia-24b-v4.1` — **Cydonia 24B V4.1** and the current default;
 - `sao10k/l3.3-euryale-70b` — **Llama 3.3 Euryale 70B**.
 
-1. Open the AI Settings panel in the sidebar.
-2. Choose a model. The selection is applied immediately and persisted independently in
-   `localStorage` when browser storage is available.
-3. Enter an OpenRouter API key. The password field is cleared after saving.
-4. Optionally enable **Remember for 24 hours**. Otherwise the key remains in memory only
+1. Open the AI Settings panel in the sidebar and choose a model.
+2. Enter an OpenRouter API key. The password field is cleared after saving.
+3. Optionally enable **Remember for 24 hours**. Otherwise the key remains in memory only
    until the page closes.
-5. Create a visible event for an AI-controlled character. The sidebar shows the next
-   recipient and a short description of the first pending observation.
-6. Press **Process next AI event**. One press processes only the queue head and at most one
-   formal action. There is no timer or automatic queue draining yet.
+4. Build a human intent in the debug panel: optional narrative/speech plus at most one
+   formal action selected by radio button.
+5. Press **Submit**. The human intent commits first, then the scheduler automatically drains
+   one reaction wave unless **Stop automatic AI request processing** is checked.
+6. Press **Pass / Next turn** to run a reaction wave without submitting a human action. Pass
+   remains explicit and works even while automatic processing after Submit is paused.
+
+Within one reaction wave, each queued AI character may react at most once. Direct addressees
+and formal-action targets are processed before ordinary observers. Later characters see
+confirmed events produced by earlier reactions. New observations delivered to a character
+that already reacted remain queued for the next wave. The sidebar and crystal sphere still
+provide one-entry manual processing for debugging. There is no timer or background loop.
+
+Human and AI intents use the same envelope: optional narrative, optional speech, and at most
+one formal action. Matching narrative and action events share an `interactionId`; the
+scheduler groups them into one coherent observation before prompting an AI character. An AI
+reaction uses one model request only. The engine executes the selected formal action locally,
+and its grounded success or failure is queued as an ordinary later observation for that
+actor. There is no immediate `game-result` request.
+
+The main location view shows a **Latest turn** narrative assembled deterministically from the
+human intent, AI narrative fragments, and grounded action events in causal order. It is not
+a separate narrator-model request. For a movement Submit, the automatic reaction wave is
+resolved before the destination passage is rendered, so departure reactions can appear in
+the turn narrative before the new location view.
 
 The key is never stored in SugarCube state, saves, world data, generated artifacts,
 controller logs, copied AI context, or visible errors. Optional persistence uses a
@@ -135,15 +155,15 @@ OpenRouter requests require browser network/CORS access and account credit. Auth
 credit, rate-limit, provider, and network failures are shown as short safe messages. All game,
 repair, and sphere requests pass through one serialized `AIRequestExecutor`. It leaves at
 least one second between live transport calls and honors OpenRouter `Retry-After`; it does not
-automatically retry a 429. Failed requests retain the queue entry and observations for retry.
-A failed second-stage request also rolls back the preceding formal action completely.
+automatically retry a 429. Failed requests retain the current queue entry and unconsumed
+observations for retry. Human actions already committed before a later wave failure are not
+rolled back.
 
 OpenRouter HTTP failures retain a sanitized `providerResponse` for diagnosis. It includes the
 status, readable response headers, `Retry-After`, raw and parsed response bodies, and provider
 metadata such as `provider_name` and `limit_source`. Credentials, authorization material,
 OpenRouter `user_id` values, and `user_...` identifier strings are replaced before they reach
-UI state, protocol traces, executor history, or exported AI exchange logs. Failed requests keep
-the scheduler entry unchanged so the same event can be retried later.
+UI state, protocol traces, executor history, or exported AI exchange logs.
 
 ## Crystal-sphere prompt lab
 
@@ -155,7 +175,10 @@ The sphere shows the complete scheduler queue as ordered cards. Each card identi
 recipient, location, queue reason, request size, and a preview of the observations that will
 be sent. The first card is marked as the next live request. Any queued request may be
 inspected or dry-run; only the queue head exposes **Process live**, which invokes the same
-manual scheduler as the sidebar and advances the real world on success.
+manual scheduler as the sidebar and advances the real world on success. A scrollable
+**Narrative history** window above the queue accumulates the public narrative and confirmed
+formal-action event text from each successful live sphere turn. Its **Clear** button resets
+only this transient history.
 
 The loaded request panel still supports exact and edited-system-prompt dry runs and displays
 every initial/repair attempt, raw assistant content, parsed JSON, concrete validation errors,
@@ -191,8 +214,9 @@ observation privacy, restricted views and context, mind save round trips, moveme
 and money transfer, editor validation, world/model-list generator rejection, model default/selection persistence,
 queue ordering and repair, mocked OpenRouter responses, key expiry/leak prevention, detailed protocol diagnostics,
 scheduler request projection, executor serialization and timing, prompt-lab dry-run isolation,
-live sphere scheduling, protocol repair, atomic AI transactions, rollback safety, and
-controller switching. Automated tests never contact the
+live sphere scheduling, combined human intents, reaction-wave ordering, once-per-wave
+execution, single-request AI actions, protocol repair, atomic AI transactions, rollback
+safety, and controller switching. Automated tests never contact the
 live OpenRouter API.
 
 ## Development workflow

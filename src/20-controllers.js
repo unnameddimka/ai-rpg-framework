@@ -63,21 +63,23 @@
             },
 
             onEvent: function (actorId, event) {
-                log("ai", actorId, `Queued event ${event.id} for a manual AI turn.`);
+                log("ai", actorId, `Queued event ${event.id} for an AI reaction turn.`);
                 return { processed: false, actions: [] };
             }
         }
     };
 
-    function clone(value) { return JSON.parse(JSON.stringify(value)); }
-    function combineNarrative(parts) {
+    function clone(value) {
+        return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    }
+
+    function combineNarrative(response) {
         const text = [];
-        for (const part of parts) {
-            if (part.publicNarrative && part.publicNarrative.trim()) text.push(part.publicNarrative.trim());
-            if (part.spokenText && part.spokenText.trim()) text.push(`"${part.spokenText.trim()}"`);
-        }
+        if (response.publicNarrative && response.publicNarrative.trim()) text.push(response.publicNarrative.trim());
+        if (response.spokenText && response.spokenText.trim()) text.push(`"${response.spokenText.trim()}"`);
         return text.join("\n");
     }
+
     function recordFailure(error) {
         const safe = error && error.code && error.message ? error.message : "Unexpected AI turn failure.";
         setup.AITransientDebug.lastSafeError = safe;
@@ -109,83 +111,84 @@
             ? clone(result.usage)
             : (lastAttempt && lastAttempt.usage ? clone(lastAttempt.usage) : null);
     }
-    function commitResponse(actorId, responses, consumedIds) {
-        const finalResponse = responses[responses.length - 1];
-        const memoryResult = setup.AIMemory.applyUpdates(actorId, finalResponse.memoryUpdates);
-        if (!memoryResult.ok) throw memoryResult.error;
-        const narrativeText = combineNarrative(responses);
-        if (narrativeText) {
-            const narrativeResult = setup.CharacterAPI.narrate(actorId, { text: narrativeText, noticeability: "noticeable" });
-            if (!narrativeResult.ok) throw narrativeResult.error;
+
+    function commitDecision(actorId, decision, consumedIds) {
+        const narrativeText = combineNarrative(decision);
+        let intentResult = { ok: true, action: decision.action, actionResult: null, narrativeResult: null };
+        if (decision.action || narrativeText) {
+            intentResult = setup.CharacterAPI.submitIntent(actorId, {
+                text: narrativeText,
+                noticeability: "noticeable",
+                action: decision.action
+            });
+            if (!intentResult.ok) throw intentResult.error;
         }
+
+        const memoryResult = setup.AIMemory.applyUpdates(actorId, decision.memoryUpdates);
+        if (!memoryResult.ok) throw memoryResult.error;
+
         const consumeResult = setup.AIMemory.consumeObservations(actorId, consumedIds);
         if (!consumeResult.ok) throw consumeResult.error;
+
         setup.AITurnQueue.remove(actorId);
         const actor = setup.Game.getWorld().entities[actorId];
-        if (actor.mind.pendingObservations.length > 0) setup.AITurnQueue.enqueue(actorId, "remaining_observations");
+        if (actor.mind.pendingObservations.length > 0) {
+            setup.AITurnQueue.enqueue(actorId, "next_reaction_wave");
+        }
+
         const validation = setup.Game.validateWorld();
         if (!validation.ok) throw validation.error;
-        return { narrativeText: narrativeText };
+        return {
+            narrativeText: narrativeText,
+            intentResult: clone(intentResult),
+            actionResult: intentResult.actionResult ? clone(intentResult.actionResult) : null
+        };
     }
 
     async function takeQueuedTurn(expectedActorId, client) {
         if (inFlight) return recordFailure({ code: "AI_TURN_IN_FLIGHT", message: "An AI turn is already in progress." });
         const status = setup.AITurnQueue.getStatus();
         if (!status.head) return recordFailure({ code: "AI_QUEUE_EMPTY", message: "No pending AI turns." });
-        if (expectedActorId && expectedActorId !== status.head.characterId) return recordFailure({ code: "AI_QUEUE_HEAD_CHANGED", message: "The queued AI character changed." });
-        const actorId = status.head.characterId;
+
+        const actorId = expectedActorId || status.head.characterId;
+        if (!status.entries.some(function (entry) { return entry.characterId === actorId; })) {
+            return recordFailure({ code: "AI_QUEUE_ENTRY_MISSING", message: "The requested AI character is no longer queued." });
+        }
+
         const before = JSON.stringify(setup.Game.getWorld());
         inFlight = true;
         setup.AITransientDebug.lastSafeError = "";
         try {
-            const actor = setup.Game.getWorld().entities[actorId];
             const request = setup.AITurnScheduler.buildDecisionRequest(actorId);
             if (!request.ok) throw request.error;
-            const observations = clone(request.observations);
-            const originalIds = clone(request.observationIds);
             const context = clone(request.context);
-            const decisionMessages = clone(request.messages);
+            const messages = clone(request.messages);
+            const observationIds = clone(request.observationIds);
             setup.AITransientDebug.lastContext = clone(context);
-            setup.AITransientDebug.lastMessages = clone(decisionMessages);
+            setup.AITransientDebug.lastMessages = clone(messages);
+
             const decisionResult = await setup.AIRequestExecutor.execute({
                 actorId: actorId,
                 purpose: "game-decision",
-                messages: decisionMessages,
+                messages: messages,
                 stage: "decision",
                 availableActions: context.availableActions,
                 client: client
             });
-            recordProtocolResult(actorId, "decision", decisionMessages, context.availableActions, decisionResult);
+            recordProtocolResult(actorId, "decision", messages, context.availableActions, decisionResult);
             if (!decisionResult.ok) throw decisionResult.error;
-            const decision = decisionResult.value;
-            if (decision.action === null) {
-                const committed = commitResponse(actorId, [decision], originalIds);
-                log("ai", actorId, "Completed one manual no-action AI turn.");
-                return { ok: true, actorId: actorId, stages: 1, narrativeText: committed.narrativeText, usage: decisionResult.usage || null };
-            }
 
-            const idsBeforeAction = new Set(actor.mind.pendingObservations.map(function (item) { return item.id; }));
-            const actionResult = setup.CharacterAPI.perform(actorId, clone(decision.action));
-            const actorAfterAction = setup.Game.getWorld().entities[actorId];
-            const actionFeedbackIds = actorAfterAction.mind.pendingObservations.filter(function (item) {
-                return !idsBeforeAction.has(item.id) && item.kind === "action_feedback";
-            }).map(function (item) { return item.id; });
-            const resultMessages = setup.AIProtocol.resultMessages(context, observations, decision.action, actionResult);
-            setup.AITransientDebug.lastMessages = clone(resultMessages);
-            const finalResult = await setup.AIRequestExecutor.execute({
+            const committed = commitDecision(actorId, decisionResult.value, observationIds);
+            log("ai", actorId, "Completed one single-request AI reaction turn.");
+            return {
+                ok: true,
                 actorId: actorId,
-                purpose: "game-result",
-                messages: resultMessages,
-                stage: "result",
-                availableActions: context.availableActions,
-                client: client
-            });
-            recordProtocolResult(actorId, "result", resultMessages, context.availableActions, finalResult);
-            if (!finalResult.ok) throw finalResult.error;
-            setup.AITransientDebug.lastUsage = finalResult.usage || decisionResult.usage || null;
-            const committed = commitResponse(actorId, [decision, finalResult.value], originalIds.concat(actionFeedbackIds));
-            log("ai", actorId, "Completed one grounded manual AI turn.");
-            return { ok: true, actorId: actorId, stages: 2, actionResult: clone(actionResult), narrativeText: committed.narrativeText, usage: setup.AITransientDebug.lastUsage };
+                stages: 1,
+                actionResult: committed.actionResult,
+                intentResult: committed.intentResult,
+                narrativeText: committed.narrativeText,
+                usage: decisionResult.usage || null
+            };
         } catch (error) {
             State.variables.world = JSON.parse(before);
             return recordFailure(error);
@@ -195,7 +198,13 @@
     }
 
     setup.AIController = {
-        takeNextTurn: function (client) { const head = setup.AITurnQueue.peek(); return takeQueuedTurn(head && head.characterId, client || setup.OpenRouterClient); },
+        takeNextTurn: function (client) {
+            const head = setup.AITurnQueue.peek();
+            return takeQueuedTurn(head && head.characterId, client || setup.OpenRouterClient);
+        },
+        takeQueuedTurn: function (characterId, client) {
+            return takeQueuedTurn(characterId, client || setup.OpenRouterClient);
+        },
         isInFlight: function () {
             return inFlight || Boolean(setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus().busy);
         },

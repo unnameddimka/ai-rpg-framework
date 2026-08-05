@@ -27,12 +27,18 @@
             State.variables.frameworkUI = {
                 interactionTargetId: "",
                 locationStatus: "",
+                turnNarrative: [],
+                turnBusy: false,
                 abilityResultsByActor: {}
             };
         }
         if (!State.variables.frameworkUI.abilityResultsByActor) {
             State.variables.frameworkUI.abilityResultsByActor = {};
         }
+        if (!Array.isArray(State.variables.frameworkUI.turnNarrative)) {
+            State.variables.frameworkUI.turnNarrative = [];
+        }
+        State.variables.frameworkUI.turnBusy = Boolean(State.variables.frameworkUI.turnBusy);
         return State.variables.frameworkUI;
     }
 
@@ -247,6 +253,22 @@
         }).join("");
     }
 
+    function promptLabNarrativeHistoryMarkup(entries) {
+        if (!Array.isArray(entries) || entries.length === 0) {
+            return `<p class="prompt-lab-narrative-empty">No live AI narrative has been recorded yet.</p>`;
+        }
+        return entries.map(function (entry, index) {
+            const fragments = Array.isArray(entry.fragments) ? entry.fragments : [];
+            const body = fragments.length
+                ? fragments.map(function (fragment) { return `<p>${escapeHtml(fragment)}</p>`; }).join("")
+                : `<p class="prompt-lab-narrative-empty">No public narrative or formal-action event was produced.</p>`;
+            return `<article class="prompt-lab-narrative-entry">
+                <h5>${escapeHtml(index + 1)}. ${escapeHtml(entry.actorName || entry.actorId || "Unknown character")}</h5>
+                ${body}
+            </article>`;
+        }).join("");
+    }
+
     function promptLabQueueMarkup(snapshot, hasKey) {
         const queue = snapshot.queue;
         if (!queue || !queue.entries || queue.entries.length === 0) {
@@ -337,6 +359,16 @@
             <div id="prompt-lab-status" class="framework-status">${escapeHtml(snapshot.status || "")}</div>
             <div class="framework-status">${escapeHtml(executorStatus)}</div>
             <div class="prompt-lab-warning">${escapeHtml(keyWarning)}</div>
+
+            <section class="prompt-lab-narrative-history">
+                <div class="prompt-lab-section-heading">
+                    <h4>Narrative history</h4>
+                    <button id="prompt-lab-clear-narrative"${(!snapshot.narrativeHistory.length || snapshot.busy) ? " disabled" : ""}>Clear</button>
+                </div>
+                <div class="prompt-lab-narrative-window">
+                    ${promptLabNarrativeHistoryMarkup(snapshot.narrativeHistory)}
+                </div>
+            </section>
 
             <section class="prompt-lab-queue">
                 <div class="prompt-lab-section-heading">
@@ -497,6 +529,11 @@
             redraw();
         });
 
+        $("#prompt-lab-clear-narrative").on("click", function () {
+            setup.PromptLab.clearNarrativeHistory();
+            redraw();
+        });
+
         $("#prompt-lab-clear").on("click", function () {
             setup.PromptLab.clear();
             redraw();
@@ -518,6 +555,16 @@
         const status = appendTextElement(root, "div", uiState.locationStatus, "framework-status");
         status.id = "location-status";
         uiState.locationStatus = "";
+
+        if (uiState.turnNarrative.length > 0) {
+            const narrative = document.createElement("section");
+            narrative.className = "framework-turn-narrative";
+            appendTextElement(narrative, "h3", "Latest turn");
+            uiState.turnNarrative.forEach(function (fragment) {
+                appendTextElement(narrative, "p", fragment);
+            });
+            root.appendChild(narrative);
+        }
 
         view.location.description.forEach(function (paragraph) {
             appendTextElement(root, "p", paragraph);
@@ -653,7 +700,8 @@
         }
         const aiQueue = setup.AITurnScheduler.getQueueView();
         const aiSettings = setup.AIRuntimeSettings.getStatus();
-        const aiBusy = setup.AIController.isInFlight() || setup.AIRequestExecutor.getStatus().busy;
+        const aiBusy = setup.AIController.isInFlight() || setup.AIRequestExecutor.getStatus().busy || setup.AITurnScheduler.isWaveInFlight();
+        const autoProcessingPaused = setup.AITurnScheduler.isAutoProcessingPaused();
         const usage = setup.AITransientDebug.lastUsage;
         const usageText = usage ? `Usage: ${escapeHtml(JSON.stringify(usage))}` : "";
         const modelOptions = aiSettings.models.map(function (model) {
@@ -708,6 +756,7 @@
             </div>
             <div class="framework-sidebar-block" id="ai-turn-panel">
                 <strong>AI turn scheduler</strong><br>
+                <label class="framework-auto-ai-toggle"><input id="stop-auto-ai-processing" type="checkbox"${autoProcessingPaused ? " checked" : ""}${aiBusy ? " disabled" : ""}> Stop automatic AI request processing</label><br>
                 <span id="ai-queue-status">${queueText}</span><br>
                 <button id="take-next-ai-turn"${(!aiQueue.head || !aiSettings.hasKey || aiBusy) ? " disabled" : ""}>Process next AI event</button>
                 <div id="ai-turn-status" class="framework-status">${escapeHtml(setup.AITransientDebug.lastSafeError || "")}</div>
@@ -774,6 +823,13 @@
             renderSidebar();
         });
 
+        $("#stop-auto-ai-processing").on("change", function () {
+            const result = setup.AITurnScheduler.setAutoProcessingPaused($(this).prop("checked"));
+            $("#ai-turn-status").text(result.paused
+                ? "Automatic processing after Submit is paused. Pass and sphere controls remain manual."
+                : "Automatic processing after Submit is enabled.");
+        });
+
         $("#take-next-ai-turn").on("click", async function () {
             $(this).prop("disabled", true);
             $("#ai-turn-status").text("Scheduler is processing the next AI event...");
@@ -785,158 +841,173 @@
         });
     }
 
-    function runAction(action, navigateOnMove) {
-        const actorId = setup.Game.getHumanCharacterId();
-        const result = setup.CharacterAPI.perform(actorId, action);
+    async function runHumanIntent(input, navigateOnMove) {
+        const uiState = getUIState();
+        if (uiState.turnBusy) {
+            return { ok: false, error: { code: "TURN_IN_FLIGHT", message: "A turn is already being processed." } };
+        }
+
+        uiState.turnBusy = true;
+        uiState.locationStatus = "Processing turn...";
+        renderSidebar();
+        renderActionPanel();
+
+        let result;
+        try {
+            result = await setup.TurnFlow.submitHumanIntent(input);
+        } finally {
+            uiState.turnBusy = false;
+        }
 
         if (!result.ok) {
-            $("#framework-action-status").text(result.error.message);
-            renderActionPanel();
+            uiState.locationStatus = result.error.message;
+            refreshCurrentPassage();
             return result;
         }
 
-        if (navigateOnMove && action.type === "move") {
-            const world = setup.Game.getWorld();
-            Engine.play(world.entities[action.destination_id].passage);
-            return result;
+        uiState.turnNarrative = result.narrativeFragments || [];
+        if (result.waveResult && result.waveResult.paused) {
+            uiState.locationStatus = `Intent submitted. Automatic AI processing is paused; ${result.waveResult.remainingQueue.count} turn(s) remain queued.`;
+        } else if (result.waveResult && !result.waveResult.ok) {
+            uiState.locationStatus = `Intent submitted, but AI processing stopped: ${result.waveResult.error.message}`;
+        } else {
+            const count = result.waveResult ? result.waveResult.processedCount : 0;
+            uiState.locationStatus = `Turn complete. ${count} AI character(s) reacted.`;
         }
 
+        if (navigateOnMove && result.destinationId) {
+            Engine.play(setup.Game.getWorld().entities[result.destinationId].passage);
+        } else {
+            refreshCurrentPassage();
+        }
+        return result;
+    }
+
+    async function passHumanTurn() {
+        const uiState = getUIState();
+        if (uiState.turnBusy) {
+            return { ok: false, error: { code: "TURN_IN_FLIGHT", message: "A turn is already being processed." } };
+        }
+        uiState.turnBusy = true;
+        uiState.locationStatus = "Processing queued AI reactions...";
+        renderSidebar();
+        renderActionPanel();
+
+        let result;
+        try {
+            result = await setup.TurnFlow.pass();
+        } finally {
+            uiState.turnBusy = false;
+        }
+        uiState.turnNarrative = result.narrativeFragments || [];
+        uiState.locationStatus = result.ok
+            ? `Pass complete. ${result.waveResult.processedCount} AI character(s) reacted.`
+            : `AI processing stopped: ${result.error.message}`;
         refreshCurrentPassage();
         return result;
     }
 
+    function runAction(action, navigateOnMove) {
+        return runHumanIntent({
+            text: "",
+            target_id: "",
+            noticeability: "noticeable",
+            action: action
+        }, navigateOnMove);
+    }
+
     function renderActionPanel() {
         const oldRoot = document.getElementById("framework-action-panel");
-        if (oldRoot) {
-            oldRoot.remove();
-        }
+        if (oldRoot) oldRoot.remove();
 
         const passage = document.querySelector("#passages .passage");
-        if (!passage) {
-            return;
-        }
+        if (!passage) return;
 
         const actorId = setup.Game.getHumanCharacterId();
         const view = setup.CharacterAPI.getView(actorId);
         const world = setup.Game.getWorld();
+        const uiState = getUIState();
         const actionRoot = document.createElement("section");
         actionRoot.id = "framework-action-panel";
         actionRoot.className = "framework-panel";
 
-        const moveOptions = view.location.exits;
-        const takeOptions = view.accessible_inventories.flatMap(function (inventory) {
-            return inventory.items;
-        });
-        const ownedItems = view.self.inventory;
-        const visibleTargets = view.location.characters;
-        const reachableTargetIds = view.available_actions.give_item.options.target_ids;
-        const reachableTargets = visibleTargets.filter(function (target) {
-            return reachableTargetIds.includes(target.id);
-        });
+        const moveOptions = view.location.exits || [];
+        const takeOptions = view.accessible_inventories.flatMap(function (inventory) { return inventory.items; });
+        const ownedItems = view.self.inventory || [];
+        const visibleTargets = view.location.characters || [];
+        const giveItemAction = view.available_actions.give_item;
+        const reachableTargetIds = giveItemAction ? giveItemAction.options.target_ids : [];
+        const reachableTargets = visibleTargets.filter(function (target) { return reachableTargetIds.includes(target.id); });
         const recentEvents = world.events.slice(-12);
-        const internalDestinations = view.available_actions.move_within_location.options.destination_ids
-            .map(function (id) {
-                const position = view.location.sublocations.find(function (candidate) { return candidate.id === id; });
-                return position ? { id: position.id, name: position.name } : null;
-            }).filter(Boolean);
+        const internalAction = view.available_actions.move_within_location;
+        const internalDestinations = internalAction ? internalAction.options.destination_ids.map(function (id) {
+            const position = view.location.sublocations.find(function (candidate) { return candidate.id === id; });
+            return position ? { id: position.id, name: position.name } : null;
+        }).filter(Boolean) : [];
         const placementInventoryIds = view.available_actions.place_item
             ? view.available_actions.place_item.options.target_inventory_ids
             : [];
         const placementInventories = view.accessible_inventories.filter(function (inventory) {
             return placementInventoryIds.includes(inventory.id);
         });
+        const knownActionTypes = new Set(["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "pour_ale"]);
+        const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
+            const actionType = entry[0];
+            const record = entry[1];
+            return !knownActionTypes.has(actionType) && isZeroInputAbilityAction(record);
+        });
+        const aiSettings = setup.AIRuntimeSettings.getStatus();
+        const queue = setup.AITurnScheduler.getQueueView();
+        const busy = uiState.turnBusy || setup.AIController.isInFlight() || setup.AITurnScheduler.isWaveInFlight();
+
+        function radioField(actionType, legend, controls, disabled) {
+            return `<fieldset class="framework-formal-action${disabled ? " framework-formal-action-disabled" : ""}">
+                <legend><label><input type="radio" name="formal-action" value="${escapeHtml(actionType)}"${disabled ? " disabled" : ""}> ${escapeHtml(legend)}</label></legend>
+                <div class="formal-action-parameters">${controls || ""}</div>
+            </fieldset>`;
+        }
+
+        const formalMarkup = [
+            radioField("move", "Move", `<select id="action-move-destination">${optionMarkup(moveOptions, "No connected locations")}</select>`, moveOptions.length === 0),
+            radioField("move_within_location", "Move within location", `<select id="action-move-within-destination">${optionMarkup(internalDestinations, "No internal destination")}</select>`, internalDestinations.length === 0),
+            radioField("take_item", "Take item", `<select id="action-take-item">${optionMarkup(takeOptions, "No items here")}</select>`, takeOptions.length === 0),
+            radioField("drop_item", "Drop item", `<select id="action-drop-item">${optionMarkup(ownedItems, "Inventory is empty")}</select>`, ownedItems.length === 0),
+            radioField("give_item", "Give item", `<select id="action-give-item">${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-give-item-target">${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, ownedItems.length === 0 || reachableTargets.length === 0),
+            radioField("give_money", "Give money", `<input id="action-money-amount" type="number" min="1" step="1" value="1"><select id="action-money-target">${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, reachableTargets.length === 0),
+            radioField("place_item", "Place item", `<select id="action-place-item">${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-place-inventory">${optionMarkup(placementInventories, "No accessible surface")}</select>`, ownedItems.length === 0 || placementInventories.length === 0),
+            radioField("pour_ale", "Pour ale", `<p>Pour a fresh mug of ale.</p>`, !(view.available_actions.pour_ale && view.available_actions.pour_ale.options.available))
+        ].concat(zeroInputExtras.map(function (entry) {
+            return radioField(entry[0], entry[1].description || entry[0], "<p>No parameters.</p>", false);
+        })).join("");
 
         actionRoot.innerHTML = `
             <h3>Framework controls &mdash; acting as ${escapeHtml(view.self.name)}</h3>
             <div id="framework-action-status" class="framework-status"></div>
 
-            <div class="framework-action-grid">
-                <fieldset class="framework-narrative-action">
-                    <legend>Speak / narrative action</legend>
-                    <textarea id="action-narrative-text" rows="8" placeholder="Speech outside *asterisks*, actions inside them."></textarea>
-                    <div class="framework-narrative-controls">
-                        <select id="action-narrative-target">
-                            <option value="">No addressee</option>
-                            ${visibleTargets.map(function (target) {
-                                return `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`;
-                            }).join("")}
-                        </select>
-                        <select id="action-narrative-noticeability">
-                            <option value="noticeable">Noticeable</option>
-                            <option value="hidden">Hidden</option>
-                        </select>
-                        <button id="action-narrate">Submit</button>
-                    </div>
-                </fieldset>
+            <fieldset class="framework-narrative-action">
+                <legend>Narrative / speech</legend>
+                <textarea id="action-narrative-text" rows="8" placeholder="Speech outside *asterisks*, actions inside them. Leave empty to act silently."></textarea>
+                <div class="framework-narrative-controls">
+                    <label>Addressee<select id="action-narrative-target">
+                        <option value="">No addressee</option>
+                        ${visibleTargets.map(function (target) { return `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`; }).join("")}
+                    </select></label>
+                    <label>Loudness<select id="action-narrative-noticeability">
+                        <option value="noticeable">Normal</option>
+                        <option value="hidden">Quiet / private</option>
+                    </select></label>
+                </div>
+            </fieldset>
 
-                <fieldset>
-                    <legend>Move</legend>
-                    <select id="action-move-destination">
-                        ${optionMarkup(moveOptions, "No connected locations")}
-                    </select>
-                    <button id="action-move">Move</button>
-                </fieldset>
+            <section class="framework-formal-action-section">
+                <h4>Formal action &mdash; choose at most one</h4>
+                <label class="framework-no-action"><input type="radio" name="formal-action" value="" checked> No formal action</label>
+                <div class="framework-action-grid">${formalMarkup}</div>
+            </section>
 
-                <fieldset>
-                    <legend>Move within location</legend>
-                    <select id="action-move-within-destination">
-                        ${optionMarkup(internalDestinations, "No internal destination")}
-                    </select>
-                    <button id="action-move-within">Move within</button>
-                </fieldset>
-
-                <fieldset>
-                    <legend>Take item</legend>
-                    <select id="action-take-item">
-                        ${optionMarkup(takeOptions, "No items here")}
-                    </select>
-                    <button id="action-take">Take</button>
-                </fieldset>
-
-                <fieldset>
-                    <legend>Drop item</legend>
-                    <select id="action-drop-item">
-                        ${optionMarkup(ownedItems, "Inventory is empty")}
-                    </select>
-                    <button id="action-drop">Drop</button>
-                </fieldset>
-
-                <fieldset>
-                    <legend>Give item</legend>
-                    <select id="action-give-item">
-                        ${optionMarkup(ownedItems, "Inventory is empty")}
-                    </select>
-                    <select id="action-give-item-target">
-                        ${optionMarkup(reachableTargets, "Nobody reachable")}
-                    </select>
-                    <button id="action-give-item-button">Give</button>
-                </fieldset>
-
-                <fieldset>
-                    <legend>Give money</legend>
-                    <input id="action-money-amount" type="number" min="1" step="1" value="1">
-                    <select id="action-money-target">
-                        ${optionMarkup(reachableTargets, "Nobody reachable")}
-                    </select>
-                    <button id="action-give-money">Give</button>
-                </fieldset>
-
-                <fieldset>
-                    <legend>Place item</legend>
-                    <select id="action-place-item">
-                        ${optionMarkup(ownedItems, "Inventory is empty")}
-                    </select>
-                    <select id="action-place-inventory">
-                        ${optionMarkup(placementInventories, "No accessible surface")}
-                    </select>
-                    <button id="action-place">Place</button>
-                </fieldset>
-
-                <fieldset>
-                    <legend>Pour ale</legend>
-                    <button id="action-pour-ale">Pour a mug of ale</button>
-                </fieldset>
-
+            <div class="framework-turn-controls">
+                <button id="action-submit"${busy ? " disabled" : ""}>Submit</button>
+                <button id="action-pass"${(busy || (queue.head && !aiSettings.hasKey)) ? " disabled" : ""}>Pass / Next turn</button>
             </div>
 
             <details class="framework-debug">
@@ -961,81 +1032,38 @@
             $("#action-narrative-target").val(selectedTargetId);
         }
 
-        $("#action-move").prop("disabled", moveOptions.length === 0).on("click", function () {
-            runAction({
-                type: "move",
-                destination_id: $("#action-move-destination").val()
-            }, true);
-        });
+        function collectFormalAction() {
+            const type = $("input[name='formal-action']:checked").val();
+            if (!type) return null;
+            if (type === "move") return { type: type, destination_id: $("#action-move-destination").val() };
+            if (type === "move_within_location") return { type: type, destination_id: $("#action-move-within-destination").val() };
+            if (type === "take_item") return { type: type, item_id: $("#action-take-item").val() };
+            if (type === "drop_item") return { type: type, item_id: $("#action-drop-item").val() };
+            if (type === "give_item") return { type: type, item_id: $("#action-give-item").val(), target_id: $("#action-give-item-target").val() };
+            if (type === "give_money") return { type: type, target_id: $("#action-money-target").val(), amount: Number($("#action-money-amount").val()) };
+            if (type === "place_item") return { type: type, item_id: $("#action-place-item").val(), target_inventory_id: $("#action-place-inventory").val() };
+            return { type: type };
+        }
 
-        $("#action-move-within").prop("disabled", internalDestinations.length === 0).on("click", function () {
-            runAction({
-                type: "move_within_location",
-                destination_id: $("#action-move-within-destination").val()
-            });
-        });
-
-        $("#action-take").prop("disabled", takeOptions.length === 0).on("click", function () {
-            runAction({
-                type: "take_item",
-                item_id: $("#action-take-item").val()
-            });
-        });
-
-        $("#action-drop").prop("disabled", ownedItems.length === 0).on("click", function () {
-            runAction({
-                type: "drop_item",
-                item_id: $("#action-drop-item").val()
-            });
-        });
-
-        $("#action-give-item-button")
-            .prop("disabled", ownedItems.length === 0 || reachableTargets.length === 0)
-            .on("click", function () {
-                runAction({
-                    type: "give_item",
-                    item_id: $("#action-give-item").val(),
-                    target_id: $("#action-give-item-target").val()
-                });
-            });
-
-        $("#action-give-money").prop("disabled", reachableTargets.length === 0).on("click", function () {
-            runAction({
-                type: "give_money",
-                target_id: $("#action-money-target").val(),
-                amount: Number($("#action-money-amount").val())
-            });
-        });
-
-        $("#action-place")
-            .prop("disabled", ownedItems.length === 0 || placementInventories.length === 0)
-            .on("click", function () {
-                runAction({
-                    type: "place_item",
-                    item_id: $("#action-place-item").val(),
-                    target_inventory_id: $("#action-place-inventory").val()
-                });
-            });
-
-        $("#action-pour-ale")
-            .prop("disabled", !(view.available_actions.pour_ale && view.available_actions.pour_ale.options.available))
-            .on("click", function () {
-                runAction({ type: "pour_ale" });
-            });
-
-        $("#action-narrate").on("click", function () {
-            const result = setup.CharacterAPI.narrate(actorId, {
-                text: $("#action-narrative-text").val(),
-                target_id: $("#action-narrative-target").val(),
-                noticeability: $("#action-narrative-noticeability").val()
-            });
-
-            if (!result.ok) {
-                $("#framework-action-status").text(result.error.message);
+        $("#action-submit").on("click", async function () {
+            const text = $("#action-narrative-text").val();
+            const action = collectFormalAction();
+            if (!String(text || "").trim() && !action) {
+                $("#framework-action-status").text("Enter narrative text, select one formal action, or press Pass.");
                 return;
             }
+            $(this).prop("disabled", true);
+            await runHumanIntent({
+                text: text,
+                target_id: $("#action-narrative-target").val(),
+                noticeability: $("#action-narrative-noticeability").val(),
+                action: action
+            }, Boolean(action && action.type === "move"));
+        });
 
-            refreshCurrentPassage();
+        $("#action-pass").on("click", async function () {
+            $(this).prop("disabled", true);
+            await passHumanTurn();
         });
     }
 
@@ -1058,6 +1086,7 @@
 
     setup.PromptLabUIModel = {
         traceMarkup: promptLabTraceMarkup,
+        narrativeHistoryMarkup: promptLabNarrativeHistoryMarkup,
         queueMarkup: promptLabQueueMarkup
     };
 

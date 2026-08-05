@@ -4,6 +4,7 @@
     const EXCHANGE_LOG_SCHEMA = "ai-rpg.ai-exchange-log";
     const EXCHANGE_LOG_VERSION = 1;
     const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+    const MAX_NARRATIVE_HISTORY = 100;
     let state = createEmptyState();
 
     function clone(value) {
@@ -25,6 +26,7 @@
             editedSystemPrompt: "",
             lastRun: null,
             importedExchange: null,
+            narrativeHistory: [],
             status: "The crystal sphere is quiet.",
             busy: false
         };
@@ -39,6 +41,42 @@
         const world = setup.Game.getWorld();
         const actor = world.entities[actorId];
         return actor && actor.name || actorId || "unknown";
+    }
+
+    function liveNarrativeFragments(result) {
+        if (!result || !result.ok) return [];
+        const fragments = [];
+        const seen = new Set();
+        function add(text) {
+            const value = typeof text === "string" ? text.trim() : "";
+            if (!value || seen.has(value)) return;
+            seen.add(value);
+            fragments.push(value);
+        }
+
+        add(result.narrativeText);
+        const actionResult = result.actionResult;
+        if (actionResult && Array.isArray(actionResult.events)) {
+            actionResult.events.forEach(function (event) { add(event && event.text); });
+        }
+        if (actionResult && !actionResult.ok && actionResult.error) {
+            add(`${actorName(result.actorId)}'s formal action failed: ${actionResult.error.message}`);
+        }
+        return fragments;
+    }
+
+    function appendLiveNarrative(result) {
+        if (!result || !result.ok) return;
+        const fragments = liveNarrativeFragments(result);
+        state.narrativeHistory.push({
+            actorId: result.actorId || null,
+            actorName: actorName(result.actorId),
+            fragments: fragments,
+            empty: fragments.length === 0
+        });
+        if (state.narrativeHistory.length > MAX_NARRATIVE_HISTORY) {
+            state.narrativeHistory.splice(0, state.narrativeHistory.length - MAX_NARRATIVE_HISTORY);
+        }
     }
 
     function isPlainObject(value) {
@@ -195,6 +233,7 @@
         state.status = "Processing the next queued AI turn and applying it to the world...";
         try {
             const result = await setup.AITurnScheduler.processNext(client || setup.OpenRouterClient);
+            if (result.ok) appendLiveNarrative(result);
             state.status = result.ok
                 ? `Processed live AI turn for ${actorName(result.actorId)}. The queue advanced.`
                 : `Live AI turn failed. ${result.error && result.error.message || "Unknown failure."}`;
@@ -469,6 +508,13 @@
         return ok();
     }
 
+    function clearNarrativeHistory() {
+        if (state.busy) return fail("PROMPT_LAB_BUSY", "The crystal sphere is already considering a request.");
+        state.narrativeHistory = [];
+        state.status = "The live narrative history was cleared.";
+        return ok();
+    }
+
     function clearExchangeHistory() {
         if (state.busy) return fail("PROMPT_LAB_BUSY", "The crystal sphere is already considering a request.");
         setup.AIRequestExecutor.clearExchangeHistory();
@@ -484,6 +530,7 @@
             selectedQueueCharacterId: state.selectedQueueCharacterId,
             editedSystemPrompt: state.editedSystemPrompt,
             lastRun: state.lastRun,
+            narrativeHistory: state.narrativeHistory,
             status: state.status,
             busy: state.busy,
             hasLastGameRequest: !!(setup.AITransientDebug && setup.AITransientDebug.lastRequest),
@@ -502,6 +549,7 @@
         EXCHANGE_LOG_SCHEMA: EXCHANGE_LOG_SCHEMA,
         EXCHANGE_LOG_VERSION: EXCHANGE_LOG_VERSION,
         MAX_IMPORT_BYTES: MAX_IMPORT_BYTES,
+        MAX_NARRATIVE_HISTORY: MAX_NARRATIVE_HISTORY,
         loadLastGameRequest: loadLastGameRequest,
         loadQueuedDecision: loadQueuedDecision,
         loadNextQueuedDecision: loadNextQueuedDecision,
@@ -516,6 +564,7 @@
         parseExchangeLog: parseExchangeLog,
         importExchangeLog: importExchangeLog,
         clearExchangeHistory: clearExchangeHistory,
+        clearNarrativeHistory: clearNarrativeHistory,
         clear: clear,
         getSnapshot: getSnapshot,
         messagesWithSystemPrompt: messagesWithSystemPrompt

@@ -10,63 +10,82 @@
   HumanController takeover always returns them to AI control.
 - Formal actions, restricted views, grounded feedback, observations, `ContextBuilder`, the
   generic zero-input ability UI, and targetless `read_aura` remain deterministic.
-- A JSON-serializable, saveable, deduplicated AI queue orders direct targets before other
-  observers, repairs stale entries, and is advanced only by one manual `AITurnScheduler`
-  operation. No timer or autonomous drain exists yet.
+- HumanController now submits one unified intent envelope containing optional narrative text
+  and at most one formal action. The debug action panel uses one full-width text area,
+  addressee and loudness controls, formal-action radio buttons, one **Submit** button, and one
+  **Pass / Next turn** button. Empty narrative is valid when a formal action is selected, so
+  actions may be performed silently.
+- Narrative and formal-action records created by one intent share an `interactionId`. The
+  scheduler groups them into one coherent AI observation while retaining the original event
+  IDs for exact consumption.
+- A JSON-serializable, saveable, deduplicated AI queue prioritizes direct addressees and
+  formal-action targets before ordinary observers and repairs stale entries deterministically.
+- **Submit** commits the human intent and normally runs one complete AI reaction wave. The
+  sidebar checkbox **Stop automatic AI request processing** pauses that automatic wave.
+  **Pass / Next turn**, the sidebar step, and the crystal sphere remain explicit controls.
+  There is no timer or background loop.
+- During one reaction wave, each AI character reacts at most once. Later characters see
+  grounded events produced by earlier reactions. New observations delivered to a character
+  that already reacted remain queued for the next wave, preventing infinite same-wave loops.
+- A live AI reaction uses one model request returning optional narrative, optional speech,
+  bounded memory updates, and at most one formal action. The old immediate `game-result`
+  request has been removed. Grounded success or failure becomes an ordinary observation for
+  a later reaction wave.
+- `CharacterAPI.submitIntent()` is the common commit path for human and AI envelopes. Formal
+  action authority remains deterministic: model or human prose cannot establish objective
+  world consequences.
+- The location UI renders a **Latest turn** block assembled from human narrative, AI narrative,
+  and grounded action events in causal order. Movement Submit resolves its automatic reaction
+  wave before rendering the destination passage, allowing departure reactions to remain
+  visible in the completed turn narrative.
 - The browser uses fixed OpenRouter with non-streaming requests and a build-validated model
   catalog from `data/model_list.json`. Cydonia is the authored default and Llama 3.3 Euryale
   70B is the second candidate. The sidebar selector applies immediately; the selected model
   persists separately from the API key and falls back to the authored default when invalid.
-  The API key remains in transient memory, with optional expiring 24-hour `localStorage`
+- The API key remains in transient memory, with optional expiring 24-hour `localStorage`
   persistence and a forget control. Storage failures degrade safely to memory-only operation.
 - One shared `AIRequestExecutor` serializes game, repair, and prompt-lab traffic. It leaves at
   least one second between live transport calls, honors `Retry-After` after HTTP 429, exposes
   transient busy/cooldown status, and performs no automatic rate-limit retry.
-- The local JSON-only protocol accepts no action or one available formal action, rejects
-  arbitrary fields, and permits at most one repair request for malformed/schema-invalid JSON.
-- One-stage narrative turns and two-stage engine-grounded action turns commit atomically.
-  Failed second-stage requests, invalid memory data, and transaction errors restore the full
-  pre-turn world, queue, events, feedback, and observations.
+- The local JSON-only protocol rejects arbitrary fields and permits at most one repair request
+  for malformed or schema-invalid JSON. Its prompt tells the model not to choose a formal
+  action merely because it is available and not to claim ungrounded success.
 - Engine-owned bounded memory updates support recent-memory append, belief upsert, and
   relationship upsert only. Observation consumption removes supplied IDs rather than clearing
   an inbox wholesale.
-- AI narrative commits only through `CharacterAPI.narrate()`. Other AI recipients are queued
-  but never run automatically.
-- Safe transient UI status reports the next scheduler recipient and event preview, key
-  availability, errors, provider usage, and reported cost data without saving credentials in
-  SugarCube state.
-- OpenRouter failures now preserve a sanitized `providerResponse` end to end: HTTP status,
+- Provider, parser, validator, or AI commit failures restore the pre-reaction snapshot and
+  preserve the affected queue entry and unconsumed observations. A human intent committed
+  before a later automatic-wave failure remains committed.
+- OpenRouter failures preserve a sanitized `providerResponse` end to end: HTTP status,
   diagnostic headers, raw/parsed error body, retry information, and provider metadata remain
   available in the sphere and exchange-log export. API keys, Authorization values, OpenRouter
-  `user_id` fields, and `user_...` identifiers are redacted before the diagnostics leave the
-  client layer. Failed requests leave their queue item and observations intact.
-- A temporary village-temple room contains a crystal-sphere scheduler/prompt lab. It can
-  download/import versioned JSON exchange logs and replay recorded raw responses offline
-  through the current parser and validator. It renders
-  the ordered queue as recipient/event cards, marks the exact next live request, allows any
-  entry to be inspected or dry-run, and lets only the queue head be processed live through the
-  same scheduler as the sidebar. Exact and edited-system-prompt dry runs show original/repair
-  messages, raw content, parsed JSON, concrete validation paths, and usage without mutation.
-- Protocol validation now checks the exact nested memory record shapes before commit and
-  passes concrete validation failures into the single repair request.
-- The primary speak/narrative input is the first full-width framework control, with a larger
-  vertically resizable text area; compact formal debug actions remain in the grid below it.
-- Engine, UI, editor, world/model-list generators, settings, client, protocol, executor, scheduler, queue,
-  transaction, privacy, and rollback tests use mocked fetch and preserve the deterministic
-  baseline.
+  `user_id` fields, and `user_...` identifiers are redacted in the client layer.
+- The temporary village-temple crystal sphere renders the ordered queue, supports dry runs,
+  offline replay, exchange-log import/export, live processing of only the current queue head,
+  and a clearable transient narrative history containing successful live-turn public text and
+  confirmed formal-action events.
+- Engine, UI, editor, world/model-list generators, settings, client, protocol, executor,
+  scheduler, queue, transaction, privacy, and rollback tests use mocked fetch and preserve the
+  deterministic baseline.
 
 ## Remaining limitations
 
-- AI turns require an explicit button press; there is no autonomous or timer-driven loop.
+- AI progression is user-triggered only. There is no timer, background scheduler, or autonomous
+  off-screen activity.
+- The current loudness control distinguishes normal/public delivery from quiet/private
+  delivery. Shouts and propagation into neighboring locations are not implemented.
+- One submitted intent may contain at most one formal action. There is no multi-action ordering,
+  partial commit, or rollback policy.
+- The **Latest turn** output is deterministic concatenation of existing narrative and grounded
+  fragments; there is no separate literary narrator or summarizer model.
+- A paused movement Submit commits and renders the destination without first draining AI
+  reactions; departure-scene suspension/interruption is later work.
 - The provider is fixed to OpenRouter and streaming is disabled. Model choice is limited to
   the authored catalog; there is no arbitrary model entry or provider selector.
-- One AI turn may choose at most one formal action.
 - Browser `file://` network/CORS and localStorage behavior depends on the browser.
 - There is no memory compression, token budgeting, local token counting, embeddings, or
   retrieval. Usage/cost is shown only when OpenRouter reports it.
 - Editable ability effects, arbitrary author code, combat, economy, equipment, quests, and
   dialogue trees remain out of scope.
-- The village temple and crystal-sphere laboratory are temporary development scaffolding
-  and should be removed or hidden before a final release.
-- A real OpenRouter smoke test requires the user to enter a real key and explicitly initiate
-  a turn; automated tests never make live requests.
+- The village temple and crystal-sphere laboratory are temporary development scaffolding.
+- Automated tests never make live OpenRouter requests.

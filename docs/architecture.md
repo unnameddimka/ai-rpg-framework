@@ -4,7 +4,7 @@
 
 Build a deterministic Twine/SugarCube RPG framework that supplies a stateless language model with everything required to behave as one specific character while the engine remains authoritative.
 
-The current integration milestone adds a narrow manual OpenRouter vertical slice with a small validated model catalog on top of the existing deterministic foundation:
+The current integration milestone adds a user-triggered OpenRouter reaction loop with a small validated model catalog on top of the existing deterministic foundation:
 
 - authorable characters;
 - separate public and AI-private descriptions;
@@ -13,7 +13,7 @@ The current integration milestone adds a narrow manual OpenRouter vertical slice
 - per-character saved mind state;
 - restricted controller context;
 - a saved deterministic AI-turn queue;
-- one manually triggered AI turn at a time;
+- one user-triggered reaction wave at a time, with each queued AI character reacting at most once per wave;
 - browser-side OpenRouter access with a transient user-supplied key.
 
 The engine remains the authority over objective reality.
@@ -38,7 +38,7 @@ World mutation + events + private feedback
         └──► character mind.pendingObservations
 ```
 
-Free narrative is a separate channel:
+Narrative and a formal action remain separate authority channels, but they may be submitted together as one intent:
 
 ```text
 Narrative text
@@ -599,7 +599,7 @@ The task does not introduce a second persistence system.
 
 The following remain later work:
 
-- automatic queue draining or autonomous/timer-driven NPC activity;
+- autonomous/timer-driven NPC activity or background/off-screen queue processing;
 - provider selection or arbitrary model IDs outside the authored model catalog;
 - streaming;
 - multiple formal actions in one AI turn;
@@ -608,52 +608,55 @@ The following remain later work:
 - editable ability effects or arbitrary scripts;
 - combat, economy, quests, dialogue trees, and other major gameplay systems.
 
-## 21. Manual AI turn queue
+## 21. AI reaction queue and user-triggered waves
 
-The first model integration is deterministic and manually advanced. The sidebar does not ask the user to pick an AI character. It shows the queue head as a recipient plus an event preview:
+The runtime owns a deterministic JSON-serializable queue. Normal play advances it only after a human **Submit** or explicit **Pass / Next turn**. There is no timer or background execution.
 
-```text
-Next recipient: Hooded woman
-Event: You to Hooded woman: “Hello there.”
-[Process next AI event]
-```
+The sidebar still exposes **Process next AI event** and the crystal sphere still exposes the full queue for debugging. Those controls process one queue entry manually. The sidebar checkbox **Stop automatic AI request processing** pauses only the wave normally started after Submit; explicit Pass and sphere/sidebar stepping remain available.
 
-When empty it shows `No pending AI turns`. The temporary crystal sphere may render the full queue, but live execution still follows queue order.
-
-The runtime world owns a JSON-serializable queue, conceptually:
+Conceptual saved state:
 
 ```js
 world.ai = {
-  turnQueue: ["hoodedWoman", "innkeeper"]
+  turnQueue: [
+    { characterId: "innkeeper", reason: "event" },
+    { characterId: "hoodedWoman", reason: "event" }
+  ]
 };
 ```
 
-A character may appear at most once. Additional observations accumulate in that character's `mind.pendingObservations` without adding duplicate queue entries.
+A character appears at most once. Additional observations accumulate in that character's `mind.pendingObservations`.
 
-Queue eligibility requires both:
+Queue eligibility requires:
 
 - current controller assignment `ai`;
 - at least one pending observation.
 
-Stale entries are removed or skipped when inspected. Human and dummy characters are never executed by the queue.
+Stale entries are removed. Human and dummy characters are never executed by the queue.
 
-### 21.1 Ordering
+### 21.1 Priority
 
-For each confirmed event or feedback delivery, enqueue eligible AI recipients in this priority order:
+Direct addressees and formal-action targets have priority over ordinary observers. Within the same priority level, ordering is stable and deterministic. Re-prioritization inspects pending observations, so a character directly addressed by a new player intent can move ahead of previously deferred ordinary observers.
 
-1. direct addressee, when present;
-2. formal-action target, when present;
-3. other perceiving AI characters in deterministic delivery order.
+### 21.2 Reaction-wave rule
 
-Existing queued characters keep their earlier position.
+A wave repeatedly processes the highest-priority queued character that has not yet reacted in that wave.
 
-### 21.2 Control switching
+- each character reacts at most once per wave;
+- each reaction may contain at most one formal action;
+- confirmed events from earlier reactions are delivered immediately;
+- later characters in the same wave see those earlier events;
+- events delivered to a character that already reacted remain queued for the next wave.
 
-If HumanController leaves a character and its `defaultControllerId` is `ai`, enqueue that character if it already owns pending observations. Switching control never calls the model automatically.
+This prevents infinite same-turn dialogue loops while preserving causal propagation through the scene.
 
-### 21.3 Save behavior
+### 21.3 Combined interaction observations
 
-The queue is runtime game state and must survive SugarCube save/load. In-flight requests, promises, API settings, raw prompts, and raw responses are transient and must not be saved.
+`CharacterAPI.submitIntent()` assigns one `interactionId` to the narrative and formal-action parts of the same intent. The engine still stores objective action events and narrative events separately, but the scheduler groups matching observations before building an AI request. A recipient therefore sees a coherent observation such as “The player gave 2 gold and said: ‘Pour me an ale’” rather than two unrelated records.
+
+### 21.4 Control switching and saves
+
+If HumanController leaves a character and its `defaultControllerId` is `ai`, enqueue it when pending observations exist. The queue survives SugarCube save/load. In-flight promises, API settings, prompts, responses, and the transient current reaction-wave set are not saved.
 
 ## 22. OpenRouter client, model catalog, and key lifecycle
 
@@ -713,54 +716,45 @@ executor extends its cooldown accordingly and exposes the remaining delay to the
 It never performs a general automatic retry. The protocol still permits exactly one repair
 request for invalid JSON, and that repair passes through the same timing policy.
 
-## 23. One queued AI turn
+## 23. One queued AI reaction
 
-`setup.AITurnScheduler.processNext()` processes only the first eligible queue entry. The
-sidebar button and the crystal sphere's live control both call this operation. There is no
-timer yet, so a scheduler invocation happens only after a user action.
+`setup.AITurnScheduler.buildDecisionRequest(characterId)` is the single source for the exact restricted request represented by a queue entry. It snapshots up to 50 pending observations, groups records sharing an `interactionId`, builds the restricted context, and records the original observation IDs for precise consumption.
 
-`setup.AITurnScheduler.buildDecisionRequest(characterId)` is the single source for the exact
-restricted decision request represented by a queue entry. It is used by both live turns and
-sphere inspection/dry runs.
+A live AI reaction uses one model request:
 
-At turn start:
+1. snapshot the pre-turn world;
+2. send the decision request;
+3. validate one JSON response;
+4. submit its optional narrative and optional single formal action through `CharacterAPI.submitIntent()`;
+5. apply bounded memory updates;
+6. consume only the snapshotted observation IDs;
+7. remove the character from the queue and re-enqueue it when new observations remain.
 
-1. identify the queue-head actor;
-2. snapshot the IDs and contents of current pending observations;
-3. build a restricted context bundle;
-4. send the decision request.
+There is no immediate result-stage request.
 
-The decision response may choose no formal action or one currently available formal action.
+If the formal action succeeds, the engine records a grounded `action_result` observation for the AI actor. If it fails validation, the existing grounded `action_feedback` observation remains. The actor interprets either result during a later wave. This creates the cycle:
 
-### 23.1 One-stage turn
+```text
+observation -> intention -> deterministic world result -> later observation
+```
 
-When `action` is `null`, the same response may contain final public narrative, spoken text, and bounded memory updates. After local validation, commit them atomically and consume only the snapshotted observation IDs.
-
-### 23.2 Two-stage turn
-
-When an action is present:
-
-1. validate and execute it through `CharacterAPI.perform()`;
-2. capture its normalized grounded result, including failure feedback;
-3. send a second request containing the original restricted context, chosen action, and actual action result;
-4. receive final reaction text and bounded memory updates;
-5. commit the whole turn only after the second response validates.
-
-The two requests are one game turn. The model must not invent action success or hidden feedback before the engine result exists.
-
-All stage-one narrative for action-taking turns is held until completion and may describe only intention or attempt, never an unconfirmed result.
+A provider, parser, validation, or commit failure restores the pre-turn snapshot and preserves the queue entry and unconsumed observations.
 
 ## 24. Model JSON protocol
 
-Do not rely on native strict structured-output support. Request JSON-only output, extract a JSON object, and validate locally. At most one repair request may be sent when parsing or schema validation fails. General network retries are not automatic.
+Do not rely on native strict structured-output support. Request JSON-only output, extract one JSON object, and validate locally. At most one repair request may be sent for malformed or schema-invalid JSON. General network retries are not automatic.
 
-Conceptual decision response:
+Conceptual response:
 
 ```json
 {
-  "action": null,
-  "publicNarrative": "She studies the traveller in silence.",
-  "spokenText": null,
+  "action": {
+    "type": "give_money",
+    "target_id": "innkeeper",
+    "amount": 2
+  },
+  "publicNarrative": "The traveller places two coins on the counter.",
+  "spokenText": "Pour me an ale.",
   "memoryUpdates": {
     "recentMemoriesToAdd": [],
     "beliefsToUpsert": [],
@@ -769,28 +763,9 @@ Conceptual decision response:
 }
 ```
 
-When `action` is non-null, `memoryUpdates` must be empty until the result-stage response. The action object is passed unchanged to local action validation after removing unknown top-level protocol fields.
+`action` is `null` or one currently available formal action. Narrative, speech, action, and bounded memory updates may coexist in one response. The system prompt instructs the model to prefer `action: null` when no formal action clearly advances the character's goals and never to select an action merely because it is available.
 
-Conceptual result-stage response:
-
-```json
-{
-  "publicNarrative": "Her expression tightens for a moment.",
-  "spokenText": "Interesting.",
-  "memoryUpdates": {
-    "recentMemoriesToAdd": [
-      {
-        "summary": "I sensed unusual potential around the traveller.",
-        "importance": 0.6
-      }
-    ],
-    "beliefsToUpsert": [],
-    "relationshipsToUpsert": []
-  }
-}
-```
-
-No chain-of-thought, hidden reasoning, arbitrary world patch, arbitrary mind replacement, or executable code is accepted.
+The model must not claim that a selected formal action succeeded. Only the engine's normalized action result establishes objective consequences. No chain-of-thought, hidden reasoning, arbitrary world patch, arbitrary mind replacement, or executable code is accepted.
 
 ## 25. Validated memory updates
 
@@ -804,24 +779,24 @@ The engine assigns unique IDs to new memories when the model does not provide on
 
 Applying updates must use an engine-owned function and must be part of the turn transaction.
 
-## 26. Narrative commit
+## 26. Combined intent commit and turn display
 
-Accepted AI narrative is not a direct DOM append. It goes through `CharacterAPI.narrate()` so it creates the same confirmed narrative event and recipient observations as human narrative.
+Human and AI controllers submit the same conceptual envelope: optional narrative plus at most one formal action. `CharacterAPI.submitIntent()` assigns an `interactionId`, executes the formal action through the registry, and emits narrative through the lower-level `narrate()` path.
 
-The display may combine public narrative and spoken text for readability, but both remain model-authored narrative rather than objective engine facts. HTML-escape all content.
+The browser collects player text, grounded action-event text, AI narrative, and grounded AI action-event text in causal order and shows them in a **Latest turn** block above the current location description. Model-authored prose remains distinct from objective engine events, and all displayed content is HTML-escaped.
 
 ## 27. Failure and rollback
 
 On API error, missing key, malformed response after one repair, local schema rejection, or unexpected exception:
 
-- do not consume observations;
-- do not remove the queue head;
-- do not apply memory changes;
-- do not commit model narrative;
-- preserve any pre-turn world snapshot needed to roll back a formal action;
+- do not consume the affected observations;
+- do not remove the affected queue entry;
+- do not apply model memory changes;
+- do not commit model narrative or action;
+- restore the pre-turn world snapshot;
 - show a concise safe error and retain a retry path.
 
-Because a formal action occurs before the second request, the implementation must either execute against a cloned transaction candidate or capture and restore the pre-action world on second-stage failure. Partial world mutation is not acceptable.
+A human intent is committed before its optional automatic reaction wave. If a later AI request fails, the human action remains valid, successfully completed earlier AI reactions remain committed, and the failed/current queue entry is retained. The UI reports that the turn was submitted but AI processing stopped.
 
 ## 28. Debug and usage UI
 
@@ -830,6 +805,7 @@ The AI panel should show:
 - key status without revealing the key;
 - fixed provider plus the current validated model selection and raw model ID;
 - next scheduler recipient, first-event preview, and queue length;
+- `Stop automatic AI request processing`;
 - `Process next AI event`;
 - shared executor busy/cooldown information where useful;
 - last safe error;
@@ -844,8 +820,7 @@ explicit user-requested exchange-log export after transport-layer sanitization.
 
 This integration does not add:
 
-- automatic queue draining;
-- timer-based NPC activity;
+- timer-based or background NPC activity unrelated to a user-triggered Submit/Pass wave;
 - initiative without pending observations;
 - multiple actions in one turn;
 - provider selection or arbitrary unvalidated model IDs;

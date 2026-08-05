@@ -239,10 +239,46 @@
     font-style: italic;
 }
 
+.prompt-lab-narrative-history,
 .prompt-lab-queue {
     margin-top: 1rem;
     padding-top: 0.8rem;
     border-top: 1px solid rgba(200, 190, 230, 0.35);
+}
+
+.prompt-lab-narrative-history .prompt-lab-section-heading button {
+    flex: 0 0 auto;
+}
+
+.prompt-lab-narrative-window {
+    min-height: 8rem;
+    max-height: 24rem;
+    overflow-y: auto;
+    margin-top: 0.55rem;
+    padding: 0.8rem;
+    border: 1px solid rgba(160, 145, 195, 0.55);
+    border-radius: 0.35rem;
+    background: rgba(0, 0, 0, 0.28);
+}
+
+.prompt-lab-narrative-entry + .prompt-lab-narrative-entry {
+    margin-top: 0.9rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(160, 145, 195, 0.35);
+}
+
+.prompt-lab-narrative-entry h5 {
+    margin-top: 0;
+}
+
+.prompt-lab-narrative-entry p {
+    margin: 0.35rem 0;
+    white-space: pre-wrap;
+}
+
+.prompt-lab-narrative-empty {
+    opacity: 0.8;
+    font-style: italic;
 }
 
 .prompt-lab-section-heading {
@@ -358,6 +394,66 @@
 
 @media (max-width: 700px) {
     .prompt-lab-queue-entry dl {
+        grid-template-columns: 1fr;
+    }
+}
+
+.framework-turn-narrative {
+    margin: 1rem 0 1.4rem;
+    padding: 1rem;
+    border-left: 4px solid #8c795c;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.framework-turn-narrative h3 {
+    margin-top: 0;
+}
+
+.framework-turn-narrative p {
+    margin: 0.55rem 0;
+    white-space: pre-wrap;
+}
+
+.framework-formal-action-section {
+    margin-top: 1rem;
+}
+
+.framework-no-action {
+    display: block;
+    margin: 0.6rem 0 0.9rem;
+    font-weight: bold;
+}
+
+.framework-formal-action legend label {
+    cursor: pointer;
+}
+
+.framework-formal-action-disabled {
+    opacity: 0.55;
+}
+
+.formal-action-parameters p {
+    margin: 0.45rem 0 0;
+}
+
+.framework-turn-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(10rem, 1fr));
+    gap: 0.8rem;
+    margin-top: 1rem;
+}
+
+.framework-turn-controls button {
+    min-height: 2.7rem;
+}
+
+.framework-auto-ai-toggle {
+    display: inline-block;
+    margin: 0.45rem 0;
+}
+
+@media (max-width: 700px) {
+    .framework-turn-controls {
         grid-template-columns: 1fr;
     }
 }

@@ -1,6 +1,10 @@
 (function () {
     "use strict";
 
+    const AUTO_PAUSE_KEY = "ai-rpg.stop-auto-ai-processing";
+    let waveInFlight = false;
+    let autoProcessingPaused = null;
+
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
     }
@@ -21,6 +25,64 @@
             : (observation && observation.actionType) || (observation && observation.kind) || "observation";
     }
 
+    function interactionIdOf(observation) {
+        return observation && (observation.interactionId || observation.data && observation.data.interactionId) || null;
+    }
+
+    function combineInteractionObservations(observations, world) {
+        const grouped = [];
+        const byInteraction = new Map();
+
+        observations.forEach(function (observation) {
+            const interactionId = interactionIdOf(observation);
+            if (!interactionId) {
+                grouped.push(clone(observation));
+                return;
+            }
+            let group = byInteraction.get(interactionId);
+            if (!group) {
+                group = { interactionId: interactionId, items: [], insertionIndex: grouped.length };
+                byInteraction.set(interactionId, group);
+                grouped.push(group);
+            }
+            group.items.push(observation);
+        });
+
+        return grouped.map(function (entry) {
+            if (!entry || !entry.items) return entry;
+            if (entry.items.length === 1) return clone(entry.items[0]);
+
+            const items = entry.items;
+            const first = items[0];
+            const narrativeItems = items.filter(function (item) { return observationType(item) === "narrative_input"; });
+            const mechanicalItems = items.filter(function (item) { return observationType(item) !== "narrative_input"; });
+            const actorId = first.actorId || first.data && first.data.actorId || null;
+            const actor = characterName(actorId, world);
+            const mechanicalText = mechanicalItems.map(function (item) { return item.text; }).filter(Boolean).join(" ");
+            const narrativeText = narrativeItems.map(function (item) { return item.text; }).filter(Boolean).join(" ");
+            const textParts = [];
+            if (mechanicalText) textParts.push(mechanicalText);
+            if (narrativeText) textParts.push(`${actor} said: “${narrativeText}”`);
+
+            return {
+                id: first.id,
+                observationIds: items.map(function (item) { return item.id; }),
+                interactionId: entry.interactionId,
+                kind: "intent",
+                turn: first.turn || null,
+                actorId: actorId,
+                targetId: narrativeItems.find(function (item) { return item.targetId; })?.targetId ||
+                    mechanicalItems.find(function (item) { return item.targetId; })?.targetId || null,
+                text: textParts.join(" "),
+                data: {
+                    type: "combined_intent",
+                    interactionId: entry.interactionId,
+                    observations: clone(items)
+                }
+            };
+        });
+    }
+
     function describeObservation(observation, world) {
         const data = observation && observation.data || {};
         const type = observationType(observation);
@@ -31,7 +93,9 @@
         const text = observation && typeof observation.text === "string" ? observation.text : "";
         let summary = text || type;
 
-        if (type === "narrative_input") {
+        if (type === "combined_intent" || observation && observation.kind === "intent") {
+            summary = text || `${actor} performed a combined intent.`;
+        } else if (type === "narrative_input") {
             summary = target
                 ? `${actor} to ${target}: “${text}”`
                 : `${actor}: “${text}”`;
@@ -66,7 +130,8 @@
         if (world.control.assignments[characterId] !== "ai" || actor.mind.pendingObservations.length === 0) {
             return { ok: false, error: { code: "AI_SCHEDULER_ENTRY_STALE", message: "The selected AI queue entry is no longer eligible." } };
         }
-        const observations = clone(actor.mind.pendingObservations.slice(0, 50));
+        const originalObservations = clone(actor.mind.pendingObservations.slice(0, 50));
+        const observations = combineInteractionObservations(originalObservations, world);
         const context = setup.ContextBuilder.build(actor.id);
         if (context && context.ok === false) return context;
         context.mind.pendingObservations = clone(observations);
@@ -76,7 +141,8 @@
             actorName: actor.name,
             stage: "decision",
             observations: observations,
-            observationIds: observations.map(function (item) { return item.id; }),
+            originalObservations: originalObservations,
+            observationIds: originalObservations.map(function (item) { return item.id; }),
             context: context,
             messages: setup.AIProtocol.decisionMessages(context, observations),
             availableActions: context.availableActions
@@ -88,9 +154,10 @@
         const status = setup.AITurnQueue.getStatus();
         const entries = status.entries.map(function (entry, index) {
             const actor = world.entities[entry.characterId];
-            const observations = actor && actor.mind && Array.isArray(actor.mind.pendingObservations)
+            const originalObservations = actor && actor.mind && Array.isArray(actor.mind.pendingObservations)
                 ? actor.mind.pendingObservations.slice(0, 50)
                 : [];
+            const observations = combineInteractionObservations(originalObservations, world);
             const described = observations.map(function (observation) {
                 return describeObservation(observation, world);
             });
@@ -121,21 +188,111 @@
         };
     }
 
+    function readAutoProcessingPaused() {
+        if (autoProcessingPaused !== null) return autoProcessingPaused;
+        try {
+            autoProcessingPaused = window.localStorage.getItem(AUTO_PAUSE_KEY) === "true";
+        } catch (error) {
+            autoProcessingPaused = false;
+        }
+        return autoProcessingPaused;
+    }
+
+    function setAutoProcessingPaused(paused) {
+        autoProcessingPaused = Boolean(paused);
+        try {
+            window.localStorage.setItem(AUTO_PAUSE_KEY, autoProcessingPaused ? "true" : "false");
+        } catch (error) {
+            // The setting still applies for the current page when storage is unavailable.
+        }
+        return { ok: true, paused: autoProcessingPaused };
+    }
+
     async function processNext(client) {
         return setup.AIController.takeNextTurn(client || setup.OpenRouterClient);
     }
 
+    async function processWave(client) {
+        if (waveInFlight || setup.AIController.isInFlight()) {
+            return { ok: false, error: { code: "AI_WAVE_IN_FLIGHT", message: "An AI reaction wave is already in progress." } };
+        }
+        if (setup.AITurnQueue.getStatus().entries.length === 0) {
+            return { ok: true, processedCount: 0, reactedCharacterIds: [], results: [], remainingQueue: getQueueView() };
+        }
+        if (setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
+            return { ok: false, error: { code: "AI_KEY_MISSING", message: "Enter an OpenRouter API key before processing AI reactions." } };
+        }
+
+        waveInFlight = true;
+        const reacted = new Set();
+        const results = [];
+        try {
+            for (let guard = 0; guard < 100; guard++) {
+                const queue = setup.AITurnQueue.getStatus().entries;
+                const next = queue.find(function (entry) { return !reacted.has(entry.characterId); });
+                if (!next) break;
+
+                const result = await setup.AIController.takeQueuedTurn(next.characterId, client || setup.OpenRouterClient);
+                results.push(clone(result));
+                if (!result.ok) {
+                    return {
+                        ok: false,
+                        error: clone(result.error),
+                        processedCount: reacted.size,
+                        reactedCharacterIds: Array.from(reacted),
+                        results: results,
+                        remainingQueue: getQueueView()
+                    };
+                }
+                reacted.add(next.characterId);
+            }
+            return {
+                ok: true,
+                processedCount: reacted.size,
+                reactedCharacterIds: Array.from(reacted),
+                results: results,
+                remainingQueue: getQueueView()
+            };
+        } finally {
+            waveInFlight = false;
+        }
+    }
+
+    async function processAfterSubmit(client) {
+        if (readAutoProcessingPaused()) {
+            return {
+                ok: true,
+                paused: true,
+                processedCount: 0,
+                reactedCharacterIds: [],
+                results: [],
+                remainingQueue: getQueueView()
+            };
+        }
+        return processWave(client);
+    }
+
     setup.AITurnScheduler = {
         processNext: processNext,
+        processWave: processWave,
+        processAfterSubmit: processAfterSubmit,
         buildDecisionRequest: buildDecisionRequest,
         getQueueView: getQueueView,
+        combineInteractionObservations: function (observations) {
+            return clone(combineInteractionObservations(observations || [], setup.Game.getWorld()));
+        },
         describeObservation: function (observation) {
             return clone(describeObservation(observation, setup.Game.getWorld()));
         },
+        isAutoProcessingPaused: readAutoProcessingPaused,
+        setAutoProcessingPaused: setAutoProcessingPaused,
+        isWaveInFlight: function () { return waveInFlight; },
         getStatus: function () {
             return {
                 queue: getQueueView(),
-                executor: setup.AIRequestExecutor.getStatus()
+                executor: setup.AIRequestExecutor.getStatus(),
+                waveInFlight: waveInFlight,
+                autoProcessingPaused: readAutoProcessingPaused()
             };
         }
     };

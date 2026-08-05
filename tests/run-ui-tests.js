@@ -75,11 +75,23 @@ assert(uiSource.includes("setup.AIRuntimeSettings.selectModel") && !uiSource.inc
     "model selection should update runtime settings while the AI queue UI remains free of a character picker");
 assert(uiSource.includes("!aiQueue.head || !aiSettings.hasKey || aiBusy"),
     "queue button should disable for empty queue, missing key, or in-flight request");
+assert(uiSource.includes('id="stop-auto-ai-processing"') &&
+    uiSource.includes("setup.AITurnScheduler.setAutoProcessingPaused"),
+    "sidebar should expose a persistent switch that pauses automatic AI processing after Submit");
+assert(uiSource.includes('id="action-submit"') && uiSource.includes('id="action-pass"') &&
+    uiSource.includes('name="formal-action"') && uiSource.includes('value="" checked') &&
+    uiSource.includes("setup.TurnFlow.submitHumanIntent") && uiSource.includes("setup.TurnFlow.pass"),
+    "debug interaction UI should submit narrative plus at most one radio-selected formal action or explicitly pass");
+assert(!uiSource.includes('<button id="action-narrate"') && !uiSource.includes('<button id="action-give-money"') &&
+    !uiSource.includes('<button id="action-move"'),
+    "formal debug actions should no longer execute through independent buttons");
 
 assert(uiSource.includes('view.location.id !== "villageTemple"') &&
     uiSource.includes("Scheduler queue") &&
     uiSource.includes("Inspect request") &&
     uiSource.includes("Dry-run exact request") &&
+    uiSource.includes("Narrative history") &&
+    uiSource.includes('id="prompt-lab-clear-narrative"') &&
     uiSource.includes("Process live"),
     "the village-temple crystal sphere should expose the scheduler queue and dry-run/live controls only in its special room");
 assert(uiSource.includes("Download AI log") && uiSource.includes("Import AI log") &&
@@ -102,6 +114,17 @@ assert(!escapedTrace.includes("<img") && escapedTrace.includes("&lt;img") &&
     escapedTrace.includes("&lt;unsafe error&gt;") && escapedTrace.includes("&lt;unsafe request&gt;") &&
     escapedTrace.includes("&lt;unsafe provider error&gt;"),
     "prompt-lab request, provider diagnostics, response, parsed JSON, and validation errors should be HTML escaped");
+
+
+const escapedNarrativeHistory = promptLabModel.narrativeHistoryMarkup([{
+    actorId: "unsafe",
+    actorName: "<img src=x onerror=alert(1)>",
+    fragments: ["<unsafe narrative>", "Safe second paragraph"]
+}]);
+assert(!escapedNarrativeHistory.includes("<img") &&
+    escapedNarrativeHistory.includes("&lt;img") &&
+    escapedNarrativeHistory.includes("&lt;unsafe narrative&gt;"),
+    "prompt-lab narrative history should escape actor names and model-produced public text");
 
 const escapedQueue = promptLabModel.queueMarkup({
     busy: false,
