@@ -22,8 +22,8 @@
 
     function installGeneratedData(world) {
         const document = setup.GeneratedWorldData;
-        if (!document || document.schemaVersion !== 2 || !document.locations || !document.characters ||
-                !document.abilities || !document.itemDefinitions || !document.items) {
+        if (!document || document.schemaVersion !== 2 || !document.locations || !document.characters || !document.abilities ||
+                !document.itemDefinitions || !document.items) {
             throw new Error("Generated world data is missing or uses an unsupported schema version.");
         }
 
@@ -44,6 +44,7 @@
             world.inventories[location.inventoryId] = {
                 id: location.inventoryId,
                 ownerId: locationId,
+                name: location.inventoryName || location.name,
                 itemIds: []
             };
 
@@ -60,6 +61,7 @@
                     world.inventories[sublocation.inventoryId] = {
                         id: sublocation.inventoryId,
                         ownerId: sublocationId,
+                        name: sublocation.inventoryName || sublocation.name,
                         itemIds: []
                     };
                 }
@@ -80,6 +82,7 @@
             world.inventories[character.inventoryId] = {
                 id: character.inventoryId,
                 ownerId: characterId,
+                name: character.name,
                 itemIds: []
             };
             world.control.assignments[characterId] = character.initialControllerId;
@@ -88,18 +91,19 @@
 
         for (const [itemId, sourceItem] of Object.entries(document.items)) {
             const item = clone(sourceItem);
-            item.id = itemId;
-            item.type = "item";
-            if (!world.itemDefinitions[item.definitionId]) {
+            const definition = world.itemDefinitions[item.definitionId];
+            const inventory = world.inventories[item.inventoryId];
+            if (!definition) {
                 throw new Error(`Item ${itemId} references missing definition ${item.definitionId}.`);
             }
-            const inventory = world.inventories[item.containerId];
             if (!inventory) {
-                throw new Error(`Item ${itemId} references missing inventory ${item.containerId}.`);
+                throw new Error(`Item ${itemId} references missing inventory ${item.inventoryId}.`);
             }
-            if (world.entities[itemId]) {
-                throw new Error(`Duplicate entity ID ${itemId}.`);
-            }
+            item.id = itemId;
+            item.type = "item";
+            item.containerId = item.inventoryId;
+            item.name = definition.name;
+            delete item.inventoryId;
             world.entities[itemId] = item;
             inventory.itemIds.push(itemId);
         }
@@ -108,10 +112,16 @@
     function createInitialWorld() {
         const world = {
             version: WORLD_VERSION,
+
             entities: {},
-            itemDefinitions: {},
+
             inventories: {},
-            control: { assignments: {} },
+            itemDefinitions: {},
+
+            control: {
+                assignments: {}
+            },
+
             events: [],
             nextEventId: 1,
             nextObservationId: 1,
@@ -119,6 +129,7 @@
             nextGeneratedItemId: 1,
             nextIntentId: 1,
             ai: { turnQueue: [] },
+
             debug: {
                 lastActionResult: null,
                 controllerLog: [],
@@ -220,42 +231,37 @@
         });
     }
 
-    function getItemDefinition(definitionId, world) {
-        return world.itemDefinitions && world.itemDefinitions[definitionId] || null;
-    }
-
-    function getItem(itemId, world) {
-        const entity = world.entities[itemId];
-        return entity && entity.type === "item" ? entity : null;
-    }
-
-    function itemName(item, world) {
-        const definition = item && getItemDefinition(item.definitionId, world);
-        return definition && definition.name || item && item.name || item && item.id || "Unknown item";
+    function getItemDefinition(itemOrDefinitionId, world) {
+        const definitionId = typeof itemOrDefinitionId === "string"
+            ? itemOrDefinitionId
+            : itemOrDefinitionId && itemOrDefinitionId.definitionId;
+        return definitionId && world.itemDefinitions
+            ? world.itemDefinitions[definitionId] || null
+            : null;
     }
 
     function itemView(item, world) {
-        if (!item) return null;
-        const definition = getItemDefinition(item.definitionId, world) || {};
+        const definition = getItemDefinition(item, world);
         return {
             id: item.id,
-            name: itemName(item, world),
-            definition_id: item.definitionId,
-            family_id: definition.familyId || "",
-            tags: clone(definition.tags || []),
-            consumable: Boolean(definition.consumable),
-            equippable: Boolean(definition.equippable),
-            fillable: Boolean(definition.fillable)
+            name: definition ? definition.name : item.name,
+            definition_id: definition ? definition.id : item.definitionId,
+            family_id: definition ? definition.familyId : "",
+            tags: definition ? clone(definition.tags || []) : [],
+            consumable: Boolean(definition && definition.consumable),
+            equippable: Boolean(definition && definition.equippable),
+            fillable: Boolean(definition && definition.fillable)
         };
     }
 
-    function renderItemText(template, actor, item, resultDefinition, world) {
-        const sourceName = itemName(item, world);
-        const resultName = resultDefinition && resultDefinition.name || sourceName;
-        return String(template || "")
-            .replaceAll("{actor}", actor.name)
-            .replaceAll("{item}", sourceName)
-            .replaceAll("{result}", resultName);
+    function transformItem(item, resultDefinitionId, world) {
+        const definition = getItemDefinition(resultDefinitionId, world);
+        if (!definition) {
+            throw new Error(`Missing result item definition ${resultDefinitionId}.`);
+        }
+        item.definitionId = definition.id;
+        item.name = definition.name;
+        return item;
     }
 
     function sublocationOccupants(sublocationId, world, excludedCharacterId) {
@@ -379,57 +385,59 @@
     }
 
     function validateItemInvariants(world) {
-        if (!world.itemDefinitions || typeof world.itemDefinitions !== "object") {
-            return fail("ITEM_DEFINITIONS_MISSING", "World item definitions are missing.");
-        }
+        const itemMembership = {};
 
-        for (const [definitionId, definition] of Object.entries(world.itemDefinitions)) {
+        for (const [definitionId, definition] of Object.entries(world.itemDefinitions || {})) {
             if (!definition || definition.id !== definitionId || typeof definition.name !== "string" || !definition.name.trim()) {
                 return fail("ITEM_DEFINITION_INVALID", `Item definition ${definitionId} is invalid.`);
             }
-            if (!Array.isArray(definition.tags)) {
-                return fail("ITEM_DEFINITION_INVALID", `Item definition ${definitionId} tags must be an array.`);
-            }
-            if (definition.consumable) {
-                if (!["destroy", "transform"].includes(definition.consumable.resultType)) {
-                    return fail("ITEM_DEFINITION_INVALID", `Item definition ${definitionId} has an invalid consumable result.`);
+            for (const actionField of ["fillAction", "consumeAction"]) {
+                const action = definition[actionField];
+                if (!action) continue;
+                if (!world.itemDefinitions[action.resultDefinitionId]) {
+                    return fail(
+                        "ITEM_TRANSFORM_TARGET_INVALID",
+                        `Item definition ${definitionId} references missing result definition ${action.resultDefinitionId}.`
+                    );
                 }
-                if (definition.consumable.resultType === "transform" &&
-                        !getItemDefinition(definition.consumable.resultDefinitionId, world)) {
-                    return fail("ITEM_DEFINITION_INVALID", `Item definition ${definitionId} has a missing consume result definition.`);
-                }
-            }
-            if (definition.fillable && !getItemDefinition(definition.fillable.resultDefinitionId, world)) {
-                return fail("ITEM_DEFINITION_INVALID", `Item definition ${definitionId} has a missing fill result definition.`);
             }
         }
 
-        const itemMembership = {};
         for (const inventory of Object.values(world.inventories)) {
-            if (!Array.isArray(inventory.itemIds)) {
-                return fail("INVENTORY_ITEMS_INVALID", `Inventory ${inventory.id} has invalid item membership.`);
-            }
             for (const itemId of inventory.itemIds) {
-                const item = getItem(itemId, world);
-                if (!item) {
+                const item = world.entities[itemId];
+                if (!item || item.type !== "item") {
                     return fail("INVENTORY_ITEM_INVALID", `Inventory ${inventory.id} contains invalid item ${itemId}.`);
                 }
-                if (!getItemDefinition(item.definitionId, world)) {
-                    return fail("ITEM_DEFINITION_MISSING", `Item ${itemId} references missing definition ${item.definitionId}.`);
-                }
                 if (itemMembership[itemId]) {
-                    return fail("ITEM_IN_MULTIPLE_INVENTORIES", `Item ${itemId} appears in more than one inventory.`);
+                    return fail(
+                        "ITEM_IN_MULTIPLE_INVENTORIES",
+                        `Item ${itemId} appears in more than one inventory.`
+                    );
                 }
                 itemMembership[itemId] = inventory.id;
             }
         }
 
         for (const entity of Object.values(world.entities)) {
-            if (entity.type !== "item") continue;
+            if (entity.type !== "item") {
+                continue;
+            }
+
             if (itemMembership[entity.id] !== entity.containerId) {
-                return fail("ITEM_CONTAINER_MISMATCH", `Item ${entity.id} containerId does not match inventory membership.`);
+                return fail(
+                    "ITEM_CONTAINER_MISMATCH",
+                    `Item ${entity.id} containerId does not match inventory membership.`
+                );
+            }
+            if (!getItemDefinition(entity, world)) {
+                return fail(
+                    "ITEM_DEFINITION_MISSING",
+                    `Item ${entity.id} references missing definition ${entity.definitionId}.`
+                );
             }
         }
+
         return ok();
     }
 
@@ -699,10 +707,14 @@
 
     function inventoryItems(inventoryId, world) {
         const inventory = world.inventories[inventoryId];
-        if (!inventory) return [];
+        if (!inventory) {
+            return [];
+        }
+
         return inventory.itemIds.map(function (itemId) {
-            return itemView(getItem(itemId, world), world);
-        }).filter(Boolean);
+            const item = world.entities[itemId];
+            return itemView(item, world);
+        });
     }
 
     function nearbyCharacters(actor, world) {
@@ -1021,7 +1033,7 @@
                     itemId: action.item_id,
                     locationId: actor.locationId,
                     sublocationId: actor.sublocationId,
-                    text: `${actor.name} took ${itemName(world.entities[action.item_id], world)}.`
+                    text: `${actor.name} took ${world.entities[action.item_id].name}.`
                 }];
             }
         },
@@ -1061,7 +1073,7 @@
                     actorId: actor.id,
                     itemId: action.item_id,
                     locationId: location.id,
-                    text: `${actor.name} dropped ${itemName(world.entities[action.item_id], world)}.`
+                    text: `${actor.name} dropped ${world.entities[action.item_id].name}.`
                 }];
             }
         },
@@ -1123,7 +1135,7 @@
                     targetId: target.id,
                     itemId: action.item_id,
                     locationId: actor.locationId,
-                    text: `${actor.name} gave ${itemName(world.entities[action.item_id], world)} to ${target.name}.`
+                    text: `${actor.name} gave ${world.entities[action.item_id].name} to ${target.name}.`
                 }];
             }
         },
@@ -1235,92 +1247,8 @@
                     targetInventoryId: action.target_inventory_id,
                     locationId: actor.locationId,
                     sublocationId: actor.sublocationId,
-                    text: `${actor.name} placed ${itemName(world.entities[action.item_id], world)} on ${getSublocation(actor.sublocationId, world).name}.`
+                    text: `${actor.name} placed ${world.entities[action.item_id].name} on ${getSublocation(actor.sublocationId, world).name}.`
                 }];
-            }
-        },
-
-        consume: {
-            description: "Consume an owned item that supports consumption.",
-            schema: {
-                type: "object",
-                properties: {
-                    type: { const: "consume" },
-                    item_id: { type: "string" }
-                },
-                required: ["type", "item_id"]
-            },
-            getOptions: function (actor, world) {
-                const items = world.inventories[actor.inventoryId].itemIds.map(function (itemId) {
-                    const item = getItem(itemId, world);
-                    const definition = item && getItemDefinition(item.definitionId, world);
-                    if (!definition || !definition.consumable) return null;
-                    return {
-                        id: item.id,
-                        name: itemName(item, world),
-                        action_label: definition.consumable.actionLabel,
-                        result_type: definition.consumable.resultType,
-                        result_definition_id: definition.consumable.resultDefinitionId || null
-                    };
-                }).filter(Boolean);
-                return { item_ids: items.map(function (item) { return item.id; }), items: items };
-            },
-            validate: function (actor, action, world) {
-                if (!world.inventories[actor.inventoryId].itemIds.includes(action.item_id)) {
-                    return fail("ITEM_NOT_OWNED", "Actor does not possess this item.");
-                }
-                const item = getItem(action.item_id, world);
-                const definition = item && getItemDefinition(item.definitionId, world);
-                if (!definition || !definition.consumable) {
-                    return fail("ITEM_NOT_CONSUMABLE", "This item cannot be consumed.");
-                }
-                if (definition.consumable.resultType === "transform" &&
-                        !getItemDefinition(definition.consumable.resultDefinitionId, world)) {
-                    return fail("ITEM_TRANSFORM_INVALID", "The item's consume result definition does not exist.");
-                }
-                return ok();
-            },
-            execute: function (actor, action, world) {
-                const item = getItem(action.item_id, world);
-                const sourceDefinition = getItemDefinition(item.definitionId, world);
-                const component = sourceDefinition.consumable;
-                const fromDefinitionId = item.definitionId;
-                const fromName = sourceDefinition.name;
-                let resultDefinition = null;
-                if (component.resultType === "destroy") {
-                    const inventory = world.inventories[actor.inventoryId];
-                    inventory.itemIds = inventory.itemIds.filter(function (itemId) { return itemId !== item.id; });
-                    delete world.entities[item.id];
-                } else {
-                    resultDefinition = getItemDefinition(component.resultDefinitionId, world);
-                    item.definitionId = resultDefinition.id;
-                }
-                const publicText = renderItemText(component.publicText || `${actor.name} consumes {item}.`, actor,
-                    { id: item.id, definitionId: fromDefinitionId, name: fromName }, resultDefinition, world);
-                const event = {
-                    type: component.resultType === "destroy" ? "item_consumed" : "item_transformed",
-                    actorId: actor.id,
-                    itemId: action.item_id,
-                    actionType: "consume",
-                    fromDefinitionId: fromDefinitionId,
-                    toDefinitionId: resultDefinition ? resultDefinition.id : null,
-                    locationId: actor.locationId,
-                    sublocationId: actor.sublocationId,
-                    text: publicText
-                };
-                const feedbackText = renderItemText(component.feedbackText || "You consume the item.", actor,
-                    { id: action.item_id, definitionId: fromDefinitionId, name: fromName }, resultDefinition, world);
-                return { events: [event], feedback: [{
-                    recipientId: actor.id,
-                    kind: "observation",
-                    code: "ITEM_CONSUMED",
-                    text: feedbackText,
-                    data: {
-                        itemId: action.item_id,
-                        fromDefinitionId: fromDefinitionId,
-                        toDefinitionId: resultDefinition ? resultDefinition.id : null
-                    }
-                }] };
             }
         },
 
@@ -1336,18 +1264,18 @@
             },
             getOptions: function (actor, world) {
                 const sublocation = getSublocation(actor.sublocationId, world);
-                const environment = new Set(sublocation.environmentCapabilities || []);
+                const capabilities = new Set(sublocation.capabilities || []);
                 const items = world.inventories[actor.inventoryId].itemIds.map(function (itemId) {
-                    const item = getItem(itemId, world);
-                    const definition = item && getItemDefinition(item.definitionId, world);
-                    const component = definition && definition.fillable;
-                    if (!component || !environment.has(component.requiredEnvironmentCapability)) return null;
+                    const item = world.entities[itemId];
+                    const definition = getItemDefinition(item, world);
+                    const action = definition && definition.fillAction;
+                    if (!action || !capabilities.has(action.requiredEnvironmentCapability)) return null;
                     return {
                         id: item.id,
-                        name: itemName(item, world),
-                        action_label: component.actionLabel,
-                        required_environment_capability: component.requiredEnvironmentCapability,
-                        result_definition_id: component.resultDefinitionId
+                        name: definition.name,
+                        action_label: action.actionLabel,
+                        required_environment_capability: action.requiredEnvironmentCapability,
+                        result_definition_id: action.resultDefinitionId
                     };
                 }).filter(Boolean);
                 return { item_ids: items.map(function (item) { return item.id; }), items: items };
@@ -1356,49 +1284,117 @@
                 if (!world.inventories[actor.inventoryId].itemIds.includes(action.item_id)) {
                     return fail("ITEM_NOT_OWNED", "Actor does not possess this item.");
                 }
-                const item = getItem(action.item_id, world);
-                const definition = item && getItemDefinition(item.definitionId, world);
-                const component = definition && definition.fillable;
-                if (!component) return fail("ITEM_NOT_FILLABLE", "This item cannot be filled in its current state.");
-                const sublocation = getSublocation(actor.sublocationId, world);
-                if (!(sublocation.environmentCapabilities || []).includes(component.requiredEnvironmentCapability)) {
-                    return fail("ENVIRONMENT_CAPABILITY_REQUIRED", "The required filling source is not available here.");
+                const item = world.entities[action.item_id];
+                const definition = getItemDefinition(item, world);
+                const fillAction = definition && definition.fillAction;
+                if (!fillAction) {
+                    return fail("ITEM_NOT_FILLABLE", "This item cannot be filled in its current state.");
                 }
-                if (!getItemDefinition(component.resultDefinitionId, world)) {
-                    return fail("ITEM_TRANSFORM_INVALID", "The item's fill result definition does not exist.");
+                const sublocation = getSublocation(actor.sublocationId, world);
+                if (!(sublocation.capabilities || []).includes(fillAction.requiredEnvironmentCapability)) {
+                    return fail("CAPABILITY_REQUIRED", "This item cannot be filled in the current environment.");
+                }
+                if (!getItemDefinition(fillAction.resultDefinitionId, world)) {
+                    return fail("RESULT_DEFINITION_MISSING", "The configured filled item definition does not exist.");
                 }
                 return ok();
             },
             execute: function (actor, action, world) {
-                const item = getItem(action.item_id, world);
-                const sourceDefinition = getItemDefinition(item.definitionId, world);
-                const component = sourceDefinition.fillable;
-                const resultDefinition = getItemDefinition(component.resultDefinitionId, world);
-                const fromDefinitionId = item.definitionId;
-                const fromName = sourceDefinition.name;
-                item.definitionId = resultDefinition.id;
-                const itemSnapshot = { id: item.id, definitionId: fromDefinitionId, name: fromName };
+                const item = world.entities[action.item_id];
+                const fromDefinition = getItemDefinition(item, world);
+                const fillAction = fromDefinition.fillAction;
+                const fromDefinitionId = fromDefinition.id;
+                transformItem(item, fillAction.resultDefinitionId, world);
                 return { events: [{
                     type: "item_transformed",
                     actorId: actor.id,
                     itemId: item.id,
                     actionType: "fill",
                     fromDefinitionId: fromDefinitionId,
-                    toDefinitionId: resultDefinition.id,
+                    toDefinitionId: item.definitionId,
                     locationId: actor.locationId,
                     sublocationId: actor.sublocationId,
-                    text: renderItemText(component.publicText || `${actor.name} fills {item}.`, actor,
-                        itemSnapshot, resultDefinition, world)
+                    text: `${actor.name} fills ${fromDefinition.name} with ale.`
                 }], feedback: [{
                     recipientId: actor.id,
                     kind: "observation",
                     code: "ITEM_FILLED",
-                    text: renderItemText(component.feedbackText || "You fill the item.", actor,
-                        itemSnapshot, resultDefinition, world),
+                    text: fillAction.feedbackText || `You fill ${fromDefinition.name}.`,
                     data: {
                         itemId: item.id,
                         fromDefinitionId: fromDefinitionId,
-                        toDefinitionId: resultDefinition.id
+                        toDefinitionId: item.definitionId
+                    }
+                }] };
+            }
+        },
+
+        consume: {
+            description: "Consume an owned item that supports consumption.",
+            schema: {
+                type: "object",
+                properties: {
+                    type: { const: "consume" },
+                    item_id: { type: "string" }
+                },
+                required: ["type", "item_id"]
+            },
+            getOptions: function (actor, world) {
+                const items = world.inventories[actor.inventoryId].itemIds.map(function (itemId) {
+                    const item = world.entities[itemId];
+                    const definition = getItemDefinition(item, world);
+                    const consumeAction = definition && definition.consumeAction;
+                    if (!consumeAction) return null;
+                    return {
+                        id: item.id,
+                        name: definition.name,
+                        action_label: consumeAction.actionLabel,
+                        result_type: consumeAction.resultType,
+                        result_definition_id: consumeAction.resultDefinitionId
+                    };
+                }).filter(Boolean);
+                return { item_ids: items.map(function (item) { return item.id; }), items: items };
+            },
+            validate: function (actor, action, world) {
+                if (!world.inventories[actor.inventoryId].itemIds.includes(action.item_id)) {
+                    return fail("ITEM_NOT_OWNED", "Actor does not possess this item.");
+                }
+                const item = world.entities[action.item_id];
+                const definition = getItemDefinition(item, world);
+                const consumeAction = definition && definition.consumeAction;
+                if (!consumeAction) {
+                    return fail("ITEM_NOT_CONSUMABLE", "This item cannot be consumed in its current state.");
+                }
+                if (consumeAction.resultType !== "transform" || !getItemDefinition(consumeAction.resultDefinitionId, world)) {
+                    return fail("CONSUME_RESULT_INVALID", "The configured consume result is invalid.");
+                }
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const item = world.entities[action.item_id];
+                const fromDefinition = getItemDefinition(item, world);
+                const consumeAction = fromDefinition.consumeAction;
+                const fromDefinitionId = fromDefinition.id;
+                transformItem(item, consumeAction.resultDefinitionId, world);
+                return { events: [{
+                    type: "item_transformed",
+                    actorId: actor.id,
+                    itemId: item.id,
+                    actionType: "consume",
+                    fromDefinitionId: fromDefinitionId,
+                    toDefinitionId: item.definitionId,
+                    locationId: actor.locationId,
+                    sublocationId: actor.sublocationId,
+                    text: `${actor.name} drinks the ale from ${fromDefinition.name}.`
+                }], feedback: [{
+                    recipientId: actor.id,
+                    kind: "observation",
+                    code: "ITEM_CONSUMED",
+                    text: consumeAction.feedbackText || `You consume ${fromDefinition.name}.`,
+                    data: {
+                        itemId: item.id,
+                        fromDefinitionId: fromDefinitionId,
+                        toDefinitionId: item.definitionId
                     }
                 }] };
             }
@@ -1454,23 +1450,32 @@
         for (const type of BASE_ACTION_TYPES) grant(type, { kind: "base" });
         const sublocation = getSublocation(actor.sublocationId, world);
         for (const type of (sublocation.capabilities || [])) grant(type, { kind: "sublocation", id: sublocation.id });
+        const environmentCapabilities = new Set(sublocation.capabilities || []);
+        const actorInventory = world.inventories[actor.inventoryId];
+        for (const itemId of actorInventory ? actorInventory.itemIds : []) {
+            const item = world.entities[itemId];
+            const definition = getItemDefinition(item, world);
+            if (!definition) continue;
+            if (definition.fillAction && environmentCapabilities.has(definition.fillAction.requiredEnvironmentCapability)) {
+                grant("fill", {
+                    kind: "item",
+                    id: item.id,
+                    definitionId: definition.id,
+                    name: definition.name
+                });
+            }
+            if (definition.consumeAction) {
+                grant("consume", {
+                    kind: "item",
+                    id: item.id,
+                    definitionId: definition.id,
+                    name: definition.name
+                });
+            }
+        }
         for (const abilityId of (actor.abilityIds || [])) {
             const ability = world.abilities[abilityId];
             if (ability) grant(ability.actionType, { kind: "character_ability", id: ability.id, name: ability.name });
-        }
-
-        const environment = new Set(sublocation.environmentCapabilities || []);
-        const inventory = world.inventories[actor.inventoryId];
-        for (const itemId of inventory.itemIds) {
-            const item = getItem(itemId, world);
-            const definition = item && getItemDefinition(item.definitionId, world);
-            if (!definition) continue;
-            if (definition.consumable) {
-                grant("consume", { kind: "item", id: item.id, definitionId: definition.id, name: definition.name });
-            }
-            if (definition.fillable && environment.has(definition.fillable.requiredEnvironmentCapability)) {
-                grant("fill", { kind: "item", id: item.id, definitionId: definition.id, name: definition.name });
-            }
         }
         return grants;
     }
@@ -1567,7 +1572,7 @@
                 return {
                     id: inventory.id,
                     owner_id: inventory.ownerId,
-                    name: owner ? (owner.inventoryName || owner.name) : inventory.id,
+                    name: inventory.name || (owner ? owner.name : inventory.id),
                     items: inventoryItems(inventory.id, world)
                 };
             }),
@@ -1759,21 +1764,49 @@
         });
     }
 
-    function buildContext(actorId) {
+    function buildPrivateCharacterContext(actor, world) {
+        const abilityInstructions = {};
+        (actor.abilityIds || []).forEach(function (abilityId) {
+            const ability = world.abilities[abilityId];
+            if (ability && typeof ability.aiDescription === "string" && ability.aiDescription.trim()) {
+                abilityInstructions[abilityId] = ability.aiDescription.trim();
+            }
+        });
+        const context = {
+            aiDescription: typeof actor.aiDescription === "string" ? actor.aiDescription : ""
+        };
+        if (Object.keys(abilityInstructions).length > 0) {
+            context.abilityInstructions = abilityInstructions;
+        }
+        return context;
+    }
+
+    function buildAIMindContext(actor) {
+        const mind = actor.mind || {};
+        return {
+            knownFacts: clone(mind.knownFacts || []),
+            beliefs: clone(mind.beliefs || []),
+            relationships: clone(mind.relationships || []),
+            recentMemories: clone(mind.recentMemories || []),
+            longTermMemories: clone(mind.longTermMemories || [])
+        };
+    }
+
+    function buildContext(actorId, options) {
         const world = ensureWorld();
         const actor = getCharacter(actorId, world);
         if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        options = options && typeof options === "object" ? options : {};
+        const preparedObservations = Array.isArray(options.pendingObservations)
+            ? clone(options.pendingObservations)
+            : [];
+        const view = getCharacterView(actorId);
         return clone({
             schemaVersion: 1,
-            character: {
-                id: actor.id,
-                name: actor.name,
-                aiDescription: actor.aiDescription,
-                abilities: (actor.abilityIds || []).map(function (id) { return world.abilities[id]; }).filter(Boolean)
-            },
-            mind: actor.mind,
-            view: getCharacterView(actorId),
-            availableActions: getAvailableActions(actorId)
+            view: view,
+            character: buildPrivateCharacterContext(actor, world),
+            mind: buildAIMindContext(actor),
+            pendingObservations: preparedObservations
         });
     }
 

@@ -13,6 +13,16 @@
         }).join("");
     }
 
+    function itemActionOptionMarkup(items, emptyLabel) {
+        if (!items || items.length === 0) {
+            return `<option value="">${escapeHtml(emptyLabel)}</option>`;
+        }
+        return items.map(function (item) {
+            const label = item.action_label || item.name || item.id;
+            return `<option value="${escapeHtml(item.id)}">${escapeHtml(label)}</option>`;
+        }).join("");
+    }
+
     function escapeHtml(value) {
         return String(value)
             .replace(/&/g, "&amp;")
@@ -409,8 +419,8 @@
                     <pre>${promptLabJson(source && source.messages, "No request loaded")}</pre>
                 </details>
                 <details>
-                    <summary>Available formal actions used for validation</summary>
-                    <pre>${promptLabJson(source && source.availableActions, "No request loaded")}</pre>
+                    <summary>Available formal actions from the canonical view</summary>
+                    <pre>${promptLabJson(source && setup.AIProtocol.actionCatalogFromMessages(source.messages), "No request loaded")}</pre>
                 </details>
             </section>
 
@@ -627,22 +637,17 @@
 
         const itemActions = document.createElement("div");
         itemActions.className = "framework-location-links";
-        const consumeOptions = view.available_actions.consume && view.available_actions.consume.options.items || [];
-        consumeOptions.forEach(function (item) {
-            const button = appendTextElement(itemActions, "button", item.action_label || `Consume ${item.name}`);
-            button.type = "button";
-            button.addEventListener("click", function () {
-                runAction({ type: "consume", item_id: item.id });
+        for (const actionType of ["fill", "consume"]) {
+            const actionRecord = view.available_actions[actionType];
+            const options = actionRecord && actionRecord.options && actionRecord.options.items || [];
+            options.forEach(function (itemOption) {
+                const button = appendTextElement(itemActions, "button", itemOption.action_label || actionRecord.description);
+                button.type = "button";
+                button.addEventListener("click", function () {
+                    runAction({ type: actionType, item_id: itemOption.id });
+                });
             });
-        });
-        const fillOptions = view.available_actions.fill && view.available_actions.fill.options.items || [];
-        fillOptions.forEach(function (item) {
-            const button = appendTextElement(itemActions, "button", item.action_label || `Fill ${item.name}`);
-            button.type = "button";
-            button.addEventListener("click", function () {
-                runAction({ type: "fill", item_id: item.id });
-            });
-        });
+        }
         if (itemActions.childNodes.length > 0) root.appendChild(itemActions);
 
         view.accessible_inventories.forEach(function (inventory) {
@@ -943,8 +948,6 @@
         const moveOptions = view.location.exits || [];
         const takeOptions = view.accessible_inventories.flatMap(function (inventory) { return inventory.items; });
         const ownedItems = view.self.inventory || [];
-        const consumeItems = view.available_actions.consume ? view.available_actions.consume.options.items || [] : [];
-        const fillItems = view.available_actions.fill ? view.available_actions.fill.options.items || [] : [];
         const visibleTargets = view.location.characters || [];
         const giveItemAction = view.available_actions.give_item;
         const reachableTargetIds = giveItemAction ? giveItemAction.options.target_ids : [];
@@ -961,7 +964,9 @@
         const placementInventories = view.accessible_inventories.filter(function (inventory) {
             return placementInventoryIds.includes(inventory.id);
         });
-        const knownActionTypes = new Set(["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "consume", "fill"]);
+        const fillItems = view.available_actions.fill ? view.available_actions.fill.options.items : [];
+        const consumableItems = view.available_actions.consume ? view.available_actions.consume.options.items : [];
+        const knownActionTypes = new Set(["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume"]);
         const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
             const actionType = entry[0];
             const record = entry[1];
@@ -986,8 +991,8 @@
             radioField("give_item", "Give item", `<select id="action-give-item">${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-give-item-target">${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, ownedItems.length === 0 || reachableTargets.length === 0),
             radioField("give_money", "Give money", `<input id="action-money-amount" type="number" min="1" step="1" value="1"><select id="action-money-target">${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, reachableTargets.length === 0),
             radioField("place_item", "Place item", `<select id="action-place-item">${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-place-inventory">${optionMarkup(placementInventories, "No accessible surface")}</select>`, ownedItems.length === 0 || placementInventories.length === 0),
-            radioField("consume", "Consume item", `<select id="action-consume-item">${optionMarkup(consumeItems, "No consumable items")}</select>`, consumeItems.length === 0),
-            radioField("fill", "Fill item", `<select id="action-fill-item">${optionMarkup(fillItems, "No fillable items here")}</select>`, fillItems.length === 0)
+            radioField("fill", "Fill item", `<select id="action-fill-item">${itemActionOptionMarkup(fillItems, "No fillable item here")}</select>`, fillItems.length === 0),
+            radioField("consume", "Consume item", `<select id="action-consume-item">${itemActionOptionMarkup(consumableItems, "No consumable item")}</select>`, consumableItems.length === 0)
         ].concat(zeroInputExtras.map(function (entry) {
             return radioField(entry[0], entry[1].description || entry[0], "<p>No parameters.</p>", false);
         })).join("");
@@ -1054,8 +1059,8 @@
             if (type === "give_item") return { type: type, item_id: $("#action-give-item").val(), target_id: $("#action-give-item-target").val() };
             if (type === "give_money") return { type: type, target_id: $("#action-money-target").val(), amount: Number($("#action-money-amount").val()) };
             if (type === "place_item") return { type: type, item_id: $("#action-place-item").val(), target_inventory_id: $("#action-place-inventory").val() };
-            if (type === "consume") return { type: type, item_id: $("#action-consume-item").val() };
             if (type === "fill") return { type: type, item_id: $("#action-fill-item").val() };
+            if (type === "consume") return { type: type, item_id: $("#action-consume-item").val() };
             return { type: type };
         }
 

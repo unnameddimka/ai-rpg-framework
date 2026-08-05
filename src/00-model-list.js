@@ -11,6 +11,14 @@
         {
             "id": "sao10k/l3.3-euryale-70b",
             "name": "Llama 3.3 Euryale 70B"
+        },
+        {
+            "id": "sao10k/l3.1-euryale-70b:nitro",
+            "name": "Llama 3.1 Euryale 70B (Nitro)"
+        },
+        {
+            "id": "mistralai/mistral-small-3.2-24b-instruct",
+            "name": "Mistral Small 3.2 24B"
         }
     ]
 };

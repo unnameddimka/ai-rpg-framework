@@ -21,14 +21,6 @@
   "protectedAbilityIds": [
     "readAura"
   ],
-  "protectedItemDefinitionIds": [
-    "mugOfAle",
-    "emptyMug",
-    "cleaningRagType"
-  ],
-  "protectedItemIds": [
-    "cleaningRag"
-  ],
   "locations": {
     "tavernEntrance": {
       "id": "tavernEntrance",
@@ -98,20 +90,20 @@
           "type": "sublocation",
           "locationId": "bar",
           "name": "Behind the bar",
-          "publicText": "A narrow working space behind the counter holds taps, bottles, and clean mugs.",
+          "publicText": "A narrow working space behind the counter holds taps, bottles, and a cabinet of empty mugs.",
           "enterLabel": "Step behind the bar",
           "selfText": "You are standing behind the bar.",
           "occupantTemplate": "{name} stands behind the bar.",
           "capacity": 2,
+          "capabilities": [
+            "ale_source"
+          ],
           "reachableSublocationIds": [
             "barBehindCounter",
             "barPublicSide"
           ],
           "inventoryId": "inventory_barMugCabinet",
-          "inventoryName": "Mug cabinet",
-          "environmentCapabilities": [
-            "ale_source"
-          ]
+          "inventoryName": "Mug cabinet"
         }
       }
     },
@@ -338,115 +330,112 @@
     }
   },
   "itemDefinitions": {
-    "mugOfAle": {
-      "id": "mugOfAle",
-      "name": "Mug of ale",
-      "description": "A wooden mug filled with tavern ale.",
-      "familyId": "mug",
+    "cleaningRagType": {
+      "id": "cleaningRagType",
+      "name": "Cleaning rag",
+      "familyId": "rag",
       "tags": [
-        "container",
-        "drink",
-        "filled"
+        "tool",
+        "cloth"
       ],
-      "consumable": {
-        "actionLabel": "Drink the ale",
-        "resultType": "transform",
-        "resultDefinitionId": "emptyMug",
-        "publicText": "{actor} drinks the ale from {item}.",
-        "feedbackText": "You drink the ale. The mug is now empty."
-      },
-      "equippable": null,
-      "fillable": null
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
     },
     "emptyMug": {
       "id": "emptyMug",
       "name": "Empty mug",
-      "description": "An empty wooden drinking mug.",
       "familyId": "mug",
       "tags": [
         "container",
         "drink_container",
         "empty"
       ],
-      "consumable": null,
-      "equippable": null,
-      "fillable": {
+      "consumable": false,
+      "equippable": false,
+      "fillable": true,
+      "fillAction": {
         "actionLabel": "Fill with ale",
         "requiredEnvironmentCapability": "ale_source",
         "resultDefinitionId": "mugOfAle",
-        "publicText": "{actor} fills {item} with ale.",
-        "feedbackText": "You fill the empty mug with ale."
+        "feedbackText": "You fill the mug with ale."
       }
     },
-    "cleaningRagType": {
-      "id": "cleaningRagType",
-      "name": "Cleaning rag",
-      "description": "A worn cloth used for wiping the bar.",
-      "familyId": "rag",
+    "mugOfAle": {
+      "id": "mugOfAle",
+      "name": "Mug of ale",
+      "familyId": "mug",
       "tags": [
-        "tool",
-        "cloth"
+        "container",
+        "drink",
+        "filled"
       ],
-      "consumable": null,
-      "equippable": null,
-      "fillable": null
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Drink the ale",
+        "resultType": "transform",
+        "resultDefinitionId": "emptyMug",
+        "feedbackText": "You drink the ale. The mug is now empty."
+      }
     }
   },
   "items": {
     "cleaningRag": {
       "id": "cleaningRag",
       "definitionId": "cleaningRagType",
-      "containerId": "inventory_innkeeper"
+      "inventoryId": "inventory_innkeeper"
     },
     "emptyMug_1": {
       "id": "emptyMug_1",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_2": {
       "id": "emptyMug_2",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_3": {
       "id": "emptyMug_3",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_4": {
       "id": "emptyMug_4",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_5": {
       "id": "emptyMug_5",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_6": {
       "id": "emptyMug_6",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_7": {
       "id": "emptyMug_7",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_8": {
       "id": "emptyMug_8",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_9": {
       "id": "emptyMug_9",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     },
     "emptyMug_10": {
       "id": "emptyMug_10",
       "definitionId": "emptyMug",
-      "containerId": "inventory_barMugCabinet"
+      "inventoryId": "inventory_barMugCabinet"
     }
   }
 }

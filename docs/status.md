@@ -3,18 +3,20 @@
 ## Implemented
 
 - `data/world.json` authoritatively defines locations, characters, initial minds, permanent
-  nonhuman controller defaults, abilities, item definitions, persistent item instances, and hidden engine facts.
-- Item instances keep stable IDs while state transitions replace only their `definitionId`. The authored
-  mug cycle uses `emptyMug -> mugOfAle` through `fill` at an `ale_source`, and `mugOfAle -> emptyMug`
-  through `consume`. The bar cabinet begins with ten physical empty mugs; filling never creates a mug.
-- The standalone editor exposes **Item types** and **Items**, including consumable, fillable, and
-  equippable metadata, explicit transition targets, environment requirements, and starting containers.
+  nonhuman controller defaults, abilities, and hidden engine facts.
 - Exactly one HumanController remains an atomic temporary override. Released characters
   return directly to their authored `defaultControllerId`; no controller stack is stored.
 - The sample player, hooded woman, and innkeeper use permanent AI defaults so temporary
   HumanController takeover always returns them to AI control.
 - Formal actions, restricted views, grounded feedback, observations, `ContextBuilder`, the
   generic zero-input ability UI, and targetless `read_aura` remain deterministic.
+- Item definitions and item instances are authorable world data. The bar starts with ten
+  concrete `emptyMug_*` instances in `inventory_barMugCabinet`; no ale mug is created from
+  nothing. `fill` transforms an owned empty mug into `mugOfAle` only at an `ale_source`, and
+  `consume` transforms that same instance back into `emptyMug`.
+- The location UI and the unified formal-action panel derive **Fill with ale** and
+  **Drink the ale** controls from the same canonical `view.available_actions` records sent
+  to AI controllers.
 - HumanController now submits one unified intent envelope containing optional narrative text
   and at most one formal action. The debug action panel uses one full-width text area,
   addressee and loudness controls, formal-action radio buttons, one **Submit** button, and one
@@ -44,9 +46,16 @@
   wave before rendering the destination passage, allowing departure reactions to remain
   visible in the completed turn narrative.
 - The browser uses fixed OpenRouter with non-streaming requests and a build-validated model
-  catalog from `data/model_list.json`. Cydonia is the authored default and Llama 3.3 Euryale
-  70B is the second candidate. The sidebar selector applies immediately; the selected model
-  persists separately from the API key and falls back to the authored default when invalid.
+  catalog from `data/model_list.json`. Cydonia remains the authored default; Llama 3.3
+  Euryale, speed-routed Llama 3.1 Euryale, and Mistral Small 3.2 24B are
+  selectable alternatives. The selected model persists separately from the API key and falls
+  back to the authored default when invalid.
+- The restricted character `view` is now the canonical shared projection for HumanController
+  and AIController. The model receives that exact player-facing view unchanged, including the
+  single authoritative `view.available_actions` catalog. `ContextBuilder` adds only private
+  identity/ability instructions, projected mind records, and one prepared observation list;
+  it never serializes the raw runtime inbox or duplicate aliases. The protocol validator
+  derives its action catalog directly from the view already present in the request message.
 - The API key remains in transient memory, with optional expiring 24-hour `localStorage`
   persistence and a forget control. Storage failures degrade safely to memory-only operation.
 - One shared `AIRequestExecutor` serializes game, repair, and prompt-lab traffic. It leaves at
@@ -72,6 +81,9 @@
 - Engine, UI, editor, world/model-list generators, settings, client, protocol, executor,
   scheduler, queue, transaction, privacy, and rollback tests use mocked fetch and preserve the
   deterministic baseline.
+- This is a reconciliation snapshot built after an older archive temporarily replaced the
+  item-definition branch. Further feature work should wait for the next user-supplied base
+  archive and treat that archive as the new source of truth.
 
 ## Remaining limitations
 
@@ -90,7 +102,7 @@
 - Browser `file://` network/CORS and localStorage behavior depends on the browser.
 - There is no memory compression, token budgeting, local token counting, embeddings, or
   retrieval. Usage/cost is shown only when OpenRouter reports it.
-- Editable ability effects, arbitrary author code, combat, economy, equip/unequip runtime mechanics, quests, and
+- Editable ability effects, arbitrary author code, combat, economy, equipment, quests, and
   dialogue trees remain out of scope.
 - The village temple and crystal-sphere laboratory are temporary development scaffolding.
 - Automated tests never make live OpenRouter requests.

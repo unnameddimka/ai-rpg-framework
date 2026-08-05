@@ -84,10 +84,15 @@ async function main() {
     assert(degraded.ok && degraded.warning && setup.AIRuntimeSettings.getKey() === sentinel, "storage failure should degrade to memory-only");
 
     const modelIds = setup.AIRuntimeSettings.getModels().map(function (model) { return model.id; });
-    assert(modelIds.join(",") === "thedrummer/cydonia-24b-v4.1,sao10k/l3.3-euryale-70b" &&
+    assert(modelIds.join(",") === [
+        "thedrummer/cydonia-24b-v4.1",
+        "sao10k/l3.3-euryale-70b",
+        "sao10k/l3.1-euryale-70b:nitro",
+        "mistralai/mistral-small-3.2-24b-instruct"
+    ].join(",") &&
         setup.AIRuntimeSettings.getDefaultModelId() === "thedrummer/cydonia-24b-v4.1" &&
         setup.AIRuntimeSettings.getSelectedModelId() === "thedrummer/cydonia-24b-v4.1",
-        "generated model list should expose two candidates and select its authored default");
+        "generated model list should expose all configured candidates and select its authored default");
     const euryaleId = "sao10k/l3.3-euryale-70b";
     const selectedEuryale = setup.AIRuntimeSettings.selectModel(euryaleId, storage);
     assert(selectedEuryale.ok && selectedEuryale.persisted &&
@@ -171,7 +176,14 @@ async function main() {
 
     assert(setup.AIProtocol.extractObject("```json\n{\"action\":null}\n```").action === null, "protocol should extract fenced JSON");
     const available = { move: { schema: { properties: { type: {}, destination_id: {} }, required: ["type", "destination_id"] } } };
-    const tracedProviderFailure = await setup.AIProtocol.requestValidated([], "decision", available, {
+    const validationMessages = setup.AIProtocol.decisionMessages({
+        schemaVersion: 1,
+        view: { available_actions: available },
+        character: { aiDescription: "Test actor" },
+        mind: { knownFacts: [], beliefs: [], relationships: [], recentMemories: [], longTermMemories: [] },
+        pendingObservations: []
+    });
+    const tracedProviderFailure = await setup.AIProtocol.requestValidated(validationMessages, "decision", {
         chat: async function () { return detailedRateLimited; }
     });
     assert(!tracedProviderFailure.ok &&
@@ -207,13 +219,13 @@ async function main() {
         repairMessages = messages;
         return repairCalls === 1 ? { ok: true, content: "not json" } : response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
     } };
-    const repairedProtocol = await setup.AIProtocol.requestValidated([], "decision", available, repairClient);
+    const repairedProtocol = await setup.AIProtocol.requestValidated(validationMessages, "decision", repairClient);
     assert(repairedProtocol.ok && repairCalls === 2 && repairedProtocol.trace.attempts.length === 2 &&
         repairMessages.some(function (message) { return message.role === "user" && message.content.includes("Model response must contain one JSON object only"); }),
         "malformed JSON should trigger one repair request containing the concrete validation error");
     repairCalls = 0;
     const badRepair = { chat: async function () { repairCalls++; return { ok: true, content: "still bad" }; } };
-    assert(!(await setup.AIProtocol.requestValidated([], "decision", available, badRepair)).ok && repairCalls === 2,
+    assert(!(await setup.AIProtocol.requestValidated(validationMessages, "decision", badRepair)).ok && repairCalls === 2,
         "second invalid response should abort after one repair");
 
     world = queueHooded();
@@ -223,10 +235,24 @@ async function main() {
         schedulerView.head.observationPreview.some(function (item) { return item.summary.includes("Hello there."); }),
         "scheduler queue view should identify the next recipient and the event that will enter its request");
     const scheduledRequest = setup.AITurnScheduler.buildDecisionRequest("hoodedWoman");
+    const scheduledPayload = JSON.parse(scheduledRequest.messages[1].content);
     assert(scheduledRequest.ok && scheduledRequest.actorId === "hoodedWoman" &&
         scheduledRequest.messages[1].content.includes("Hello there.") &&
         scheduledRequest.observationIds.length === schedulerView.head.requestObservationCount,
         "scheduler should build the exact decision request represented by the queue head");
+    const canonicalScheduledView = setup.CharacterAPI.getView("hoodedWoman");
+    assert(JSON.stringify(scheduledPayload.context.view) === JSON.stringify(canonicalScheduledView) &&
+        scheduledPayload.context.pendingObservations.length > 0 &&
+        scheduledPayload.context.view.available_actions &&
+        !Object.prototype.hasOwnProperty.call(scheduledPayload.context, "availableActions") &&
+        !Object.prototype.hasOwnProperty.call(scheduledPayload, "pendingObservations") &&
+        !Object.prototype.hasOwnProperty.call(scheduledPayload.context.mind, "pendingObservations") &&
+        !Object.prototype.hasOwnProperty.call(scheduledPayload.context.character, "id") &&
+        !Object.prototype.hasOwnProperty.call(scheduledPayload.context.character, "name") &&
+        !Object.prototype.hasOwnProperty.call(scheduledPayload.context.character, "abilities") &&
+        JSON.stringify(setup.AIProtocol.actionCatalogFromMessages(scheduledRequest.messages)) ===
+            JSON.stringify(canonicalScheduledView.available_actions),
+        "AI request should embed the unchanged canonical player view once and add only private character context");
 
     world = fresh();
     ok(setup.Game.assignNonHumanController("innkeeper", "ai"), "make innkeeper AI for combined-intent test");
@@ -264,7 +290,7 @@ async function main() {
     const waveCalls = [];
     const waveClient = { chat: async function (messages) {
         const payload = JSON.parse(messages[1].content);
-        const actorId = payload.context.character.id;
+        const actorId = payload.context.view.self.id;
         waveCalls.push({ actorId: actorId, content: messages[1].content });
         if (actorId === "innkeeper") {
             return response({ action: null, publicNarrative: "The innkeeper answers first.", spokenText: "One moment.", memoryUpdates: emptyUpdates() });
@@ -283,9 +309,14 @@ async function main() {
         return {
             actorId: name,
             purpose: "executor-order-test",
-            messages: [],
+            messages: setup.AIProtocol.decisionMessages({
+                schemaVersion: 1,
+                view: { available_actions: {} },
+                character: { aiDescription: name },
+                mind: { knownFacts: [], beliefs: [], relationships: [], recentMemories: [], longTermMemories: [] },
+                pendingObservations: []
+            }),
             stage: "decision",
-            availableActions: {},
             client: { chat: async function () {
                 executionOrder.push(`${name}:start`);
                 if (delay) await new Promise(function (resolve) { setTimeout(resolve, delay); });
@@ -478,9 +509,14 @@ async function main() {
     const timedSpec = {
         actorId: "timing-test",
         purpose: "minimum-interval-test",
-        messages: [],
+        messages: setup.AIProtocol.decisionMessages({
+            schemaVersion: 1,
+            view: { available_actions: {} },
+            character: { aiDescription: "Timing test" },
+            mind: { knownFacts: [], beliefs: [], relationships: [], recentMemories: [], longTermMemories: [] },
+            pendingObservations: []
+        }),
         stage: "decision",
-        availableActions: {},
         client: timedClient
     };
     await setup.AIRequestExecutor.execute(timedSpec);

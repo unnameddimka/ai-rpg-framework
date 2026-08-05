@@ -52,8 +52,7 @@
                 purpose: spec.purpose || "unspecified",
                 stage: spec.stage || null,
                 modelId: result && result.modelId || null,
-                messages: clone(spec.messages || []),
-                availableActions: clone(spec.availableActions || {})
+                messages: clone(spec.messages || [])
             },
             result: safeResult(result)
         });
@@ -120,7 +119,6 @@
                 result = await setup.AIProtocol.requestValidated(
                     clone(spec.messages || []),
                     spec.stage,
-                    clone(spec.availableActions || {}),
                     policyClient
                 );
                 if (result && typeof result === "object") {

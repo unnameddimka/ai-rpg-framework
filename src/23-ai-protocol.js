@@ -126,7 +126,7 @@
             : { ok: false, message: errors[0], errors: errors };
     }
 
-    function validateDecision(value, availableActions) {
+    function validateDecision(value, actionCatalog) {
         const errors = exactKeyErrors(value, DECISION_KEYS, "response");
         if (!isPlainObject(value)) return finishValidation(value, errors);
         errors.push.apply(errors, nullableTextErrors(value.publicNarrative, "response.publicNarrative"));
@@ -137,7 +137,7 @@
             if (!isPlainObject(value.action) || typeof value.action.type !== "string") {
                 errors.push("response.action must be null or one action object with a string type.");
             } else {
-                const actionDefinition = availableActions && availableActions[value.action.type];
+                const actionDefinition = actionCatalog && actionCatalog[value.action.type];
                 if (!actionDefinition) errors.push(`response.action.type selected unavailable action ${JSON.stringify(value.action.type)}.`);
                 else errors.push.apply(errors, validateActionProperties(value.action, actionDefinition, "response.action"));
             }
@@ -161,20 +161,42 @@
         return `You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else: no markdown fence, prose, chain-of-thought, hidden reasoning, patches, or extra fields. ${stageRule} memoryUpdates must always contain exactly recentMemoriesToAdd, beliefsToUpsert, and relationshipsToUpsert, even when all are empty arrays. A recent memory record is {"summary":"...","importance":0.0}; use summary, never text, and importance must be from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. A relationship record is {"targetCharacterId":"character_id","summary":"..."}.`;
     }
 
-    function decisionMessages(context, observations) {
+    function requestPayloadFromMessages(messages) {
+        for (let index = (messages || []).length - 1; index >= 0; index--) {
+            const message = messages[index];
+            if (!message || message.role !== "user" || typeof message.content !== "string") continue;
+            try {
+                const payload = JSON.parse(message.content);
+                if (isPlainObject(payload) && isPlainObject(payload.context)) return payload;
+            } catch (error) {
+                // Repair instructions and other user prose are not request payloads.
+            }
+        }
+        return null;
+    }
+
+    function actionCatalogFromMessages(messages) {
+        const payload = requestPayloadFromMessages(messages);
+        const context = payload && payload.context;
+        const view = context && context.view;
+        if (isPlainObject(view) && isPlainObject(view.available_actions)) {
+            return clone(view.available_actions);
+        }
+        return {};
+    }
+
+    function decisionMessages(context) {
         return [{ role: "system", content: baseSystem("decision") }, { role: "user", content: JSON.stringify({
             stage: "decision",
-            context: context,
-            pendingObservations: observations,
+            context: clone(context || {}),
             requiredResponseShape: { action: null, publicNarrative: null, spokenText: null, memoryUpdates: EMPTY_UPDATES }
         }) }];
     }
 
-    function resultMessages(context, observations, action, actionResult) {
+    function resultMessages(context, action, actionResult) {
         return [{ role: "system", content: baseSystem("result") }, { role: "user", content: JSON.stringify({
             stage: "result",
-            context: context,
-            pendingObservations: observations,
+            context: clone(context || {}),
             action: action,
             groundedActionResult: actionResult,
             requiredResponseShape: { publicNarrative: null, spokenText: null, memoryUpdates: EMPTY_UPDATES }
@@ -190,7 +212,8 @@
         ]);
     }
 
-    async function requestValidated(messages, stage, availableActions, client) {
+    async function requestValidated(messages, stage, client) {
+        const actionCatalog = actionCatalogFromMessages(messages);
         const trace = {
             stage: stage,
             originalMessages: clone(messages),
@@ -223,7 +246,7 @@
             try {
                 value = extractObject(response.content);
                 attemptTrace.parsedValue = clone(value);
-                validation = stage === "decision" ? validateDecision(value, availableActions) : validateResult(value);
+                validation = stage === "decision" ? validateDecision(value, actionCatalog) : validateResult(value);
             } catch (error) {
                 validation = { ok: false, message: error.message, errors: [error.message] };
             }
@@ -261,6 +284,7 @@
         extractObject: extractObject,
         validateDecision: validateDecision,
         validateResult: validateResult,
+        actionCatalogFromMessages: actionCatalogFromMessages,
         decisionMessages: decisionMessages,
         resultMessages: resultMessages,
         buildRepairMessages: buildRepairMessages,

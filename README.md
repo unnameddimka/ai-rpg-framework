@@ -48,9 +48,14 @@ The numeric JavaScript prefixes make the dependency order explicit when Tweego r
 
 `data/world.json` (schema version 2) is the single authoritative source for the start
 location, major locations, sublocations, characters, initial minds, controller defaults,
-hidden engine facts, individual ability grants, item definitions, and persistent item instances.
-The editor exposes separate Locations, Characters, Abilities, Item types, and Items sections and
-blocks structurally invalid downloads.
+hidden engine facts, individual ability grants, item definitions, and initial item instances.
+The editor exposes separate Locations, Characters, Abilities, Item types, and Items sections
+and blocks structurally invalid downloads.
+
+The tavern item loop uses persistent instances rather than spawning filled mugs. Ten
+`emptyMug_*` instances begin in the behind-bar **Mug cabinet**. An actor must take one, then
+use `fill` at the `ale_source` behind the bar. The same item changes definition to `mugOfAle`.
+Using `consume` changes that instance back to `emptyMug`, making it refillable again.
 
 `src/generated/world-data.js`, `src/generated/world-passages.twee`,
 `src/generated/world-storydata.twee`, and `src/00-model-list.js` are derived build files and
@@ -71,13 +76,6 @@ Administrator steps:
 The build invokes both cross-platform Node validation/generation steps before tests and story
 compilation. The resulting `dist/game.html` embeds the world and model catalog and remains
 self-contained; it does not fetch `world.json` or `model_list.json` at runtime.
-
-Items use a definition/instance split. An instance keeps its stable ID and container while its
-`definitionId` may change through an engine-confirmed transition. In the sample world, ten authored
-empty mugs begin in the cabinet behind the bar. `fill` is available only for an owned empty mug while
-the actor stands at a position with `ale_source`; it transforms that same instance into `mugOfAle`.
-`consume` transforms the same mug back into `emptyMug`. No full mug is created without consuming an
-existing empty mug. Equippable slot metadata is editable, but equip/unequip mechanics are deferred.
 
 ## Build on Windows
 
@@ -116,10 +114,12 @@ runtime already embedded in the tracked `dist/game.html`. A clean build with no 
 
 The built game calls OpenRouter directly from the browser. The provider remains fixed to
 OpenRouter, while the model is chosen from the validated catalog in `data/model_list.json`.
-The same file names the default model. The initial catalog contains:
+The same file names the default model. The catalog contains:
 
 - `thedrummer/cydonia-24b-v4.1` — **Cydonia 24B V4.1** and the current default;
-- `sao10k/l3.3-euryale-70b` — **Llama 3.3 Euryale 70B**.
+- `sao10k/l3.3-euryale-70b` — **Llama 3.3 Euryale 70B**;
+- `sao10k/l3.1-euryale-70b:nitro` — **Llama 3.1 Euryale 70B**, routed for speed;
+- `mistralai/mistral-small-3.2-24b-instruct` — **Mistral Small 3.2 24B**.
 
 1. Open the AI Settings panel in the sidebar and choose a model.
 2. Enter an OpenRouter API key. The password field is cleared after saving.
@@ -144,6 +144,13 @@ scheduler groups them into one coherent observation before prompting an AI chara
 reaction uses one model request only. The engine executes the selected formal action locally,
 and its grounded success or failure is queued as an ordinary later observation for that
 actor. There is no immediate `game-result` request.
+
+The restricted character `view` is the common canonical input for both the browser interface
+and the AI controller. The model receives the same view unchanged, including the one
+`view.available_actions` catalog used to construct human controls. `ContextBuilder` adds only
+private character instructions, projected mind records, and prepared observations. It does
+not repeat view fields under alternate names, and the protocol validator reads action rules
+from the view already embedded in the request.
 
 The main location view shows a **Latest turn** narrative assembled deterministically from the
 human intent, AI narrative fragments, and grounded action events in causal order. It is not
@@ -216,9 +223,10 @@ node tests/run-ai-tests.js
 node tests/run-generator-tests.js
 ```
 
-The tests verify the HumanController invariant, action grants, generic ability discovery,
+The tests verify the HumanController invariant, action grants, persistent item-instance
+transformations, mug-cabinet accessibility, fill/consume controls, generic ability discovery,
 targetless aura scans, escaped and actor-isolated private result display, normalized feedback,
-observation privacy, restricted views and context, mind save round trips, movement, inventory, item-state transitions,
+observation privacy, restricted views and context, mind save round trips, movement, inventory
 and money transfer, editor validation, world/model-list generator rejection, model default/selection persistence,
 queue ordering and repair, mocked OpenRouter responses, key expiry/leak prevention, detailed protocol diagnostics,
 scheduler request projection, executor serialization and timing, prompt-lab dry-run isolation,

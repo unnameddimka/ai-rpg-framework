@@ -89,15 +89,14 @@
         return { ok: false, error: normalized };
     }
 
-    function recordProtocolResult(actorId, stage, messages, availableActions, result) {
+    function recordProtocolResult(actorId, stage, messages, result) {
         const trace = result && result.trace ? clone(result.trace) : null;
         const attempts = trace && Array.isArray(trace.attempts) ? trace.attempts : [];
         const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
         setup.AITransientDebug.lastRequest = {
             actorId: actorId,
             stage: stage,
-            messages: clone(messages),
-            availableActions: clone(availableActions || {})
+            messages: clone(messages)
         };
         setup.AITransientDebug.lastTrace = trace;
         setup.AITransientDebug.lastMessages = clone(messages);
@@ -172,10 +171,9 @@
                 purpose: "game-decision",
                 messages: messages,
                 stage: "decision",
-                availableActions: context.availableActions,
                 client: client
             });
-            recordProtocolResult(actorId, "decision", messages, context.availableActions, decisionResult);
+            recordProtocolResult(actorId, "decision", messages, decisionResult);
             if (!decisionResult.ok) throw decisionResult.error;
 
             const committed = commitDecision(actorId, decisionResult.value, observationIds);

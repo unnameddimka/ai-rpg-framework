@@ -34,809 +34,92 @@ label{display:grid;gap:.25rem;font-weight:650}label small,.help{font-weight:400;
 </div>
 
 <script id="world-editor-core">
-(function (root) {
-"use strict";
-const ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
-const SCHEMA_VERSION = 2;
-const KNOWN_ACTIONS = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "consume", "fill", "read_aura"];
-function clone(value) { return JSON.parse(JSON.stringify(value)); }
-function parseWorldJson(text) {
-    try { return JSON.parse(text); }
-    catch (error) { throw new Error("The selected file is not valid JSON: " + error.message); }
-}
-function createEmptyWorld() {
-    return {
-        schemaVersion: SCHEMA_VERSION,
-        startLocationId: "",
-        protectedLocationIds: [], protectedSublocationIds: [], protectedCharacterIds: [], protectedAbilityIds: [],
-        protectedItemDefinitionIds: [], protectedItemIds: [],
-        locations: {}, characters: {}, abilities: {}, itemDefinitions: {}, items: {}
-    };
-}
-function error(message, locationId, sublocationId) {
-    return { message: message, locationId: locationId || "", sublocationId: sublocationId || "" };
-}
-function objectCatalog(value) { return value && typeof value === "object" && !Array.isArray(value); }
-function nonBlank(value) { return typeof value === "string" && value.trim().length > 0; }
-function validIdList(value) { return Array.isArray(value) && value.every(function (id) { return typeof id === "string"; }); }
-function validateMind(mind, id, doc, errors) {
-    if (!mind) { errors.push(error("Character `" + id + "` needs initial mind data.")); return; }
-    for (const name of ["knownFacts", "beliefs", "relationships", "recentMemories", "longTermMemories"]) {
-        if (!Array.isArray(mind[name])) { errors.push(error("Character `" + id + "` mind " + name + " must be a list.")); continue; }
-        const seen = new Set();
-        for (const record of mind[name]) {
-            if (name !== "relationships") {
-                if (!record.id || seen.has(record.id)) errors.push(error("Character `" + id + "` has a missing or duplicate ID in " + name + "."));
-                seen.add(record.id);
-            }
-            if (name === "beliefs" && !["low", "medium", "high"].includes(record.confidence)) errors.push(error("Character `" + id + "` has an invalid belief confidence."));
-            if ((name === "recentMemories" || name === "longTermMemories") &&
-                    (!(Number.isFinite(record.importance) && record.importance >= 0 && record.importance <= 1) || typeof record.protected !== "boolean")) {
-                errors.push(error("Character `" + id + "` has an invalid memory record."));
-            }
-            if (name === "relationships" && (!doc.characters[record.targetCharacterId] || record.targetCharacterId === id)) {
-                errors.push(error("Character `" + id + "` has an invalid relationship target."));
-            }
-        }
-    }
-    if (Object.prototype.hasOwnProperty.call(mind, "pendingObservations")) errors.push(error("pendingObservations is runtime-only and cannot be authored."));
-}
-function validateWorldDocument(doc) {
-    const errors = [];
-    if (!doc || typeof doc !== "object" || Array.isArray(doc)) return [error("The document must be a JSON object.")];
-    if (doc.schemaVersion !== SCHEMA_VERSION) errors.push(error("Unsupported schema version. Expected " + SCHEMA_VERSION + "."));
-    for (const name of ["locations", "characters", "abilities", "itemDefinitions", "items"]) {
-        if (!objectCatalog(doc[name])) errors.push(error("The document must contain a " + name + " object."));
-    }
-    if (!objectCatalog(doc.locations)) return errors;
-    for (const name of ["protectedLocationIds", "protectedSublocationIds", "protectedCharacterIds", "protectedAbilityIds", "protectedItemDefinitionIds", "protectedItemIds"]) {
-        if (doc[name] !== undefined && !validIdList(doc[name])) errors.push(error(name + " must be a list of IDs."));
-    }
-
-    const ids = new Map();
-    function register(id, kind, owner, locationId, sublocationId) {
-        if (typeof id !== "string" || !ID_PATTERN.test(id)) {
-            errors.push(error(kind + " ID `" + String(id) + "` must start with a letter and contain only letters, numbers, _ or -.", locationId || owner, sublocationId));
-            return;
-        }
-        if (ids.has(id)) errors.push(error("Technical ID `" + id + "` is used more than once.", locationId || owner, sublocationId));
-        else ids.set(id, kind);
-    }
-
-    const passages = new Map();
-    const inventories = new Map();
-    function inventory(id, owner, locationId, sublocationId) {
-        if (!nonBlank(id) || !ID_PATTERN.test(id)) { errors.push(error(owner + " needs a valid inventory ID.", locationId, sublocationId)); return; }
-        if (inventories.has(id)) errors.push(error("Inventory ID `" + id + "` is used by both " + inventories.get(id) + " and " + owner + ".", locationId, sublocationId));
-        else inventories.set(id, owner);
-    }
-
-    for (const [locationKey, location] of Object.entries(doc.locations)) {
-        if (!objectCatalog(location)) { errors.push(error("Location `" + locationKey + "` must be an object.", locationKey)); continue; }
-        register(location.id, "Location", locationKey, locationKey);
-        if (location.id !== locationKey) errors.push(error("Location key `" + locationKey + "` must match its ID `" + String(location.id) + "`.", locationKey));
-        if (!nonBlank(location.name)) errors.push(error("Location `" + locationKey + "` needs a display name.", locationKey));
-        if (!Array.isArray(location.description) || location.description.some(function (x) { return typeof x !== "string"; })) errors.push(error("Location `" + locationKey + "` description must be a list of paragraphs.", locationKey));
-        if (!nonBlank(location.passage) || /[\r\n\[\]]/.test(location.passage)) errors.push(error("Location `" + locationKey + "` needs a valid one-line Twine passage name without brackets.", locationKey));
-        else if (passages.has(location.passage)) errors.push(error("Twine passage name `" + location.passage + "` is used more than once.", locationKey));
-        else passages.set(location.passage, locationKey);
-        inventory(location.inventoryId, "location " + locationKey, locationKey);
-        if (!objectCatalog(location.exits)) errors.push(error("Location `" + locationKey + "` exits must be an object.", locationKey));
-        else {
-            const targets = new Set();
-            for (const target of Object.values(location.exits)) {
-                if (typeof target !== "string" || !doc.locations[target]) errors.push(error("Location `" + locationKey + "` has an exit to missing location `" + String(target) + "`.", locationKey));
-                if (target === locationKey) errors.push(error("Location `" + locationKey + "` cannot exit to itself.", locationKey));
-                if (targets.has(target)) errors.push(error("Location `" + locationKey + "` contains a duplicate exit to `" + target + "`.", locationKey));
-                targets.add(target);
-            }
-        }
-        const subs = location.sublocations;
-        if (!objectCatalog(subs)) { errors.push(error("Location `" + locationKey + "` must contain a sublocations object.", locationKey)); continue; }
-        if (!subs[location.defaultSublocationId]) errors.push(error("Location `" + locationKey + "` default position `" + String(location.defaultSublocationId) + "` does not exist.", locationKey));
-        for (const [subKey, sub] of Object.entries(subs)) {
-            if (!objectCatalog(sub)) { errors.push(error("Position `" + subKey + "` must be an object.", locationKey, subKey)); continue; }
-            register(sub.id, "Sublocation", subKey, locationKey, subKey);
-            if (sub.id !== subKey) errors.push(error("Position key `" + subKey + "` must match its ID `" + String(sub.id) + "`.", locationKey, subKey));
-            if (sub.locationId !== locationKey) errors.push(error("Position `" + subKey + "` must belong to location `" + locationKey + "`.", locationKey, subKey));
-            if (!nonBlank(sub.name)) errors.push(error("Position `" + subKey + "` needs a display name.", locationKey, subKey));
-            if (!Number.isInteger(sub.capacity) || sub.capacity < 1) errors.push(error("Position `" + subKey + "` capacity must be a positive whole number.", locationKey, subKey));
-            for (const field of ["enterLabel", "selfText", "occupantTemplate"]) if (!nonBlank(sub[field])) errors.push(error("Position `" + subKey + "` needs " + field + " text.", locationKey, subKey));
-            if (typeof sub.occupantTemplate === "string" && !sub.occupantTemplate.includes("{name}")) errors.push(error("Position `" + subKey + "` occupant text must include {name}.", locationKey, subKey));
-            if (!Array.isArray(sub.reachableSublocationIds)) errors.push(error("Position `" + subKey + "` reachable positions must be a list.", locationKey, subKey));
-            else for (const target of sub.reachableSublocationIds) if (!subs[target]) errors.push(error("Position `" + subKey + "` references missing position `" + String(target) + "`.", locationKey, subKey));
-            if (sub.inventoryId !== undefined) inventory(sub.inventoryId, "position " + subKey, locationKey, subKey);
-            if (sub.capabilities !== undefined && (!Array.isArray(sub.capabilities) || sub.capabilities.some(function (x) { return typeof x !== "string" || !KNOWN_ACTIONS.includes(x); }))) errors.push(error("Position `" + subKey + "` capabilities must contain known formal action IDs.", locationKey, subKey));
-            if (sub.environmentCapabilities !== undefined && (!Array.isArray(sub.environmentCapabilities) || sub.environmentCapabilities.some(function (x) { return !nonBlank(x); }))) errors.push(error("Position `" + subKey + "` environment capabilities must be a list of IDs.", locationKey, subKey));
-        }
-    }
-
-    for (const id of doc.protectedLocationIds || []) if (!doc.locations[id]) errors.push(error("Game-required location `" + id + "` is missing.", id));
-    for (const id of doc.protectedSublocationIds || []) {
-        let found = false; for (const location of Object.values(doc.locations)) if (location.sublocations && location.sublocations[id]) found = true;
-        if (!found) errors.push(error("Game-required position `" + id + "` is missing."));
-    }
-    if (!doc.startLocationId || !doc.locations[doc.startLocationId]) errors.push(error("startLocationId must reference an existing location."));
-
-    if (objectCatalog(doc.abilities)) for (const [id, ability] of Object.entries(doc.abilities)) {
-        register(ability.id, "Ability", id);
-        if (ability.id !== id) errors.push(error("Ability key `" + id + "` must match its ID."));
-        if (!nonBlank(ability.name) || !nonBlank(ability.playerDescription) || !nonBlank(ability.aiDescription)) errors.push(error("Ability `" + id + "` needs a name and both descriptions."));
-        if (!KNOWN_ACTIONS.includes(ability.actionType)) errors.push(error("Ability `" + id + "` uses unknown action type `" + ability.actionType + "`."));
-    }
-
-    let humans = 0;
-    if (objectCatalog(doc.characters)) for (const [id, ch] of Object.entries(doc.characters)) {
-        register(ch.id, "Character", id);
-        if (ch.id !== id) errors.push(error("Character key `" + id + "` must match its ID."));
-        if (!nonBlank(ch.name) || !nonBlank(ch.playerDescription) || !nonBlank(ch.aiDescription)) errors.push(error("Character `" + id + "` needs a name and both descriptions."));
-        if (!doc.locations[ch.locationId]) errors.push(error("Character `" + id + "` references missing location `" + ch.locationId + "`."));
-        else if (!doc.locations[ch.locationId].sublocations[ch.sublocationId]) errors.push(error("Character `" + id + "` references missing position `" + ch.sublocationId + "`."));
-        if (!Number.isInteger(ch.wallet) || ch.wallet < 0) errors.push(error("Character `" + id + "` wallet must be a non-negative whole number."));
-        if (!["human", "dummy", "ai"].includes(ch.initialControllerId)) errors.push(error("Character `" + id + "` has an unknown initial controller."));
-        if (ch.initialControllerId === "human") humans += 1;
-        if (!["dummy", "ai"].includes(ch.defaultControllerId)) errors.push(error("Character `" + id + "` fallback controller must be dummy or ai."));
-        inventory(ch.inventoryId, "character " + id);
-        const assigned = new Set();
-        for (const aid of ch.abilityIds || []) {
-            if (!doc.abilities[aid]) errors.push(error("Character `" + id + "` references missing ability `" + aid + "`."));
-            if (assigned.has(aid)) errors.push(error("Character `" + id + "` assigns ability `" + aid + "` more than once."));
-            assigned.add(aid);
-        }
-        validateMind(ch.initialMind, id, doc, errors);
-    }
-    if (humans !== 1) errors.push(error("Exactly one initial human-controlled character is required; found " + humans + "."));
-
-    if (objectCatalog(doc.itemDefinitions)) for (const [id, definition] of Object.entries(doc.itemDefinitions)) {
-        register(definition.id, "Item definition", id);
-        if (definition.id !== id) errors.push(error("Item definition key `" + id + "` must match its ID."));
-        if (!nonBlank(definition.name)) errors.push(error("Item definition `" + id + "` needs a display name."));
-        if (typeof definition.description !== "string") errors.push(error("Item definition `" + id + "` description must be text."));
-        if (!nonBlank(definition.familyId)) errors.push(error("Item definition `" + id + "` needs a family ID."));
-        if (!Array.isArray(definition.tags) || definition.tags.some(function (tag) { return !nonBlank(tag); })) errors.push(error("Item definition `" + id + "` tags must be a list of non-empty strings."));
-        if (definition.consumable !== null && definition.consumable !== undefined) {
-            const c = definition.consumable;
-            if (!objectCatalog(c)) errors.push(error("Item definition `" + id + "` consumable settings must be an object or null."));
-            else {
-                if (!nonBlank(c.actionLabel)) errors.push(error("Item definition `" + id + "` consumable action needs a label."));
-                if (!["destroy", "transform"].includes(c.resultType)) errors.push(error("Item definition `" + id + "` has an invalid consumable result type."));
-                if (c.resultType === "transform" && !doc.itemDefinitions[c.resultDefinitionId]) errors.push(error("Item definition `" + id + "` consumable result references missing item definition `" + c.resultDefinitionId + "`."));
-                if (typeof c.publicText !== "string" || typeof c.feedbackText !== "string") errors.push(error("Item definition `" + id + "` consumable texts must be strings."));
-            }
-        }
-        if (definition.fillable !== null && definition.fillable !== undefined) {
-            const f = definition.fillable;
-            if (!objectCatalog(f)) errors.push(error("Item definition `" + id + "` fillable settings must be an object or null."));
-            else {
-                if (!nonBlank(f.actionLabel) || !nonBlank(f.requiredEnvironmentCapability)) errors.push(error("Item definition `" + id + "` fillable settings need a label and environment capability."));
-                if (!doc.itemDefinitions[f.resultDefinitionId]) errors.push(error("Item definition `" + id + "` fill result references missing item definition `" + f.resultDefinitionId + "`."));
-                if (typeof f.publicText !== "string" || typeof f.feedbackText !== "string") errors.push(error("Item definition `" + id + "` fillable texts must be strings."));
-            }
-        }
-        if (definition.equippable !== null && definition.equippable !== undefined) {
-            const e = definition.equippable;
-            if (!objectCatalog(e) || !Array.isArray(e.slotIds) || e.slotIds.some(function (slot) { return !nonBlank(slot); })) errors.push(error("Item definition `" + id + "` equippable slot IDs must be a list of non-empty strings."));
-        }
-    }
-
-    if (objectCatalog(doc.items)) for (const [id, item] of Object.entries(doc.items)) {
-        register(item.id, "Item", id);
-        if (item.id !== id) errors.push(error("Item key `" + id + "` must match its ID."));
-        if (!doc.itemDefinitions[item.definitionId]) errors.push(error("Item `" + id + "` references missing item definition `" + item.definitionId + "`."));
-        if (!inventories.has(item.containerId)) errors.push(error("Item `" + id + "` references missing inventory `" + item.containerId + "`."));
-    }
-    for (const id of doc.protectedItemDefinitionIds || []) if (!doc.itemDefinitions[id]) errors.push(error("Game-required item definition `" + id + "` is missing."));
-    for (const id of doc.protectedItemIds || []) if (!doc.items[id]) errors.push(error("Game-required item `" + id + "` is missing."));
-    return errors;
-}
-function locationDeletionReferences(doc, id) {
-    const refs = [];
-    if ((doc.protectedLocationIds || []).includes(id)) refs.push("Required by game initialization");
-    if (doc.startLocationId === id) refs.push("Configured start location");
-    const location = doc.locations && doc.locations[id];
-    for (const [sourceId, source] of Object.entries(doc.locations || {})) for (const target of Object.values(source.exits || {})) if (target === id) refs.push("Exit from " + sourceId);
-    for (const [cid, ch] of Object.entries(doc.characters || {})) if (ch.locationId === id) refs.push("Starting location of " + cid);
-    if (location) {
-        const inventoryIds = new Set([location.inventoryId].concat(Object.values(location.sublocations || {}).map(function (sub) { return sub.inventoryId; }).filter(Boolean)));
-        for (const [itemId, item] of Object.entries(doc.items || {})) if (inventoryIds.has(item.containerId)) refs.push("Starting container of " + itemId);
-    }
-    return refs;
-}
-function sublocationDeletionReferences(location, id, doc) {
-    const refs = [];
-    if (doc && (doc.protectedSublocationIds || []).includes(id)) refs.push("Required by game initialization");
-    if (location.defaultSublocationId === id) refs.push("Default position");
-    for (const [sourceId, sub] of Object.entries(location.sublocations || {})) if ((sub.reachableSublocationIds || []).includes(id) && sourceId !== id) refs.push("Reachability from " + sourceId);
-    for (const [cid, ch] of Object.entries(doc && doc.characters || {})) if (ch.sublocationId === id) refs.push("Starting position of " + cid);
-    const inventoryId = location.sublocations && location.sublocations[id] && location.sublocations[id].inventoryId;
-    if (inventoryId) for (const [itemId, item] of Object.entries(doc && doc.items || {})) if (item.containerId === inventoryId) refs.push("Starting container of " + itemId);
-    return refs;
-}
-function characterDeletionReferences(doc, id) {
-    const refs = [];
-    if ((doc.protectedCharacterIds || []).includes(id)) refs.push("Required by game initialization");
-    for (const [cid, ch] of Object.entries(doc.characters || {})) for (const rel of ch.initialMind && ch.initialMind.relationships || []) if (rel.targetCharacterId === id) refs.push("Relationship from " + cid);
-    const ch = doc.characters && doc.characters[id];
-    if (ch) for (const [itemId, item] of Object.entries(doc.items || {})) if (item.containerId === ch.inventoryId) refs.push("Starting container of " + itemId);
-    return refs;
-}
-function abilityDeletionReferences(doc, id) {
-    const refs = [];
-    if ((doc.protectedAbilityIds || []).includes(id)) refs.push("Required by game initialization");
-    for (const [cid, ch] of Object.entries(doc.characters || {})) if ((ch.abilityIds || []).includes(id)) refs.push("Assigned to " + cid);
-    return refs;
-}
-function itemDefinitionDeletionReferences(doc, id) {
-    const refs = [];
-    if ((doc.protectedItemDefinitionIds || []).includes(id)) refs.push("Required by game initialization");
-    for (const [itemId, item] of Object.entries(doc.items || {})) if (item.definitionId === id) refs.push("Used by item " + itemId);
-    for (const [sourceId, definition] of Object.entries(doc.itemDefinitions || {})) {
-        if (definition.consumable && definition.consumable.resultDefinitionId === id) refs.push("Consume result of " + sourceId);
-        if (definition.fillable && definition.fillable.resultDefinitionId === id) refs.push("Fill result of " + sourceId);
-    }
-    return refs;
-}
-function itemDeletionReferences(doc, id) {
-    const refs = [];
-    if ((doc.protectedItemIds || []).includes(id)) refs.push("Required by game initialization");
-    return refs;
-}
-function serializeWorldDocument(doc) {
-    const errors = validateWorldDocument(doc);
-    if (errors.length) { const failure = new Error("Export blocked because the world has validation errors."); failure.validationErrors = errors; throw failure; }
-    return JSON.stringify(doc, null, 2) + "\n";
-}
-root.WorldEditorCore = {
-    SCHEMA_VERSION, ID_PATTERN, KNOWN_ACTIONS, clone, parseWorldJson, createEmptyWorld, validateWorldDocument,
-    locationDeletionReferences, sublocationDeletionReferences, characterDeletionReferences, abilityDeletionReferences,
-    itemDefinitionDeletionReferences, itemDeletionReferences, serializeWorldDocument
-};
-}(typeof window !== "undefined" ? window : globalThis));
+(function(root){"use strict";
+const ID_PATTERN=/^[A-Za-z][A-Za-z0-9_-]*$/;const SCHEMA_VERSION=2;const KNOWN_ACTIONS=["move","move_within_location","take_item","drop_item","give_item","give_money","place_item","fill","consume","read_aura"];
+function clone(value){return JSON.parse(JSON.stringify(value));}
+function parseWorldJson(text){let value;try{value=JSON.parse(text);}catch(error){throw new Error("The selected file is not valid JSON: "+error.message);}return value;}
+function createEmptyWorld(){return{schemaVersion:SCHEMA_VERSION,startLocationId:"",protectedLocationIds:[],protectedSublocationIds:[],protectedCharacterIds:[],protectedAbilityIds:[],locations:{},characters:{},abilities:{},itemDefinitions:{},items:{}};}
+function error(message,locationId,sublocationId){return{message:message,locationId:locationId||"",sublocationId:sublocationId||""};}
+function validateWorldDocument(doc){const errors=[];if(!doc||typeof doc!=="object"||Array.isArray(doc))return[error("The document must be a JSON object.")];
+if(doc.schemaVersion!==SCHEMA_VERSION)errors.push(error("Unsupported schema version. Expected "+SCHEMA_VERSION+"."));
+if(!doc.locations||typeof doc.locations!=="object"||Array.isArray(doc.locations)){errors.push(error("The document must contain a locations object."));return errors;}if(!doc.itemDefinitions||typeof doc.itemDefinitions!=="object"||Array.isArray(doc.itemDefinitions))errors.push(error("The document must contain an itemDefinitions object."));if(!doc.items||typeof doc.items!=="object"||Array.isArray(doc.items))errors.push(error("The document must contain an items object."));if(doc.protectedLocationIds!==undefined&&(!Array.isArray(doc.protectedLocationIds)||doc.protectedLocationIds.some(x=>typeof x!=="string")))errors.push(error("protectedLocationIds must be a list of IDs."));if(doc.protectedSublocationIds!==undefined&&(!Array.isArray(doc.protectedSublocationIds)||doc.protectedSublocationIds.some(x=>typeof x!=="string")))errors.push(error("protectedSublocationIds must be a list of IDs."));
+const ids=new Map();function register(id,kind,owner){if(typeof id!=="string"||!ID_PATTERN.test(id)){errors.push(error(kind+" ID `"+String(id)+"` must start with a letter and contain only letters, numbers, _ or -.",owner));return;}if(ids.has(id))errors.push(error("Technical ID `"+id+"` is used more than once.",owner));else ids.set(id,kind);}
+for(const [locationKey,location] of Object.entries(doc.locations)){if(!location||typeof location!=="object"||Array.isArray(location)){errors.push(error("Location `"+locationKey+"` must be an object.",locationKey));continue;}register(location.id,"Location",locationKey);if(location.id!==locationKey)errors.push(error("Location key `"+locationKey+"` must match its ID `"+String(location.id)+"`.",locationKey));
+if(typeof location.name!=="string"||!location.name.trim())errors.push(error("Location `"+locationKey+"` needs a display name.",locationKey));if(!Array.isArray(location.description)||location.description.some(x=>typeof x!=="string"))errors.push(error("Location `"+locationKey+"` description must be a list of paragraphs.",locationKey));
+if(typeof location.passage!=="string"||!location.passage.trim()||/[\r\n\[\]]/.test(location.passage))errors.push(error("Location `"+locationKey+"` needs a valid one-line Twine passage name without brackets.",locationKey));if(typeof location.inventoryId!=="string"||!ID_PATTERN.test(location.inventoryId))errors.push(error("Location `"+locationKey+"` needs a valid inventory ID.",locationKey));
+if(!location.exits||typeof location.exits!=="object"||Array.isArray(location.exits))errors.push(error("Location `"+locationKey+"` exits must be an object.",locationKey));else{const targets=new Set();for(const target of Object.values(location.exits)){if(typeof target!=="string"||!doc.locations[target])errors.push(error("Location `"+locationKey+"` has an exit to missing location `"+String(target)+"`.",locationKey));if(target===locationKey)errors.push(error("Location `"+locationKey+"` cannot exit to itself.",locationKey));if(targets.has(target))errors.push(error("Location `"+locationKey+"` contains a duplicate exit to `"+target+"`.",locationKey));targets.add(target);}}
+const subs=location.sublocations;if(!subs||typeof subs!=="object"||Array.isArray(subs)){errors.push(error("Location `"+locationKey+"` must contain a sublocations object.",locationKey));continue;}if(!subs[location.defaultSublocationId])errors.push(error("Location `"+locationKey+"` default position `"+String(location.defaultSublocationId)+"` does not exist.",locationKey));
+for(const [subKey,sub] of Object.entries(subs)){if(!sub||typeof sub!=="object"||Array.isArray(sub)){errors.push(error("Position `"+subKey+"` must be an object.",locationKey,subKey));continue;}register(sub.id,"Sublocation",locationKey);if(sub.id!==subKey)errors.push(error("Position key `"+subKey+"` must match its ID `"+String(sub.id)+"`.",locationKey,subKey));if(sub.locationId!==locationKey)errors.push(error("Position `"+subKey+"` must belong to location `"+locationKey+"`.",locationKey,subKey));if(typeof sub.name!=="string"||!sub.name.trim())errors.push(error("Position `"+subKey+"` needs a display name.",locationKey,subKey));if(!Number.isInteger(sub.capacity)||sub.capacity<1)errors.push(error("Position `"+subKey+"` capacity must be a positive whole number.",locationKey,subKey));
+for(const field of ["enterLabel","selfText","occupantTemplate"]){if(typeof sub[field]!=="string"||!sub[field].trim())errors.push(error("Position `"+subKey+"` needs "+field+" text.",locationKey,subKey));}if(typeof sub.occupantTemplate==="string"&&!sub.occupantTemplate.includes("{name}"))errors.push(error("Position `"+subKey+"` occupant text must include {name}.",locationKey,subKey));
+if(!Array.isArray(sub.reachableSublocationIds))errors.push(error("Position `"+subKey+"` reachable positions must be a list.",locationKey,subKey));else for(const target of sub.reachableSublocationIds){if(!subs[target])errors.push(error("Position `"+subKey+"` references missing position `"+String(target)+"`.",locationKey,subKey));}
+if(sub.inventoryId!==undefined&&(typeof sub.inventoryId!=="string"||!ID_PATTERN.test(sub.inventoryId)))errors.push(error("Position `"+subKey+"` has an invalid inventory ID.",locationKey,subKey));if(sub.capabilities!==undefined&&(!Array.isArray(sub.capabilities)||sub.capabilities.some(x=>typeof x!=="string")))errors.push(error("Position `"+subKey+"` capabilities must be a list of IDs.",locationKey,subKey));}}
+for(const id of doc.protectedLocationIds||[])if(!doc.locations[id])errors.push(error("Game-required location `"+id+"` is missing.",id));for(const id of doc.protectedSublocationIds||[]){let found=false;for(const location of Object.values(doc.locations))if(location.sublocations&&location.sublocations[id])found=true;if(!found)errors.push(error("Game-required position `"+id+"` is missing."));}
+if(!doc.startLocationId||!doc.locations[doc.startLocationId])errors.push(error("startLocationId must reference an existing location."));
+const passages=new Map(),inventories=new Map();function inventory(id,owner){if(!id)return;if(inventories.has(id))errors.push(error("Inventory ID `"+id+"` is used by both "+inventories.get(id)+" and "+owner+"."));else inventories.set(id,owner);}
+for(const [id,location] of Object.entries(doc.locations)){if(passages.has(location.passage))errors.push(error("Twine passage name `"+location.passage+"` is used more than once.",id));else passages.set(location.passage,id);inventory(location.inventoryId,"location "+id);for(const [sid,sub] of Object.entries(location.sublocations||{}))inventory(sub.inventoryId,"position "+sid);}
+if(!doc.characters||typeof doc.characters!=="object"||Array.isArray(doc.characters))errors.push(error("The document must contain a characters object."));
+if(!doc.abilities||typeof doc.abilities!=="object"||Array.isArray(doc.abilities))errors.push(error("The document must contain an abilities object."));
+for(const [id,ability] of Object.entries(doc.abilities||{})){if(ability.id!==id)errors.push(error("Ability key `"+id+"` must match its ID."));if(!ability.name||!ability.playerDescription||!ability.aiDescription)errors.push(error("Ability `"+id+"` needs a name and both descriptions."));if(!KNOWN_ACTIONS.includes(ability.actionType))errors.push(error("Ability `"+id+"` uses unknown action type `"+ability.actionType+"`."));}
+let humans=0;for(const [id,ch] of Object.entries(doc.characters||{})){if(ch.id!==id)errors.push(error("Character key `"+id+"` must match its ID."));if(!ch.name||!ch.playerDescription||!ch.aiDescription)errors.push(error("Character `"+id+"` needs a name and both descriptions."));if(!doc.locations[ch.locationId])errors.push(error("Character `"+id+"` references missing location `"+ch.locationId+"`."));else if(!doc.locations[ch.locationId].sublocations[ch.sublocationId])errors.push(error("Character `"+id+"` references missing position `"+ch.sublocationId+"`."));if(!Number.isInteger(ch.wallet)||ch.wallet<0)errors.push(error("Character `"+id+"` wallet must be a non-negative whole number."));if(!["human","dummy","ai"].includes(ch.initialControllerId))errors.push(error("Character `"+id+"` has an unknown initial controller."));if(ch.initialControllerId==="human")humans++;if(!["dummy","ai"].includes(ch.defaultControllerId))errors.push(error("Character `"+id+"` fallback controller must be dummy or ai."));inventory(ch.inventoryId,"character "+id);const assigned=new Set();for(const aid of ch.abilityIds||[]){if(!doc.abilities[aid])errors.push(error("Character `"+id+"` references missing ability `"+aid+"`."));if(assigned.has(aid))errors.push(error("Character `"+id+"` assigns ability `"+aid+"` more than once."));assigned.add(aid);}validateMind(ch.initialMind,id,doc,errors);}
+for(const [id,definition] of Object.entries(doc.itemDefinitions||{})){register(definition.id,"Item definition",id);if(definition.id!==id)errors.push(error("Item definition key `"+id+"` must match its ID."));if(!definition.name||!definition.familyId)errors.push(error("Item definition `"+id+"` needs a name and family ID."));if(!Array.isArray(definition.tags))errors.push(error("Item definition `"+id+"` tags must be a list."));for(const flag of ["consumable","equippable","fillable"])if(typeof definition[flag]!=="boolean")errors.push(error("Item definition `"+id+"` "+flag+" must be checked or unchecked."));if(definition.fillAction){if(!definition.fillAction.actionLabel||!definition.fillAction.requiredEnvironmentCapability||!doc.itemDefinitions[definition.fillAction.resultDefinitionId])errors.push(error("Item definition `"+id+"` has an invalid fill action."));}if(definition.consumeAction){if(!definition.consumeAction.actionLabel||definition.consumeAction.resultType!=="transform"||!doc.itemDefinitions[definition.consumeAction.resultDefinitionId])errors.push(error("Item definition `"+id+"` has an invalid consume action."));}}
+for(const [id,item] of Object.entries(doc.items||{})){register(item.id,"Item",id);if(item.id!==id)errors.push(error("Item key `"+id+"` must match its ID."));if(!doc.itemDefinitions[item.definitionId])errors.push(error("Item `"+id+"` references missing definition `"+item.definitionId+"`."));if(!inventories.has(item.inventoryId))errors.push(error("Item `"+id+"` references missing inventory `"+item.inventoryId+"`."));}
+if(humans!==1)errors.push(error("Exactly one initial human-controlled character is required; found "+humans+"."));return errors;}
+function validateMind(mind,id,doc,errors){if(!mind){errors.push(error("Character `"+id+"` needs initial mind data."));return;}for(const name of ["knownFacts","beliefs","relationships","recentMemories","longTermMemories"]){if(!Array.isArray(mind[name])){errors.push(error("Character `"+id+"` mind "+name+" must be a list."));continue;}const seen=new Set();for(const record of mind[name]){if(name!=="relationships"){if(!record.id||seen.has(record.id))errors.push(error("Character `"+id+"` has a missing or duplicate ID in "+name+"."));seen.add(record.id);}if(name==="beliefs"&&!['low','medium','high'].includes(record.confidence))errors.push(error("Character `"+id+"` has an invalid belief confidence."));if((name==="recentMemories"||name==="longTermMemories")&&(!(Number.isFinite(record.importance)&&record.importance>=0&&record.importance<=1)||typeof record.protected!=="boolean"))errors.push(error("Character `"+id+"` has an invalid memory record."));if(name==="relationships"&&(!doc.characters[record.targetCharacterId]||record.targetCharacterId===id))errors.push(error("Character `"+id+"` has an invalid relationship target."));}}if(Object.prototype.hasOwnProperty.call(mind,"pendingObservations"))errors.push(error("pendingObservations is runtime-only and cannot be authored."));}
+function locationDeletionReferences(doc,id){const refs=[];if((doc.protectedLocationIds||[]).includes(id))refs.push("Required by game initialization");if(doc.startLocationId===id)refs.push("Configured start location");for(const [sourceId,location] of Object.entries(doc.locations||{})){for(const target of Object.values(location.exits||{}))if(target===id)refs.push("Exit from "+sourceId);}for(const [cid,ch] of Object.entries(doc.characters||{}))if(ch.locationId===id)refs.push("Starting location of "+cid);return refs;}
+function sublocationDeletionReferences(location,id,doc){const refs=[];if(doc&&(doc.protectedSublocationIds||[]).includes(id))refs.push("Required by game initialization");if(location.defaultSublocationId===id)refs.push("Default position");for(const [sourceId,sub] of Object.entries(location.sublocations||{}))if((sub.reachableSublocationIds||[]).includes(id)&&sourceId!==id)refs.push("Reachability from "+sourceId);for(const [cid,ch] of Object.entries(doc?.characters||{}))if(ch.sublocationId===id)refs.push("Starting position of "+cid);return refs;}
+function characterDeletionReferences(doc,id){const refs=[];if((doc.protectedCharacterIds||[]).includes(id))refs.push("Required by game initialization");for(const [cid,ch] of Object.entries(doc.characters||{}))for(const rel of ch.initialMind?.relationships||[])if(rel.targetCharacterId===id)refs.push("Relationship from "+cid);return refs;}
+function abilityDeletionReferences(doc,id){const refs=[];if((doc.protectedAbilityIds||[]).includes(id))refs.push("Required by game initialization");for(const [cid,ch] of Object.entries(doc.characters||{}))if((ch.abilityIds||[]).includes(id))refs.push("Assigned to "+cid);return refs;}
+function itemDefinitionDeletionReferences(doc,id){const refs=[];for(const [itemId,item] of Object.entries(doc.items||{}))if(item.definitionId===id)refs.push("Used by item "+itemId);for(const [definitionId,definition] of Object.entries(doc.itemDefinitions||{})){if(definition.fillAction?.resultDefinitionId===id)refs.push("Fill result of "+definitionId);if(definition.consumeAction?.resultDefinitionId===id)refs.push("Consume result of "+definitionId);}return refs;}
+function serializeWorldDocument(doc){const errors=validateWorldDocument(doc);if(errors.length){const failure=new Error("Export blocked because the world has validation errors.");failure.validationErrors=errors;throw failure;}return JSON.stringify(doc,null,2)+"\n";}
+root.WorldEditorCore={SCHEMA_VERSION,ID_PATTERN,KNOWN_ACTIONS,clone,parseWorldJson,createEmptyWorld,validateWorldDocument,locationDeletionReferences,sublocationDeletionReferences,characterDeletionReferences,abilityDeletionReferences,itemDefinitionDeletionReferences,serializeWorldDocument};
+}(typeof window!=="undefined"?window:globalThis));
 </script>
 
 <script>
-(function () {
-"use strict";
-const C = window.WorldEditorCore;
-const SUBLOCATION_ACTION_GRANTS = ["place_item"];
-let doc = null;
-let dirty = false;
-let fileName = "world.json";
-let selectedId = "";
-let selectedSublocationId = "";
-let section = "locations";
-
-const $ = function (id) { return document.getElementById(id); };
-function el(tag, text, className) {
-    const node = document.createElement(tag);
-    if (text !== undefined) node.textContent = text;
-    if (className) node.className = className;
-    return node;
-}
-function normalizeDocument(value) {
-    for (const name of ["protectedLocationIds", "protectedSublocationIds", "protectedCharacterIds", "protectedAbilityIds", "protectedItemDefinitionIds", "protectedItemIds"]) {
-        if (!Array.isArray(value[name])) value[name] = [];
-    }
-    for (const name of ["locations", "characters", "abilities", "itemDefinitions", "items"]) {
-        if (!value[name] || typeof value[name] !== "object" || Array.isArray(value[name])) value[name] = {};
-    }
-    for (const location of Object.values(value.locations)) {
-        location.exits = location.exits || {};
-        location.sublocations = location.sublocations || {};
-        for (const sub of Object.values(location.sublocations)) {
-            sub.reachableSublocationIds = sub.reachableSublocationIds || [];
-            sub.capabilities = sub.capabilities || [];
-            sub.environmentCapabilities = sub.environmentCapabilities || [];
-        }
-    }
-    for (const character of Object.values(value.characters)) {
-        character.abilityIds = character.abilityIds || [];
-        character.engineFacts = character.engineFacts || {};
-        character.initialMind = character.initialMind || { knownFacts: [], beliefs: [], relationships: [], recentMemories: [], longTermMemories: [] };
-    }
-    for (const definition of Object.values(value.itemDefinitions)) {
-        definition.tags = definition.tags || [];
-        if (definition.consumable === undefined) definition.consumable = null;
-        if (definition.equippable === undefined) definition.equippable = null;
-        if (definition.fillable === undefined) definition.fillable = null;
-    }
-    return value;
-}
-function setDirty(value) {
-    dirty = value;
-    $("status").textContent = value ? "Unsaved changes" : "All current changes have been downloaded or just loaded.";
-    $("status").className = "status" + (value ? " dirty" : "");
-}
-function confirmDiscard() { return !dirty || confirm("You have unsaved changes. Discard them?"); }
-function changed() {
-    setDirty(true);
-    localStorage.setItem("ai-rpg-world-editor-draft", JSON.stringify(doc));
-    renderLists();
-}
-function sectionRecords() { return doc && doc[section] || {}; }
-function firstRecordId(name) { return Object.keys(doc && doc[name] || {})[0] || ""; }
-function loadDocument(value, name) {
-    doc = normalizeDocument(value);
-    fileName = name || "world.json";
-    selectedId = firstRecordId(section);
-    selectedSublocationId = "";
-    $("welcome").classList.add("hidden");
-    $("workspace").classList.remove("hidden");
-    $("validate-button").disabled = false;
-    $("download-button").disabled = false;
-    setDirty(false);
-    render();
-}
-function showMessages(errors, success) {
-    const box = $("messages");
-    box.replaceChildren();
-    if (success) { box.appendChild(el("div", success, "ok")); return; }
-    const list = el("ul", undefined, "messages");
-    errors.forEach(function (item) {
-        const li = el("li", item.message);
-        li.tabIndex = 0;
-        li.onclick = function () {
-            if (item.locationId && doc.locations[item.locationId]) {
-                section = "locations";
-                selectedId = item.locationId;
-                selectedSublocationId = item.sublocationId || "";
-                render();
-            }
-        };
-        list.appendChild(li);
-    });
-    box.appendChild(list);
-}
-function validate() {
-    const errors = C.validateWorldDocument(doc);
-    showMessages(errors, errors.length ? "" : "World data is valid and ready to download.");
-    return errors;
-}
-function render() {
-    renderLists();
-    renderPanel();
-    $("file-info").textContent = fileName + " · schema " + String(doc.schemaVersion);
-}
-function sectionTitle(name) {
-    return ({ locations: "Locations", characters: "Characters", abilities: "Abilities", itemDefinitions: "Item types", items: "Items" })[name] || name;
-}
-function recordLabel(record) {
-    if (section === "items") {
-        const definition = doc.itemDefinitions[record.definitionId];
-        return record.id + " · " + (definition ? definition.name : record.definitionId || "Missing type");
-    }
-    return record.name || record.id;
-}
-function renderLists() {
-    const list = $("location-list");
-    list.replaceChildren();
-    $("section-title").textContent = sectionTitle(section);
-    for (const record of Object.values(sectionRecords())) {
-        const button = el("button", recordLabel(record), record.id === selectedId ? "selected" : "");
-        button.onclick = function () { selectedId = record.id; selectedSublocationId = ""; render(); };
-        list.appendChild(button);
-    }
-}
-function field(parent, labelText, value, onInput, options) {
-    options = options || {};
-    const label = el("label", labelText);
-    const input = options.textarea ? el("textarea") : el("input");
-    if (options.type) input.type = options.type;
-    if (options.readonly) input.readOnly = true;
-    input.value = value === undefined || value === null ? "" : value;
-    input.oninput = function () { onInput(options.type === "number" ? Number(input.value) : input.value); };
-    label.appendChild(input);
-    if (options.help) label.appendChild(el("small", options.help));
-    parent.appendChild(label);
-    return input;
-}
-function selectField(parent, labelText, value, values, onChange, options) {
-    options = options || {};
-    const label = el("label", labelText);
-    const select = el("select");
-    if (options.allowBlank) {
-        const blank = el("option", options.blankLabel || "None"); blank.value = ""; select.appendChild(blank);
-    }
-    for (const item of values) {
-        const option = el("option", item.label || item.name || item.id || String(item));
-        option.value = item.value !== undefined ? item.value : item.id !== undefined ? item.id : String(item);
-        option.selected = String(option.value) === String(value);
-        select.appendChild(option);
-    }
-    select.onchange = function () { onChange(select.value); };
-    label.appendChild(select);
-    parent.appendChild(label);
-    return select;
-}
-function checkbox(parent, labelText, checked, onChange, help) {
-    const label = el("label");
-    const input = el("input");
-    input.type = "checkbox";
-    input.checked = Boolean(checked);
-    input.onchange = function () { onChange(input.checked); };
-    label.append(input, document.createTextNode(" " + labelText));
-    if (help) label.appendChild(el("small", help));
-    parent.appendChild(label);
-    return input;
-}
-function repeatRows(parent, title, list, shape) {
-    const head = el("div", undefined, "row");
-    head.appendChild(el("h3", title));
-    const add = el("button", "Add");
-    add.onclick = function () {
-        const record = {};
-        for (const spec of shape.fields) {
-            const values = spec.values ? spec.values() : [];
-            record[spec.key] = spec.number ? 0 : spec.key === "protected" ? false : (values[0] && (values[0].value || values[0].id) || values[0] || "");
-        }
-        list.push(record); changed(); render();
-    };
-    head.appendChild(add); parent.appendChild(head);
-    list.forEach(function (record, index) {
-        const row = el("div", undefined, "card");
-        const grid = el("div", undefined, "grid");
-        for (const spec of shape.fields) {
-            if (spec.values) selectField(grid, spec.label, String(record[spec.key]), spec.values(), function (v) {
-                record[spec.key] = spec.key === "protected" ? v === "true" : v; changed();
-            });
-            else field(grid, spec.label, record[spec.key], function (v) { record[spec.key] = spec.number ? Number(v) : v; changed(); }, { type: spec.number ? "number" : undefined });
-        }
-        const remove = el("button", "Remove", "danger");
-        remove.onclick = function () { list.splice(index, 1); changed(); render(); };
-        row.append(grid, remove); parent.appendChild(row);
-    });
-}
-function renderPanel() {
-    if (section === "characters") return renderCharacterPanel();
-    if (section === "abilities") return renderAbilityPanel();
-    if (section === "itemDefinitions") return renderItemDefinitionPanel();
-    if (section === "items") return renderItemPanel();
-    return renderLocationPanel();
-}
-function renderLocationPanel() {
-    const panel = $("editor-panel"); panel.replaceChildren();
-    const location = doc.locations[selectedId];
-    if (!location) { panel.appendChild(el("div", "Add or select a location to begin.", "empty")); return; }
-    const card = el("section", undefined, "card");
-    const heading = el("div", undefined, "row"); heading.appendChild(el("h2", location.name || location.id));
-    const del = el("button", "Delete location", "danger"); del.onclick = function () { deleteLocation(location.id); }; heading.appendChild(del); card.appendChild(heading);
-    const grid = el("div", undefined, "grid");
-    field(grid, "Technical ID", location.id, function () {}, { readonly: true, help: "Stable ID; existing IDs cannot be renamed here." });
-    field(grid, "Display name", location.name, function (v) { location.name = v; changed(); });
-    field(grid, "Twine passage", location.passage, function (v) { location.passage = v; changed(); });
-    field(grid, "Location inventory ID", location.inventoryId, function (v) { location.inventoryId = v; changed(); });
-    field(grid, "Base description", (location.description || []).join("\n\n"), function (v) { location.description = v.split(/\n\s*\n/).map(function (x) { return x.trim(); }).filter(Boolean); changed(); }, { textarea: true, help: "Separate paragraphs with a blank line." });
-    card.appendChild(grid);
-    renderDefault(card, location); renderExits(card, location); renderSublocations(card, location); panel.appendChild(card);
-    if (selectedSublocationId && location.sublocations[selectedSublocationId]) renderSublocationForm(panel, location, location.sublocations[selectedSublocationId]);
-}
-function renderDefault(parent, location) {
-    selectField(parent, "Default internal position", location.defaultSublocationId, Object.values(location.sublocations || {}), function (v) { location.defaultSublocationId = v; changed(); });
-}
-function renderExits(parent, location) {
-    const wrap = el("section", undefined, "card"); wrap.appendChild(el("h3", "Exits"));
-    for (const targetId of Object.values(location.exits || {})) {
-        const destination = doc.locations[targetId];
-        const row = el("div", undefined, "row"); row.appendChild(el("span", destination ? destination.name : targetId));
-        const remove = el("button", "Remove", "danger"); remove.onclick = function () { delete location.exits[targetId]; changed(); render(); }; row.appendChild(remove); wrap.appendChild(row);
-    }
-    const row = el("div", undefined, "row");
-    const select = el("select");
-    for (const destination of Object.values(doc.locations).filter(function (candidate) { return candidate.id !== location.id && !Object.values(location.exits || {}).includes(candidate.id); })) {
-        const option = el("option", destination.name); option.value = destination.id; select.appendChild(option);
-    }
-    const add = el("button", "Add exit"); add.disabled = !select.options.length; add.onclick = function () { location.exits[select.value] = select.value; changed(); render(); };
-    row.append(select, add); wrap.appendChild(row); parent.appendChild(wrap);
-}
-function renderSublocations(parent, location) {
-    const head = el("div", undefined, "row"); head.appendChild(el("h3", "Internal positions"));
-    const add = el("button", "Add position"); add.onclick = function () { addSublocation(location); }; head.appendChild(add); parent.appendChild(head);
-    const list = el("div", undefined, "list");
-    for (const sub of Object.values(location.sublocations || {})) {
-        const button = el("button", sub.name || sub.id, sub.id === selectedSublocationId ? "selected" : "");
-        button.onclick = function () { selectedSublocationId = sub.id; render(); }; list.appendChild(button);
-    }
-    parent.appendChild(list);
-}
-function renderSublocationForm(panel, location, sub) {
-    const card = el("section", undefined, "card");
-    const head = el("div", undefined, "row"); head.appendChild(el("h2", "Position: " + (sub.name || sub.id)));
-    const del = el("button", "Delete position", "danger"); del.onclick = function () { deleteSublocation(location, sub.id); }; head.appendChild(del); card.appendChild(head);
-    const grid = el("div", undefined, "grid");
-    field(grid, "Technical ID", sub.id, function () {}, { readonly: true });
-    field(grid, "Display name", sub.name, function (v) { sub.name = v; changed(); });
-    field(grid, "Movement link label", sub.enterLabel, function (v) { sub.enterLabel = v; changed(); });
-    field(grid, "Capacity", sub.capacity, function (v) { sub.capacity = v; changed(); }, { type: "number" });
-    field(grid, "Public furniture description", sub.publicText || "", function (v) { sub.publicText = v; changed(); }, { textarea: true });
-    field(grid, "First-person position text", sub.selfText, function (v) { sub.selfText = v; changed(); }, { textarea: true });
-    field(grid, "Other-character position template", sub.occupantTemplate, function (v) { sub.occupantTemplate = v; changed(); }, { textarea: true, help: "Must contain {name}." });
-    card.appendChild(grid);
-    checkbox(card, "This position has an item container/inventory", Boolean(sub.inventoryId), function (enabled) {
-        if (enabled) { sub.inventoryId = sub.inventoryId || ("inventory_" + sub.id); sub.inventoryName = sub.inventoryName || sub.name; }
-        else { delete sub.inventoryId; delete sub.inventoryName; }
-        changed(); render();
-    });
-    if (sub.inventoryId) {
-        const inventoryGrid = el("div", undefined, "grid");
-        field(inventoryGrid, "Position inventory ID", sub.inventoryId, function (v) { sub.inventoryId = v; changed(); });
-        field(inventoryGrid, "Inventory display name", sub.inventoryName || sub.name, function (v) { sub.inventoryName = v; changed(); });
-        card.appendChild(inventoryGrid);
-    }
-    card.appendChild(el("h3", "Legal movement and physical reachability"));
-    card.appendChild(el("p", "The current engine uses one explicit list for both internal movement and reachability.", "help"));
-    const checks = el("div", undefined, "checks");
-    for (const candidate of Object.values(location.sublocations)) {
-        checkbox(checks, candidate.name, (sub.reachableSublocationIds || []).includes(candidate.id), function (enabled) {
-            sub.reachableSublocationIds = sub.reachableSublocationIds || [];
-            if (enabled && !sub.reachableSublocationIds.includes(candidate.id)) sub.reachableSublocationIds.push(candidate.id);
-            if (!enabled) sub.reachableSublocationIds = sub.reachableSublocationIds.filter(function (x) { return x !== candidate.id; });
-            changed();
-        });
-    }
-    card.appendChild(checks);
-    card.appendChild(el("h3", "Formal action grants"));
-    const actionChecks = el("div", undefined, "checks");
-    for (const capability of SUBLOCATION_ACTION_GRANTS) {
-        checkbox(actionChecks, capability, (sub.capabilities || []).includes(capability), function (enabled) {
-            sub.capabilities = sub.capabilities || [];
-            if (enabled && !sub.capabilities.includes(capability)) sub.capabilities.push(capability);
-            if (!enabled) sub.capabilities = sub.capabilities.filter(function (x) { return x !== capability; });
-            changed();
-        });
-    }
-    card.appendChild(actionChecks);
-    field(card, "Environment capabilities", (sub.environmentCapabilities || []).join(", "), function (v) {
-        sub.environmentCapabilities = v.split(",").map(function (x) { return x.trim(); }).filter(Boolean); changed();
-    }, { help: "Comma-separated environmental features used by item transitions, for example ale_source." });
-    panel.appendChild(card);
-}
-function renderCharacterPanel() {
-    const panel = $("editor-panel"); panel.replaceChildren();
-    const ch = doc.characters[selectedId];
-    if (!ch) { panel.appendChild(el("div", "Add or select a character to begin.", "empty")); return; }
-    const card = el("section", undefined, "card"), head = el("div", undefined, "row"); head.appendChild(el("h2", ch.name || ch.id));
-    const del = el("button", "Delete character", "danger"); del.onclick = function () { deleteCharacter(ch.id); }; head.appendChild(del); card.appendChild(head);
-    const grid = el("div", undefined, "grid");
-    field(grid, "Technical ID", ch.id, function () {}, { readonly: true });
-    field(grid, "Display name", ch.name, function (v) { ch.name = v; changed(); });
-    field(grid, "Player-facing description", ch.playerDescription, function (v) { ch.playerDescription = v; changed(); }, { textarea: true });
-    field(grid, "Interaction label", ch.interactionLabel, function (v) { ch.interactionLabel = v; changed(); });
-    field(grid, "AI-facing description", ch.aiDescription, function (v) { ch.aiDescription = v; changed(); }, { textarea: true });
-    field(grid, "Inventory ID", ch.inventoryId, function (v) { ch.inventoryId = v; changed(); });
-    field(grid, "Wallet", ch.wallet, function (v) { ch.wallet = v; changed(); }, { type: "number" });
-    field(grid, "Hidden aura", ch.engineFacts.aura || "", function (v) { ch.engineFacts.aura = v; changed(); }, { textarea: true });
-    selectField(grid, "Starting location", ch.locationId, Object.values(doc.locations), function (v) { ch.locationId = v; ch.sublocationId = doc.locations[v] && doc.locations[v].defaultSublocationId || ""; changed(); render(); });
-    selectField(grid, "Starting position", ch.sublocationId, Object.values(doc.locations[ch.locationId] && doc.locations[ch.locationId].sublocations || {}), function (v) { ch.sublocationId = v; changed(); });
-    selectField(grid, "Initial controller", ch.initialControllerId, ["human", "dummy", "ai"], function (v) { ch.initialControllerId = v; changed(); });
-    selectField(grid, "Fallback controller", ch.defaultControllerId, ["dummy", "ai"], function (v) { ch.defaultControllerId = v; changed(); });
-    card.appendChild(grid);
-    card.appendChild(el("h3", "Assigned abilities"));
-    const checks = el("div", undefined, "checks");
-    for (const ability of Object.values(doc.abilities)) {
-        checkbox(checks, ability.name, (ch.abilityIds || []).includes(ability.id), function (enabled) {
-            ch.abilityIds = ch.abilityIds || [];
-            ch.abilityIds = enabled ? Array.from(new Set(ch.abilityIds.concat([ability.id]))) : ch.abilityIds.filter(function (x) { return x !== ability.id; });
-            changed();
-        });
-    }
-    card.appendChild(checks);
-    const mind = ch.initialMind;
-    repeatRows(card, "Known facts", mind.knownFacts, { fields: [{ key: "id", label: "ID" }, { key: "text", label: "Text" }] });
-    repeatRows(card, "Beliefs", mind.beliefs, { fields: [{ key: "id", label: "ID" }, { key: "text", label: "Text" }, { key: "confidence", label: "Confidence", values: function () { return ["low", "medium", "high"]; } }] });
-    repeatRows(card, "Relationships", mind.relationships, { fields: [{ key: "targetCharacterId", label: "Character", values: function () { return Object.values(doc.characters).filter(function (x) { return x.id !== ch.id; }); } }, { key: "summary", label: "Summary" }] });
-    const memoryShape = { fields: [{ key: "id", label: "ID" }, { key: "summary", label: "Summary" }, { key: "importance", label: "Importance", number: true }, { key: "protected", label: "Protected", values: function () { return [{ value: "true", label: "Yes" }, { value: "false", label: "No" }]; } }] };
-    repeatRows(card, "Recent memories", mind.recentMemories, memoryShape);
-    repeatRows(card, "Long-term memories", mind.longTermMemories, memoryShape);
-    panel.appendChild(card);
-}
-function renderAbilityPanel() {
-    const panel = $("editor-panel"); panel.replaceChildren();
-    const ability = doc.abilities[selectedId];
-    if (!ability) { panel.appendChild(el("div", "Add or select an ability to begin.", "empty")); return; }
-    const card = el("section", undefined, "card"), head = el("div", undefined, "row"); head.appendChild(el("h2", ability.name || ability.id));
-    const del = el("button", "Delete ability", "danger"); del.onclick = function () { deleteAbility(ability.id); }; head.appendChild(del); card.appendChild(head);
-    const grid = el("div", undefined, "grid");
-    field(grid, "Technical ID", ability.id, function () {}, { readonly: true });
-    field(grid, "Display name", ability.name, function (v) { ability.name = v; changed(); });
-    field(grid, "Player-facing description", ability.playerDescription, function (v) { ability.playerDescription = v; changed(); }, { textarea: true });
-    field(grid, "AI-facing usage description", ability.aiDescription, function (v) { ability.aiDescription = v; changed(); }, { textarea: true });
-    selectField(grid, "Formal action type", ability.actionType, C.KNOWN_ACTIONS, function (v) { ability.actionType = v; changed(); });
-    card.appendChild(grid); panel.appendChild(card);
-}
-function renderItemDefinitionPanel() {
-    const panel = $("editor-panel"); panel.replaceChildren();
-    const definition = doc.itemDefinitions[selectedId];
-    if (!definition) { panel.appendChild(el("div", "Add or select an item type to begin.", "empty")); return; }
-    const card = el("section", undefined, "card"), head = el("div", undefined, "row"); head.appendChild(el("h2", definition.name || definition.id));
-    const del = el("button", "Delete item type", "danger"); del.onclick = function () { deleteItemDefinition(definition.id); }; head.appendChild(del); card.appendChild(head);
-    const grid = el("div", undefined, "grid");
-    field(grid, "Technical ID", definition.id, function () {}, { readonly: true });
-    field(grid, "Display name", definition.name, function (v) { definition.name = v; changed(); });
-    field(grid, "Description", definition.description || "", function (v) { definition.description = v; changed(); }, { textarea: true });
-    field(grid, "Family ID", definition.familyId || "", function (v) { definition.familyId = v; changed(); }, { help: "States of the same physical kind can share a family, for example mug." });
-    field(grid, "Tags", (definition.tags || []).join(", "), function (v) { definition.tags = v.split(",").map(function (x) { return x.trim(); }).filter(Boolean); changed(); }, { help: "Comma-separated classification tags." });
-    card.appendChild(grid);
-
-    checkbox(card, "Consumable", Boolean(definition.consumable), function (enabled) {
-        definition.consumable = enabled ? (definition.consumable || { actionLabel: "Consume", resultType: "destroy", publicText: "{actor} consumes {item}.", feedbackText: "You consume {item}." }) : null;
-        changed(); render();
-    });
-    if (definition.consumable) {
-        const consume = definition.consumable;
-        const component = el("section", undefined, "card"); component.appendChild(el("h3", "Consume transition"));
-        const cgrid = el("div", undefined, "grid");
-        field(cgrid, "Action label", consume.actionLabel || "", function (v) { consume.actionLabel = v; changed(); });
-        selectField(cgrid, "Result", consume.resultType, [{ value: "destroy", label: "Destroy the instance" }, { value: "transform", label: "Transform the same instance" }], function (v) { consume.resultType = v; if (v === "transform" && !consume.resultDefinitionId) consume.resultDefinitionId = firstOtherDefinition(definition.id); changed(); render(); });
-        if (consume.resultType === "transform") selectField(cgrid, "Resulting item type", consume.resultDefinitionId || "", Object.values(doc.itemDefinitions), function (v) { consume.resultDefinitionId = v; changed(); });
-        field(cgrid, "Public event text", consume.publicText || "", function (v) { consume.publicText = v; changed(); }, { textarea: true, help: "Templates: {actor}, {item}, {result}." });
-        field(cgrid, "Private actor feedback", consume.feedbackText || "", function (v) { consume.feedbackText = v; changed(); }, { textarea: true, help: "Templates: {actor}, {item}, {result}." });
-        component.appendChild(cgrid); card.appendChild(component);
-    }
-
-    checkbox(card, "Equippable", Boolean(definition.equippable), function (enabled) {
-        definition.equippable = enabled ? (definition.equippable || { slotIds: ["hand"] }) : null; changed(); render();
-    });
-    if (definition.equippable) field(card, "Equipment slot IDs", (definition.equippable.slotIds || []).join(", "), function (v) { definition.equippable.slotIds = v.split(",").map(function (x) { return x.trim(); }).filter(Boolean); changed(); }, { help: "Stored for future equip/unequip mechanics." });
-
-    checkbox(card, "Fillable / environment transition", Boolean(definition.fillable), function (enabled) {
-        definition.fillable = enabled ? (definition.fillable || { actionLabel: "Fill", requiredEnvironmentCapability: "source", resultDefinitionId: firstOtherDefinition(definition.id), publicText: "{actor} fills {item}.", feedbackText: "You fill {item}." }) : null; changed(); render();
-    });
-    if (definition.fillable) {
-        const fill = definition.fillable;
-        const component = el("section", undefined, "card"); component.appendChild(el("h3", "Fill transition"));
-        const fgrid = el("div", undefined, "grid");
-        field(fgrid, "Action label", fill.actionLabel || "", function (v) { fill.actionLabel = v; changed(); });
-        field(fgrid, "Required environment capability", fill.requiredEnvironmentCapability || "", function (v) { fill.requiredEnvironmentCapability = v; changed(); }, { help: "For example ale_source; author it on a sublocation." });
-        selectField(fgrid, "Resulting item type", fill.resultDefinitionId || "", Object.values(doc.itemDefinitions), function (v) { fill.resultDefinitionId = v; changed(); });
-        field(fgrid, "Public event text", fill.publicText || "", function (v) { fill.publicText = v; changed(); }, { textarea: true, help: "Templates: {actor}, {item}, {result}." });
-        field(fgrid, "Private actor feedback", fill.feedbackText || "", function (v) { fill.feedbackText = v; changed(); }, { textarea: true, help: "Templates: {actor}, {item}, {result}." });
-        component.appendChild(fgrid); card.appendChild(component);
-    }
-    panel.appendChild(card);
-}
-function firstOtherDefinition(currentId) { return Object.keys(doc.itemDefinitions).find(function (id) { return id !== currentId; }) || currentId || ""; }
-function listInventories() {
-    const records = [];
-    for (const location of Object.values(doc.locations)) {
-        records.push({ value: location.inventoryId, label: location.name + " — location floor" });
-        for (const sub of Object.values(location.sublocations || {})) if (sub.inventoryId) records.push({ value: sub.inventoryId, label: (sub.inventoryName || sub.name) + " — " + location.name });
-    }
-    for (const character of Object.values(doc.characters)) records.push({ value: character.inventoryId, label: character.name + " — character inventory" });
-    return records;
-}
-function renderItemPanel() {
-    const panel = $("editor-panel"); panel.replaceChildren();
-    const item = doc.items[selectedId];
-    if (!item) { panel.appendChild(el("div", "Add or select an item instance to begin.", "empty")); return; }
-    const definition = doc.itemDefinitions[item.definitionId];
-    const card = el("section", undefined, "card"), head = el("div", undefined, "row"); head.appendChild(el("h2", item.id));
-    const del = el("button", "Delete item", "danger"); del.onclick = function () { deleteItem(item.id); }; head.appendChild(del); card.appendChild(head);
-    if (definition) card.appendChild(el("p", "Current starting type: " + definition.name + ". The instance ID stays constant when its type changes at runtime.", "help"));
-    const grid = el("div", undefined, "grid");
-    field(grid, "Instance ID", item.id, function () {}, { readonly: true });
-    selectField(grid, "Starting item type", item.definitionId, Object.values(doc.itemDefinitions), function (v) { item.definitionId = v; changed(); render(); });
-    selectField(grid, "Starting container", item.containerId, listInventories(), function (v) { item.containerId = v; changed(); });
-    card.appendChild(grid); panel.appendChild(card);
-}
-function allTechnicalIds() {
-    const ids = new Set();
-    for (const location of Object.values(doc.locations)) { ids.add(location.id); for (const sub of Object.values(location.sublocations || {})) ids.add(sub.id); }
-    for (const name of ["characters", "abilities", "itemDefinitions", "items"]) for (const id of Object.keys(doc[name] || {})) ids.add(id);
-    return ids;
-}
-function promptId(defaultId, kind) {
-    const id = prompt("Stable technical ID:", defaultId);
-    if (!id) return "";
-    if (!C.ID_PATTERN.test(id) || allTechnicalIds().has(id)) { alert("That " + kind + " ID is invalid or already used."); return ""; }
-    return id;
-}
-function addLocation() {
-    const name = prompt("Display name for the new location:"); if (!name) return;
-    const suggested = name.replace(/[^A-Za-z0-9]+(.)?/g, function (_, c) { return c ? c.toUpperCase() : ""; }).replace(/^[^A-Za-z]+/, "") || "newLocation";
-    const id = promptId(suggested, "location"); if (!id) return;
-    doc.locations[id] = { id: id, type: "location", name: name, passage: name, description: [], defaultSublocationId: "", inventoryId: "inventory_" + id, exits: {}, sublocations: {} };
-    selectedId = id; selectedSublocationId = ""; changed(); render();
-}
-function addSublocation(location) {
-    const name = prompt("Display name for the new position:"); if (!name) return;
-    const id = promptId(location.id + "Position", "position"); if (!id) return;
-    location.sublocations[id] = { id: id, type: "sublocation", locationId: location.id, name: name, enterLabel: "Move to " + name, selfText: "You are at " + name + ".", occupantTemplate: "{name} is at " + name + ".", capacity: 1, reachableSublocationIds: [id], capabilities: [], environmentCapabilities: [] };
-    if (!location.defaultSublocationId) location.defaultSublocationId = id;
-    selectedSublocationId = id; changed(); render();
-}
-function addCharacter() {
-    const name = prompt("Display name for the new character:"); if (!name) return;
-    const id = promptId("newCharacter", "character"); if (!id) return;
-    const location = Object.values(doc.locations)[0];
-    doc.characters[id] = { id: id, name: name, playerDescription: "Describe how this character appears.", interactionLabel: "Speak with " + name, aiDescription: "Describe this character's private identity.", locationId: location && location.id || "", sublocationId: location && location.defaultSublocationId || "", inventoryId: "inventory_" + id, wallet: 0, initialControllerId: "dummy", defaultControllerId: "dummy", abilityIds: [], engineFacts: {}, initialMind: { knownFacts: [], beliefs: [], relationships: [], recentMemories: [], longTermMemories: [] } };
-    selectedId = id; changed(); render();
-}
-function addAbility() {
-    const name = prompt("Display name for the new ability:"); if (!name) return;
-    const id = promptId("newAbility", "ability"); if (!id) return;
-    doc.abilities[id] = { id: id, name: name, actionType: "read_aura", playerDescription: "Describe this ability.", aiDescription: "Describe when the character should request this formal action." };
-    selectedId = id; changed(); render();
-}
-function addItemDefinition() {
-    const name = prompt("Display name for the new item type:"); if (!name) return;
-    const id = promptId("newItemType", "item type"); if (!id) return;
-    doc.itemDefinitions[id] = { id: id, name: name, description: "Describe this item state.", familyId: id, tags: [], consumable: null, equippable: null, fillable: null };
-    selectedId = id; changed(); render();
-}
-function addItem() {
-    if (!Object.keys(doc.itemDefinitions).length) { alert("Create at least one item type first."); return; }
-    if (!listInventories().length) { alert("Create an inventory owner first."); return; }
-    const id = promptId("newItem", "item"); if (!id) return;
-    doc.items[id] = { id: id, definitionId: Object.keys(doc.itemDefinitions)[0], containerId: listInventories()[0].value };
-    selectedId = id; changed(); render();
-}
-function deleteLocation(id) {
-    const refs = C.locationDeletionReferences(doc, id); if (refs.length) { alert("Cannot delete this location. Remove these references first:\n" + refs.join("\n")); return; }
-    if (!confirm("Delete location `" + id + "`?")) return; delete doc.locations[id]; selectedId = firstRecordId("locations"); selectedSublocationId = ""; changed(); render();
-}
-function deleteSublocation(location, id) {
-    const refs = C.sublocationDeletionReferences(location, id, doc); if (refs.length) { alert("Cannot delete this position. Remove these references first:\n" + refs.join("\n")); return; }
-    if (!confirm("Delete position `" + id + "`?")) return; delete location.sublocations[id]; selectedSublocationId = ""; changed(); render();
-}
-function deleteCharacter(id) {
-    const refs = C.characterDeletionReferences(doc, id);
-    const humans = Object.values(doc.characters).filter(function (x) { return x.initialControllerId === "human"; });
-    if (humans.length === 1 && humans[0].id === id) refs.push("Sole initial human-controlled character");
-    if (refs.length) { alert("Cannot delete this character. Remove these references first:\n" + refs.join("\n")); return; }
-    if (confirm("Delete character `" + id + "`?")) { delete doc.characters[id]; selectedId = firstRecordId("characters"); changed(); render(); }
-}
-function deleteAbility(id) {
-    const refs = C.abilityDeletionReferences(doc, id); if (refs.length) { alert("Cannot delete this ability. Remove these references first:\n" + refs.join("\n")); return; }
-    if (confirm("Delete ability `" + id + "`?")) { delete doc.abilities[id]; selectedId = firstRecordId("abilities"); changed(); render(); }
-}
-function deleteItemDefinition(id) {
-    const refs = C.itemDefinitionDeletionReferences(doc, id); if (refs.length) { alert("Cannot delete this item type. Remove these references first:\n" + refs.join("\n")); return; }
-    if (confirm("Delete item type `" + id + "`?")) { delete doc.itemDefinitions[id]; selectedId = firstRecordId("itemDefinitions"); changed(); render(); }
-}
-function deleteItem(id) {
-    const refs = C.itemDeletionReferences(doc, id); if (refs.length) { alert("Cannot delete this item. Remove these references first:\n" + refs.join("\n")); return; }
-    if (confirm("Delete item `" + id + "`?")) { delete doc.items[id]; selectedId = firstRecordId("items"); changed(); render(); }
-}
-function changeSection(next) { section = next; selectedId = firstRecordId(section); selectedSublocationId = ""; render(); }
-
-$("file-input").onchange = function () {
-    const file = this.files[0]; this.value = ""; if (!file || !confirmDiscard()) return;
-    const reader = new FileReader();
-    reader.onload = function () {
-        try {
-            const value = normalizeDocument(C.parseWorldJson(reader.result));
-            const shapeErrors = C.validateWorldDocument(value);
-            loadDocument(value, file.name);
-            showMessages(shapeErrors, shapeErrors.length ? "" : "File loaded successfully.");
-        } catch (error) { alert(error.message); }
-    };
-    reader.onerror = function () { alert("The file could not be read."); };
-    reader.readAsText(file, "UTF-8");
-};
-$("new-button").onclick = function () { if (confirmDiscard()) loadDocument(C.createEmptyWorld(), "world.json"); };
-$("add-record").onclick = function () {
-    if (section === "locations") addLocation();
-    else if (section === "characters") addCharacter();
-    else if (section === "abilities") addAbility();
-    else if (section === "itemDefinitions") addItemDefinition();
-    else addItem();
-};
-$("tab-locations").onclick = function () { changeSection("locations"); };
-$("tab-characters").onclick = function () { changeSection("characters"); };
-$("tab-abilities").onclick = function () { changeSection("abilities"); };
-$("tab-itemDefinitions").onclick = function () { changeSection("itemDefinitions"); };
-$("tab-items").onclick = function () { changeSection("items"); };
-$("validate-button").onclick = validate;
-$("download-button").onclick = function () {
-    try {
-        const text = C.serializeWorldDocument(doc);
-        showMessages([], "World data is valid. The download has started; send the downloaded file to the administrator.");
-        const blob = new Blob([text], { type: "application/json;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a"); anchor.href = url; anchor.download = "world.json"; document.body.appendChild(anchor); anchor.click(); anchor.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 0); setDirty(false);
-    } catch (error) { showMessages(error.validationErrors || [{ message: error.message }]); }
-};
-window.addEventListener("beforeunload", function (event) { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
+(function(){"use strict";const C=window.WorldEditorCore;const KNOWN_CAPABILITIES=["ale_source","place_item"];let doc=null,dirty=false,fileName="world.json",selectedLocationId="",selectedSublocationId="",section="locations";
+const $=id=>document.getElementById(id);function el(tag,text,className){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;}function setDirty(value){dirty=value;$("status").textContent=value?"Unsaved changes":"All current changes have been downloaded or just loaded.";$("status").className="status"+(value?" dirty":"");}
+function confirmDiscard(){return !dirty||confirm("You have unsaved changes. Discard them?");}function changed(){setDirty(true);localStorage.setItem("ai-rpg-world-editor-draft",JSON.stringify(doc));renderLists();}
+function loadDocument(value,name){doc=value;fileName=name||"world.json";selectedLocationId=Object.keys(doc.locations||{})[0]||"";selectedSublocationId="";$("welcome").classList.add("hidden");$("workspace").classList.remove("hidden");$("validate-button").disabled=false;$("download-button").disabled=false;setDirty(false);render();}
+function showMessages(errors,success){const box=$("messages");box.replaceChildren();if(success){box.appendChild(el("div",success,"ok"));return;}const list=el("ul",undefined,"messages");errors.forEach(item=>{const li=el("li",item.message);li.tabIndex=0;li.onclick=()=>{if(item.locationId){selectedLocationId=item.locationId;selectedSublocationId=item.sublocationId||"";render();}};list.appendChild(li);});box.appendChild(list);}
+function validate(){const errors=C.validateWorldDocument(doc);showMessages(errors,errors.length?"":"World data is valid and ready to download.");return errors;}
+function render(){renderLists();renderPanel();$("file-info").textContent=fileName+" · schema "+String(doc.schemaVersion);}
+function renderLists(){const list=$("location-list");list.replaceChildren();const records=doc[section]||{};$("section-title").textContent=section[0].toUpperCase()+section.slice(1);for(const record of Object.values(records)){const b=el("button",record.name||record.id,record.id===selectedLocationId?"selected":"");b.onclick=()=>{selectedLocationId=record.id;selectedSublocationId="";render();};list.appendChild(b);}}
+function field(parent,labelText,value,onInput,options={}){const label=el("label",labelText);const input=options.textarea?el("textarea"):el("input");if(options.type)input.type=options.type;if(options.readonly)input.readOnly=true;input.value=value??"";input.oninput=()=>onInput(options.type==="number"?Number(input.value):input.value);label.appendChild(input);if(options.help)label.appendChild(el("small",options.help));parent.appendChild(label);return input;}
+function renderPanel(){if(section==="characters")return renderCharacterPanel();if(section==="abilities")return renderAbilityPanel();if(section==="itemDefinitions")return renderItemDefinitionPanel();if(section==="items")return renderItemPanel();const panel=$("editor-panel");panel.replaceChildren();const location=doc.locations[selectedLocationId];if(!location){panel.appendChild(el("div","Add or select a location to begin.","empty"));return;}const card=el("section",undefined,"card");const heading=el("div",undefined,"row");heading.appendChild(el("h2",location.name||location.id));const del=el("button","Delete location","danger");del.onclick=()=>deleteLocation(location.id);heading.appendChild(del);card.appendChild(heading);const grid=el("div",undefined,"grid");field(grid,"Technical ID",location.id,()=>{}, {readonly:true,help:"Stable ID; existing IDs cannot be renamed here."});field(grid,"Display name",location.name,v=>{location.name=v;changed();});field(grid,"Twine passage",location.passage,v=>{location.passage=v;changed();});field(grid,"Location inventory ID",location.inventoryId,v=>{location.inventoryId=v;changed();});field(grid,"Base description",(location.description||[]).join("\n\n"),v=>{location.description=v.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);changed();},{textarea:true,help:"Separate paragraphs with a blank line."});card.appendChild(grid);renderDefault(card,location);renderExits(card,location);renderSublocations(card,location);panel.appendChild(card);if(selectedSublocationId&&location.sublocations[selectedSublocationId])renderSublocationForm(panel,location,location.sublocations[selectedSublocationId]);}
+function selectField(parent,labelText,value,values,onChange){const label=el("label",labelText),select=el("select");for(const item of values){const option=el("option",item.label||item.name||item.id||item);option.value=item.value||item.id||item;option.selected=option.value===value;select.appendChild(option);}select.onchange=()=>onChange(select.value);label.appendChild(select);parent.appendChild(label);return select;}
+function repeatRows(parent,title,list,shape){const head=el("div",undefined,"row");head.appendChild(el("h3",title));const add=el("button","Add");add.onclick=()=>{const record={};for(const spec of shape.fields){const values=spec.values?spec.values():[];record[spec.key]=spec.number?0:spec.key==="protected"?false:(values[0]?.value||values[0]?.id||values[0]||"");}list.push(record);changed();render();};head.appendChild(add);parent.appendChild(head);list.forEach((record,index)=>{const row=el("div",undefined,"card"),grid=el("div",undefined,"grid");for(const spec of shape.fields){if(spec.values)selectField(grid,spec.label,String(record[spec.key]),spec.values(),v=>{record[spec.key]=spec.key==="protected"?v==="true":v;changed();});else field(grid,spec.label,record[spec.key],v=>{record[spec.key]=spec.number?Number(v):v;changed();},{type:spec.number?"number":undefined});}const remove=el("button","Remove","danger");remove.onclick=()=>{list.splice(index,1);changed();render();};row.append(grid,remove);parent.appendChild(row);});}
+function renderCharacterPanel(){const panel=$("editor-panel");panel.replaceChildren();const ch=doc.characters?.[selectedLocationId];if(!ch){panel.appendChild(el("div","Add or select a character to begin.","empty"));return;}const card=el("section",undefined,"card"),head=el("div",undefined,"row");head.appendChild(el("h2",ch.name||ch.id));const del=el("button","Delete character","danger");del.onclick=()=>deleteCharacter(ch.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",ch.id,()=>{},{readonly:true});field(grid,"Display name",ch.name,v=>{ch.name=v;changed();});field(grid,"Player-facing description",ch.playerDescription,v=>{ch.playerDescription=v;changed();},{textarea:true});field(grid,"Interaction label",ch.interactionLabel,v=>{ch.interactionLabel=v;changed();});field(grid,"AI-facing description",ch.aiDescription,v=>{ch.aiDescription=v;changed();},{textarea:true});field(grid,"Inventory ID",ch.inventoryId,v=>{ch.inventoryId=v;changed();});field(grid,"Wallet",ch.wallet,v=>{ch.wallet=v;changed();},{type:"number"});field(grid,"Hidden aura",ch.engineFacts?.aura||"",v=>{ch.engineFacts=ch.engineFacts||{};ch.engineFacts.aura=v;changed();},{textarea:true});selectField(grid,"Starting location",ch.locationId,Object.values(doc.locations),v=>{ch.locationId=v;ch.sublocationId=doc.locations[v]?.defaultSublocationId||"";changed();render();});selectField(grid,"Starting position",ch.sublocationId,Object.values(doc.locations[ch.locationId]?.sublocations||{}),v=>{ch.sublocationId=v;changed();});selectField(grid,"Initial controller",ch.initialControllerId,["human","dummy","ai"],v=>{ch.initialControllerId=v;changed();});selectField(grid,"Fallback controller",ch.defaultControllerId,["dummy","ai"],v=>{ch.defaultControllerId=v;changed();});card.appendChild(grid);card.appendChild(el("h3","Assigned abilities"));const checks=el("div",undefined,"checks");for(const ability of Object.values(doc.abilities||{})){const label=el("label"),input=el("input");input.type="checkbox";input.checked=(ch.abilityIds||[]).includes(ability.id);input.onchange=()=>{ch.abilityIds=ch.abilityIds||[];ch.abilityIds=input.checked?[...new Set([...ch.abilityIds,ability.id])]:ch.abilityIds.filter(x=>x!==ability.id);changed();};label.append(input,document.createTextNode(" "+ability.name));checks.appendChild(label);}card.appendChild(checks);const mind=ch.initialMind;repeatRows(card,"Known facts",mind.knownFacts,{fields:[{key:"id",label:"ID"},{key:"text",label:"Text"}],call:null});repeatRows(card,"Beliefs",mind.beliefs,{fields:[{key:"id",label:"ID"},{key:"text",label:"Text"},{key:"confidence",label:"Confidence",values:()=>["low","medium","high"]}]});repeatRows(card,"Relationships",mind.relationships,{fields:[{key:"targetCharacterId",label:"Character",values:()=>Object.values(doc.characters).filter(x=>x.id!==ch.id)},{key:"summary",label:"Summary"}]});const memoryShape={fields:[{key:"id",label:"ID"},{key:"summary",label:"Summary"},{key:"importance",label:"Importance",number:true},{key:"protected",label:"Protected",values:()=>[{value:"true",label:"Yes"},{value:"false",label:"No"}]}]};repeatRows(card,"Recent memories",mind.recentMemories,memoryShape);repeatRows(card,"Long-term memories",mind.longTermMemories,memoryShape);panel.appendChild(card);}
+function renderAbilityPanel(){const panel=$("editor-panel");panel.replaceChildren();const ability=doc.abilities?.[selectedLocationId];if(!ability){panel.appendChild(el("div","Add or select an ability to begin.","empty"));return;}const card=el("section",undefined,"card"),head=el("div",undefined,"row");head.appendChild(el("h2",ability.name||ability.id));const del=el("button","Delete ability","danger");del.onclick=()=>deleteAbility(ability.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",ability.id,()=>{},{readonly:true});field(grid,"Display name",ability.name,v=>{ability.name=v;changed();});field(grid,"Player-facing description",ability.playerDescription,v=>{ability.playerDescription=v;changed();},{textarea:true});field(grid,"AI-facing usage description",ability.aiDescription,v=>{ability.aiDescription=v;changed();},{textarea:true});selectField(grid,"Engine action type",ability.actionType,C.KNOWN_ACTIONS,v=>{ability.actionType=v;changed();});card.appendChild(grid);panel.appendChild(card);}
+function allInventoryOptions(){const result=[];for(const location of Object.values(doc.locations||{})){result.push({id:location.inventoryId,name:(location.name||location.id)+" — location"});for(const sub of Object.values(location.sublocations||{}))if(sub.inventoryId)result.push({id:sub.inventoryId,name:(sub.inventoryName||sub.name||sub.id)+" — position"});}for(const ch of Object.values(doc.characters||{}))result.push({id:ch.inventoryId,name:(ch.name||ch.id)+" — character"});return result;}
+function checkboxField(parent,labelText,value,onChange){const label=el("label"),input=el("input");input.type="checkbox";input.checked=Boolean(value);input.onchange=()=>onChange(input.checked);label.append(input,document.createTextNode(" "+labelText));parent.appendChild(label);return input;}
+function renderItemDefinitionPanel(){const panel=$("editor-panel");panel.replaceChildren();const definition=doc.itemDefinitions?.[selectedLocationId];if(!definition){panel.appendChild(el("div","Add or select an item type to begin.","empty"));return;}const card=el("section",undefined,"card"),head=el("div",undefined,"row");head.appendChild(el("h2",definition.name||definition.id));const del=el("button","Delete item type","danger");del.onclick=()=>deleteItemDefinition(definition.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",definition.id,()=>{},{readonly:true});field(grid,"Display name",definition.name,v=>{definition.name=v;changed();});field(grid,"Family ID",definition.familyId,v=>{definition.familyId=v;changed();});field(grid,"Tags",(definition.tags||[]).join(", "),v=>{definition.tags=v.split(",").map(x=>x.trim()).filter(Boolean);changed();},{help:"Comma-separated."});card.appendChild(grid);const checks=el("div",undefined,"checks");checkboxField(checks,"Consumable",definition.consumable,v=>{definition.consumable=v;changed();});checkboxField(checks,"Equippable",definition.equippable,v=>{definition.equippable=v;changed();});checkboxField(checks,"Fillable",definition.fillable,v=>{definition.fillable=v;changed();});card.appendChild(checks);
+card.appendChild(el("h3","Fill transformation"));const fillEnabled=checkboxField(card,"Enable Fill action",Boolean(definition.fillAction),v=>{if(v)definition.fillAction={actionLabel:"Fill item",requiredEnvironmentCapability:"ale_source",resultDefinitionId:Object.keys(doc.itemDefinitions)[0]||definition.id,feedbackText:"You fill the item."};else delete definition.fillAction;changed();render();});if(definition.fillAction){const fg=el("div",undefined,"grid");field(fg,"Action label",definition.fillAction.actionLabel,v=>{definition.fillAction.actionLabel=v;changed();});field(fg,"Required environment capability",definition.fillAction.requiredEnvironmentCapability,v=>{definition.fillAction.requiredEnvironmentCapability=v;changed();});selectField(fg,"Result item type",definition.fillAction.resultDefinitionId,Object.values(doc.itemDefinitions),v=>{definition.fillAction.resultDefinitionId=v;changed();});field(fg,"Private feedback",definition.fillAction.feedbackText||"",v=>{definition.fillAction.feedbackText=v;changed();},{textarea:true});card.appendChild(fg);}
+card.appendChild(el("h3","Consume transformation"));checkboxField(card,"Enable Consume action",Boolean(definition.consumeAction),v=>{if(v)definition.consumeAction={actionLabel:"Consume item",resultType:"transform",resultDefinitionId:Object.keys(doc.itemDefinitions)[0]||definition.id,feedbackText:"You consume the item."};else delete definition.consumeAction;changed();render();});if(definition.consumeAction){const cg=el("div",undefined,"grid");field(cg,"Action label",definition.consumeAction.actionLabel,v=>{definition.consumeAction.actionLabel=v;changed();});selectField(cg,"Result item type",definition.consumeAction.resultDefinitionId,Object.values(doc.itemDefinitions),v=>{definition.consumeAction.resultDefinitionId=v;changed();});field(cg,"Private feedback",definition.consumeAction.feedbackText||"",v=>{definition.consumeAction.feedbackText=v;changed();},{textarea:true});card.appendChild(cg);}panel.appendChild(card);}
+function renderItemPanel(){const panel=$("editor-panel");panel.replaceChildren();const item=doc.items?.[selectedLocationId];if(!item){panel.appendChild(el("div","Add or select an item instance to begin.","empty"));return;}const definition=doc.itemDefinitions?.[item.definitionId];const card=el("section",undefined,"card"),head=el("div",undefined,"row");head.appendChild(el("h2",(definition?.name||item.definitionId)+" (`"+item.id+"`)"));const del=el("button","Delete item","danger");del.onclick=()=>deleteItem(item.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",item.id,()=>{},{readonly:true});selectField(grid,"Item type",item.definitionId,Object.values(doc.itemDefinitions||{}),v=>{item.definitionId=v;changed();render();});selectField(grid,"Starting inventory",item.inventoryId,allInventoryOptions(),v=>{item.inventoryId=v;changed();});card.appendChild(grid);panel.appendChild(card);}
+function renderDefault(parent,location){const start=el("label");const startBox=el("input");startBox.type="checkbox";startBox.checked=doc.startLocationId===location.id;startBox.onchange=()=>{if(startBox.checked)doc.startLocationId=location.id;changed();render();};start.append(startBox,document.createTextNode(" Use as the story start location"));parent.appendChild(start);const label=el("label","Default position");const select=el("select");for(const sub of Object.values(location.sublocations||{})){const o=el("option",sub.name||sub.id);o.value=sub.id;o.selected=sub.id===location.defaultSublocationId;select.appendChild(o);}select.onchange=()=>{location.defaultSublocationId=select.value;changed();};label.appendChild(select);parent.appendChild(label);}
+function renderExits(parent,location){parent.appendChild(el("h3","Exits"));const wrap=el("div");for(const target of Object.values(location.exits||{})){const row=el("div",undefined,"row");row.appendChild(el("span","To "+(doc.locations[target]?.name||target)+" (`"+target+"`)"));const remove=el("button","Remove");remove.onclick=()=>{for(const key of Object.keys(location.exits))if(location.exits[key]===target)delete location.exits[key];changed();render();};row.appendChild(remove);wrap.appendChild(row);}const row=el("div",undefined,"row");const select=el("select");for(const candidate of Object.values(doc.locations)){if(candidate.id===location.id||Object.values(location.exits||{}).includes(candidate.id))continue;const o=el("option",candidate.name+" (`"+candidate.id+"`)");o.value=candidate.id;select.appendChild(o);}const add=el("button","Add exit");add.disabled=!select.options.length;add.onclick=()=>{location.exits[select.value]=select.value;changed();render();};row.append(select,add);wrap.appendChild(row);parent.appendChild(wrap);}
+function renderSublocations(parent,location){const head=el("div",undefined,"row");head.appendChild(el("h3","Internal positions"));const add=el("button","Add position");add.onclick=()=>addSublocation(location);head.appendChild(add);parent.appendChild(head);const list=el("div",undefined,"list");for(const sub of Object.values(location.sublocations||{})){const b=el("button",sub.name||sub.id,sub.id===selectedSublocationId?"selected":"");b.onclick=()=>{selectedSublocationId=sub.id;render();};list.appendChild(b);}parent.appendChild(list);}
+function renderSublocationForm(panel,location,sub){const card=el("section",undefined,"card");const head=el("div",undefined,"row");head.appendChild(el("h2","Position: "+(sub.name||sub.id)));const del=el("button","Delete position","danger");del.onclick=()=>deleteSublocation(location,sub.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",sub.id,()=>{},{readonly:true});field(grid,"Display name",sub.name,v=>{sub.name=v;changed();});field(grid,"Movement link label",sub.enterLabel,v=>{sub.enterLabel=v;changed();});field(grid,"Capacity",sub.capacity,v=>{sub.capacity=v;changed();},{type:"number"});field(grid,"Public furniture description",sub.publicText||"",v=>{sub.publicText=v;changed();},{textarea:true});field(grid,"First-person position text",sub.selfText,v=>{sub.selfText=v;changed();},{textarea:true});field(grid,"Other-character position template",sub.occupantTemplate,v=>{sub.occupantTemplate=v;changed();},{textarea:true,help:"Must contain {name}."});if(sub.inventoryId)field(grid,"Inventory display name",sub.inventoryName||sub.name,v=>{sub.inventoryName=v;changed();});card.appendChild(grid);
+const inventoryLabel=el("label");const inventoryCheck=el("input");inventoryCheck.type="checkbox";inventoryCheck.checked=Boolean(sub.inventoryId);inventoryCheck.onchange=()=>{if(inventoryCheck.checked)sub.inventoryId=sub.inventoryId||("inventory_"+sub.id);else delete sub.inventoryId;changed();render();};inventoryLabel.append(inventoryCheck,document.createTextNode(" This position has an item container/inventory"));card.appendChild(inventoryLabel);
+card.appendChild(el("h3","Legal movement and physical reachability"));card.appendChild(el("p","The current engine uses one explicit list for both internal movement and reachability.","help"));const checks=el("div",undefined,"checks");for(const candidate of Object.values(location.sublocations)){const label=el("label");const input=el("input");input.type="checkbox";input.checked=(sub.reachableSublocationIds||[]).includes(candidate.id);input.onchange=()=>{sub.reachableSublocationIds=sub.reachableSublocationIds||[];if(input.checked&&!sub.reachableSublocationIds.includes(candidate.id))sub.reachableSublocationIds.push(candidate.id);if(!input.checked)sub.reachableSublocationIds=sub.reachableSublocationIds.filter(x=>x!==candidate.id);changed();};label.append(input,document.createTextNode(" "+candidate.name));checks.appendChild(label);}card.appendChild(checks);
+card.appendChild(el("h3","Capabilities"));const capabilityChecks=el("div",undefined,"checks");for(const capability of KNOWN_CAPABILITIES){const label=el("label");const input=el("input");input.type="checkbox";input.checked=(sub.capabilities||[]).includes(capability);input.onchange=()=>{sub.capabilities=sub.capabilities||[];if(input.checked&&!sub.capabilities.includes(capability))sub.capabilities.push(capability);if(!input.checked)sub.capabilities=sub.capabilities.filter(x=>x!==capability);changed();};label.append(input,document.createTextNode(" "+capability));capabilityChecks.appendChild(label);}card.appendChild(capabilityChecks);const unknown=(sub.capabilities||[]).filter(x=>!KNOWN_CAPABILITIES.includes(x));if(unknown.length)card.appendChild(el("p","Unknown capabilities preserved: "+unknown.join(", "),"help"));panel.appendChild(card);}
+function addLocation(){const name=prompt("Display name for the new location:");if(!name)return;const id=prompt("Stable technical ID (letters, numbers, _ or -):",name.replace(/[^A-Za-z0-9]+(.)?/g,(_,c)=>c?c.toUpperCase():"").replace(/^[^A-Za-z]+/,"")||"newLocation");if(!id)return;if(!C.ID_PATTERN.test(id)||doc.locations[id]){alert("That ID is invalid or already used.");return;}doc.locations[id]={id,type:"location",name,passage:name,description:[],defaultSublocationId:"",inventoryId:"inventory_"+id,exits:{},sublocations:{}};selectedLocationId=id;selectedSublocationId="";changed();render();}
+function addSublocation(location){const name=prompt("Display name for the new position:");if(!name)return;const id=prompt("Stable technical ID:",location.id+"Position");if(!id)return;if(!C.ID_PATTERN.test(id)||location.sublocations[id]||Object.values(doc.locations).some(l=>l.id===id||l.sublocations?.[id])){alert("That ID is invalid or already used.");return;}location.sublocations[id]={id,type:"sublocation",locationId:location.id,name,enterLabel:"Move to "+name,selfText:"You are at "+name+".",occupantTemplate:"{name} is at "+name+".",capacity:1,reachableSublocationIds:[id]};if(!location.defaultSublocationId)location.defaultSublocationId=id;selectedSublocationId=id;changed();render();}
+function deleteLocation(id){const refs=C.locationDeletionReferences(doc,id);if(refs.length){alert("Cannot delete this location. Remove these references first:\n"+refs.join("\n"));return;}if(!confirm("Delete location `"+id+"`?"))return;delete doc.locations[id];selectedLocationId=Object.keys(doc.locations)[0]||"";selectedSublocationId="";changed();render();}
+function deleteSublocation(location,id){const refs=C.sublocationDeletionReferences(location,id,doc);if(refs.length){alert("Cannot delete this position. Remove these references first:\n"+refs.join("\n"));return;}if(!confirm("Delete position `"+id+"`?"))return;delete location.sublocations[id];selectedSublocationId="";changed();render();}
+function addCharacter(){const name=prompt("Display name for the new character:");if(!name)return;const id=prompt("Stable technical ID:","newCharacter");if(!id||!C.ID_PATTERN.test(id)||doc.characters[id])return alert("That character ID is invalid or already used.");const location=Object.values(doc.locations)[0];doc.characters[id]={id,name,playerDescription:"Describe how this character appears.",interactionLabel:"Speak with "+name,aiDescription:"Describe this character's private identity.",locationId:location?.id||"",sublocationId:location?.defaultSublocationId||"",inventoryId:"inventory_"+id,wallet:0,initialControllerId:"dummy",defaultControllerId:"dummy",abilityIds:[],engineFacts:{},initialMind:{knownFacts:[],beliefs:[],relationships:[],recentMemories:[],longTermMemories:[]}};selectedLocationId=id;changed();render();}
+function addAbility(){const name=prompt("Display name for the new ability:");if(!name)return;const id=prompt("Stable technical ID:","newAbility");if(!id||!C.ID_PATTERN.test(id)||doc.abilities[id])return alert("That ability ID is invalid or already used.");doc.abilities[id]={id,name,actionType:"read_aura",playerDescription:"Describe this ability.",aiDescription:"Describe when the character should request this formal action."};selectedLocationId=id;changed();render();}
+function addItemDefinition(){const name=prompt("Display name for the new item type:");if(!name)return;const id=prompt("Stable technical ID:","newItemType");if(!id||!C.ID_PATTERN.test(id)||doc.itemDefinitions[id])return alert("That item type ID is invalid or already used.");doc.itemDefinitions[id]={id,name,familyId:id,tags:[],consumable:false,equippable:false,fillable:false};selectedLocationId=id;changed();render();}
+function addItem(){const id=prompt("Stable technical ID for the item instance:","newItem_1");if(!id||!C.ID_PATTERN.test(id)||doc.items[id])return alert("That item ID is invalid or already used.");const definitionId=Object.keys(doc.itemDefinitions||{})[0]||"";const inventoryId=allInventoryOptions()[0]?.id||"";doc.items[id]={id,definitionId,inventoryId};selectedLocationId=id;changed();render();}
+function deleteItemDefinition(id){const refs=C.itemDefinitionDeletionReferences(doc,id);if(refs.length)return alert("Cannot delete this item type. Remove these references first:\n"+refs.join("\n"));if(confirm("Delete item type `"+id+"`?")){delete doc.itemDefinitions[id];selectedLocationId=Object.keys(doc.itemDefinitions)[0]||"";changed();render();}}
+function deleteItem(id){if(confirm("Delete item `"+id+"`?")){delete doc.items[id];selectedLocationId=Object.keys(doc.items)[0]||"";changed();render();}}
+function deleteCharacter(id){const refs=C.characterDeletionReferences(doc,id);const humans=Object.values(doc.characters).filter(x=>x.initialControllerId==="human");if(humans.length===1&&humans[0].id===id)refs.push("Sole initial human-controlled character");if(refs.length)return alert("Cannot delete this character. Remove these references first:\n"+refs.join("\n"));if(confirm("Delete character `"+id+"`?")){delete doc.characters[id];selectedLocationId=Object.keys(doc.characters)[0]||"";changed();render();}}
+function deleteAbility(id){const refs=C.abilityDeletionReferences(doc,id);if(refs.length)return alert("Cannot delete this ability. Remove these references first:\n"+refs.join("\n"));if(confirm("Delete ability `"+id+"`?")){delete doc.abilities[id];selectedLocationId=Object.keys(doc.abilities)[0]||"";changed();render();}}
+function changeSection(next){section=next;selectedLocationId=Object.keys(doc[section]||{})[0]||"";selectedSublocationId="";render();}
+$("file-input").onchange=function(){const file=this.files[0];this.value="";if(!file||!confirmDiscard())return;const reader=new FileReader();reader.onload=()=>{try{const value=C.parseWorldJson(reader.result);const shapeErrors=C.validateWorldDocument(value);if(!value.locations||typeof value.locations!=="object")throw new Error(shapeErrors[0]?.message||"Unsupported document shape.");loadDocument(value,file.name);showMessages(shapeErrors,shapeErrors.length?"":"File loaded successfully.");}catch(error){alert(error.message);}};reader.onerror=()=>alert("The file could not be read.");reader.readAsText(file,"UTF-8");};
+$("new-button").onclick=()=>{if(confirmDiscard())loadDocument(C.createEmptyWorld(),"world.json");};$("add-record").onclick=()=>section==="locations"?addLocation():section==="characters"?addCharacter():section==="abilities"?addAbility():section==="itemDefinitions"?addItemDefinition():addItem();$("tab-locations").onclick=()=>changeSection("locations");$("tab-characters").onclick=()=>changeSection("characters");$("tab-abilities").onclick=()=>changeSection("abilities");$("tab-itemDefinitions").onclick=()=>changeSection("itemDefinitions");$("tab-items").onclick=()=>changeSection("items");$("validate-button").onclick=validate;
+$("download-button").onclick=()=>{try{const text=C.serializeWorldDocument(doc);showMessages([],"World data is valid. The download has started; send the downloaded file to the administrator.");const blob=new Blob([text],{type:"application/json;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="world.json";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),0);setDirty(false);}catch(error){showMessages(error.validationErrors||[{message:error.message}]);}};
+window.addEventListener("beforeunload",event=>{if(dirty){event.preventDefault();event.returnValue="";}});
 }());
 </script>
 </body>

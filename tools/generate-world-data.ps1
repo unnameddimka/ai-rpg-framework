@@ -6,7 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$knownActions = @("move","move_within_location","take_item","drop_item","give_item","give_money","place_item","consume","fill","read_aura")
+$knownActions = @("move","move_within_location","take_item","drop_item","give_item","give_money","place_item","fill","consume","read_aura")
+$knownEnvironmentCapabilities = @("ale_source")
 $controllers = @("human","dummy","ai")
 $confidences = @("low","medium","high")
 
@@ -15,11 +16,6 @@ function Register-Inventory([hashtable]$owners, [string]$id, [string]$owner) {
     Require (-not [string]::IsNullOrWhiteSpace($id)) "$owner must define an inventory ID."
     if ($owners.ContainsKey($id)) { throw "Duplicate inventory ID '$id' is owned by both $($owners[$id]) and $owner." }
     $owners[$id] = $owner
-}
-function Register-TechnicalId([hashtable]$owners, [string]$id, [string]$kind) {
-    Require (-not [string]::IsNullOrWhiteSpace($id) -and $id -match '^[A-Za-z][A-Za-z0-9_-]*$') "$kind ID '$id' must start with a letter and contain only letters, numbers, _ or -."
-    if ($owners.ContainsKey($id)) { throw "Duplicate technical ID '$id' is used by both $($owners[$id]) and $kind." }
-    $owners[$id] = $kind
 }
 function Validate-Mind($mind, [string]$characterId) {
     Require ($null -ne $mind) "Character $characterId must define initialMind."
@@ -51,11 +47,10 @@ Require ($document.schemaVersion -eq 2) "Unsupported world schemaVersion. Expect
 Require ($null -ne $document.locations -and $null -ne $document.characters -and $null -ne $document.abilities -and $null -ne $document.itemDefinitions -and $null -ne $document.items) "world.json must contain locations, characters, abilities, itemDefinitions, and items objects."
 Require (-not [string]::IsNullOrWhiteSpace([string]$document.startLocationId) -and $null -ne $document.locations.([string]$document.startLocationId)) "startLocationId must reference an existing location."
 
-$passageOwners = @{}; $inventoryOwners = @{}; $sublocationOwners = @{}; $technicalOwners = @{}
+$passageOwners = @{}; $inventoryOwners = @{}; $sublocationOwners = @{}
 foreach ($lp in $document.locations.PSObject.Properties) {
     $id = $lp.Name; $location = $lp.Value
     Require ($location.id -eq $id) "Location key $id must match its id."
-    Register-TechnicalId $technicalOwners $id "location $id"
     $passage = [string]$location.passage
     Require (-not [string]::IsNullOrWhiteSpace($passage) -and $passage -notmatch '[\r\n\[\]]') "Location $id has an invalid Twine passage name."
     if ($passageOwners.ContainsKey($passage)) { throw "Duplicate passage name '$passage' is used by both $($passageOwners[$passage]) and $id." }
@@ -64,24 +59,34 @@ foreach ($lp in $document.locations.PSObject.Properties) {
     foreach ($sp in $location.sublocations.PSObject.Properties) {
         $sid=$sp.Name; $sub=$sp.Value; $sublocationOwners[$sid]=$id
         Require ($sub.id -eq $sid -and $sub.locationId -eq $id) "Sublocation $sid has invalid identity or parent."
-        Register-TechnicalId $technicalOwners $sid "sublocation $sid"
         if (-not [string]::IsNullOrWhiteSpace([string]$sub.inventoryId)) { Register-Inventory $inventoryOwners ([string]$sub.inventoryId) "sublocation $sid" }
-        foreach ($capability in @($sub.capabilities) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) { Require ($knownActions -contains [string]$capability) "Sublocation $sid grants unknown action '$capability'." }
-        foreach ($capability in @($sub.environmentCapabilities)) { Require (-not [string]::IsNullOrWhiteSpace([string]$capability)) "Sublocation $sid has a blank environment capability." }
+        foreach ($capability in @($sub.capabilities) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) { Require (($knownActions -contains [string]$capability) -or ($knownEnvironmentCapabilities -contains [string]$capability)) "Sublocation $sid grants unknown action '$capability'." }
+    }
+}
+
+foreach ($dp in $document.itemDefinitions.PSObject.Properties) {
+    $id=$dp.Name; $definition=$dp.Value
+    Require ($definition.id -eq $id) "Item definition key $id must match its id."
+    Require (-not [string]::IsNullOrWhiteSpace([string]$definition.name) -and -not [string]::IsNullOrWhiteSpace([string]$definition.familyId)) "Item definition $id needs a name and familyId."
+    Require ($definition.tags -is [array]) "Item definition $id tags must be an array."
+    foreach ($flag in @("consumable","equippable","fillable")) { Require ($definition.$flag -is [bool]) "Item definition $id $flag must be Boolean." }
+    if ($null -ne $definition.fillAction) {
+        Require (-not [string]::IsNullOrWhiteSpace([string]$definition.fillAction.actionLabel) -and -not [string]::IsNullOrWhiteSpace([string]$definition.fillAction.requiredEnvironmentCapability) -and -not [string]::IsNullOrWhiteSpace([string]$definition.fillAction.resultDefinitionId)) "Item definition $id has an invalid fillAction."
+    }
+    if ($null -ne $definition.consumeAction) {
+        Require (-not [string]::IsNullOrWhiteSpace([string]$definition.consumeAction.actionLabel) -and $definition.consumeAction.resultType -eq "transform" -and -not [string]::IsNullOrWhiteSpace([string]$definition.consumeAction.resultDefinitionId)) "Item definition $id has an invalid consumeAction."
     }
 }
 
 foreach ($ap in $document.abilities.PSObject.Properties) {
     $id=$ap.Name; $ability=$ap.Value
     Require ($ability.id -eq $id) "Ability key $id must match its id."
-    Register-TechnicalId $technicalOwners $id "ability $id"
     Require ($knownActions -contains [string]$ability.actionType) "Ability $id references unknown action '$($ability.actionType)'."
 }
 $humanCount=0
 foreach ($cp in $document.characters.PSObject.Properties) {
     $id=$cp.Name; $character=$cp.Value
     Require ($character.id -eq $id) "Character key $id must match its id."
-    Register-TechnicalId $technicalOwners $id "character $id"
     Require (-not [string]::IsNullOrWhiteSpace([string]$character.name)) "Character $id needs a name."
     Require (-not [string]::IsNullOrWhiteSpace([string]$character.playerDescription) -and -not [string]::IsNullOrWhiteSpace([string]$character.aiDescription)) "Character $id needs public and AI descriptions."
     Require ($null -ne $document.locations.([string]$character.locationId)) "Character $id has an invalid location."
@@ -99,39 +104,16 @@ Require ($humanCount -eq 1) "Exactly one initial human-controlled character is r
 
 foreach ($dp in $document.itemDefinitions.PSObject.Properties) {
     $id=$dp.Name; $definition=$dp.Value
-    Require ($definition.id -eq $id) "Item definition key $id must match its id."
-    Register-TechnicalId $technicalOwners $id "item definition $id"
-    Require (-not [string]::IsNullOrWhiteSpace([string]$definition.name)) "Item definition $id needs a name."
-    Require ($definition.description -is [string]) "Item definition $id description must be a string."
-    Require (-not [string]::IsNullOrWhiteSpace([string]$definition.familyId)) "Item definition $id needs a familyId."
-    Require ($definition.tags -is [array]) "Item definition $id tags must be an array."
-    foreach ($tag in @($definition.tags)) { Require (-not [string]::IsNullOrWhiteSpace([string]$tag)) "Item definition $id tags must be non-empty strings." }
-
-    if ($null -ne $definition.consumable) {
-        $component=$definition.consumable
-        Require (-not [string]::IsNullOrWhiteSpace([string]$component.actionLabel)) "Item definition $id consumable needs an actionLabel."
-        Require (@("destroy","transform") -contains [string]$component.resultType) "Item definition $id consumable has an invalid resultType."
-        if ($component.resultType -eq "transform") { Require ($null -ne $document.itemDefinitions.([string]$component.resultDefinitionId)) "Item definition $id consumable references missing result definition '$($component.resultDefinitionId)'." }
-        Require ($component.publicText -is [string] -and $component.feedbackText -is [string]) "Item definition $id consumable texts must be strings."
-    }
-    if ($null -ne $definition.fillable) {
-        $component=$definition.fillable
-        Require (-not [string]::IsNullOrWhiteSpace([string]$component.actionLabel)) "Item definition $id fillable needs an actionLabel."
-        Require (-not [string]::IsNullOrWhiteSpace([string]$component.requiredEnvironmentCapability)) "Item definition $id fillable needs a requiredEnvironmentCapability."
-        Require ($null -ne $document.itemDefinitions.([string]$component.resultDefinitionId)) "Item definition $id fillable references missing result definition '$($component.resultDefinitionId)'."
-        Require ($component.publicText -is [string] -and $component.feedbackText -is [string]) "Item definition $id fillable texts must be strings."
-    }
-    if ($null -ne $definition.equippable) {
-        Require ($definition.equippable.slotIds -is [array]) "Item definition $id equippable.slotIds must be an array."
-        foreach ($slot in @($definition.equippable.slotIds)) { Require (-not [string]::IsNullOrWhiteSpace([string]$slot)) "Item definition $id equippable slot IDs must be non-empty strings." }
+    foreach ($actionName in @("fillAction","consumeAction")) {
+        $action=$definition.$actionName
+        if ($null -ne $action) { Require ($null -ne $document.itemDefinitions.([string]$action.resultDefinitionId)) "Item definition $id references missing result definition '$($action.resultDefinitionId)'." }
     }
 }
 foreach ($ip in $document.items.PSObject.Properties) {
     $id=$ip.Name; $item=$ip.Value
     Require ($item.id -eq $id) "Item key $id must match its id."
-    Register-TechnicalId $technicalOwners $id "item $id"
-    Require ($null -ne $document.itemDefinitions.([string]$item.definitionId)) "Item $id references missing item definition '$($item.definitionId)'."
-    Require ($inventoryOwners.ContainsKey([string]$item.containerId)) "Item $id references missing inventory '$($item.containerId)'."
+    Require ($null -ne $document.itemDefinitions.([string]$item.definitionId)) "Item $id references missing definition '$($item.definitionId)'."
+    Require ($inventoryOwners.ContainsKey([string]$item.inventoryId)) "Item $id references missing inventory '$($item.inventoryId)'."
 }
 
 $json = ($document | ConvertTo-Json -Depth 100) -replace '</','<\/'

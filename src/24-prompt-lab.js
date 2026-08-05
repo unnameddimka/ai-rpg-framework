@@ -99,9 +99,6 @@
                 return fail("PROMPT_LAB_IMPORT_MESSAGE", "The exchange log contains a malformed chat message.");
             }
         }
-        if (!isPlainObject(request.availableActions || {})) {
-            return fail("PROMPT_LAB_IMPORT_ACTIONS", "The exchange log contains malformed available-action data.");
-        }
         return ok({
             sourceRequest: {
                 actorId: request.actorId,
@@ -112,8 +109,7 @@
                 label: typeof request.label === "string" && request.label.trim()
                     ? request.label
                     : fallbackLabel,
-                messages: clone(request.messages),
-                availableActions: clone(request.availableActions || {})
+                messages: clone(request.messages)
             }
         });
     }
@@ -125,8 +121,7 @@
             actorName: options.actorName || request.actorName || actorName(request.actorId),
             stage: request.stage,
             label: label,
-            messages: clone(request.messages),
-            availableActions: clone(request.availableActions || {})
+            messages: clone(request.messages)
         };
         state.selectedQueueCharacterId = request.actorId || null;
         state.editedSystemPrompt = systemPromptFrom(state.sourceRequest.messages);
@@ -198,7 +193,6 @@
                 purpose: "prompt-lab-dry-run",
                 messages: messages,
                 stage: state.sourceRequest.stage,
-                availableActions: state.sourceRequest.availableActions,
                 client: client || setup.OpenRouterClient
             });
             state.lastRun = {
@@ -288,8 +282,7 @@
             actorName: entry.request.actorId || "unknown",
             stage: entry.request.stage,
             label: `Recorded ${entry.request.purpose || "AI"} request`,
-            messages: clone(entry.request.messages || []),
-            availableActions: clone(entry.request.availableActions || {})
+            messages: clone(entry.request.messages || [])
         };
     }
 

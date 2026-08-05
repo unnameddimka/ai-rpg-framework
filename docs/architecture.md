@@ -288,8 +288,8 @@ For an actor, the currently available action types are:
 ```text
 base actions
 + current sublocation capabilities
++ actions derived from owned item definitions and the current environment
 + action types from actor abilityIds
-+ actions exposed by owned item definitions when their environment requirements are met
 ```
 
 Examples:
@@ -299,11 +299,16 @@ move                    base
 move_within_location    base
 take_item               base
 give_item               base
-fill                    granted by an owned fillable item while the current position supplies its required environment capability
-consume                 granted by an owned consumable item
 place_item              granted by a table sublocation
+fill                    granted by an owned fillable item when the current environment supplies its required capability
+consume                 granted by an owned consumable item
 read_aura               granted by the actor's assigned readAura ability
 ```
+
+The bar does not create mugs from nothing. `barBehindCounter` exposes the environment
+capability `ale_source` and an accessible `inventory_barMugCabinet`. An empty-mug instance
+grants `fill` only while owned at that source. Filling changes the instance definition from
+`emptyMug` to `mugOfAle`; consuming it changes the same instance back to `emptyMug`.
 
 `getAvailableActions(actorId)` returns a deduplicated map with source metadata:
 
@@ -449,16 +454,24 @@ Do not use event history as the only persistent character memory. A loaded save 
 
 The event log may remain capped for debugging while character mind remains independent.
 
-## 14. Restricted character view
+## 14. Canonical restricted character view
+
+The restricted character view is the canonical public and operational projection for one
+controlled character. It is the common foundation for both HumanController and AIController.
+
+The normal player-facing interface must be rendered from this view. The AI model must receive
+the same view unchanged, so it sees the same public situation and the same currently available
+controls that a human controlling that character would receive.
 
 A restricted view may contain:
 
-- the actor's physical state;
+- the actor's player-visible physical state;
 - current location and sublocation;
 - public descriptions of nearby characters;
-- reachable characters and accessible inventories;
+- reachable characters and player-accessible inventories;
 - exits and positions;
-- currently granted actions.
+- currently granted actions and their valid options, because these are the source from which
+  the player interface constructs its controls.
 
 It must not contain:
 
@@ -468,7 +481,13 @@ It must not contain:
 - distant private inventories or wallets;
 - hidden facts not revealed through a formal action.
 
-## 15. Context builder boundary
+The view has one representation only. Data present in the view must not be repeated elsewhere
+in an AI request under another property name, casing convention, wrapper, or independently
+computed projection. In particular, the action catalog inside the view is authoritative for
+both player controls and model action selection; there must not also be a serialized
+`availableActions` sibling containing the same catalog.
+
+## 15. AI context as an additive extension of the view
 
 Add a pure, deterministic interface:
 
@@ -476,24 +495,49 @@ Add a pure, deterministic interface:
 setup.ContextBuilder.build(actorId)
 ```
 
-It returns a deep-cloned JSON-serializable bundle suitable for the AI protocol adapter:
+It returns a deep-cloned JSON-serializable bundle suitable for the AI protocol adapter. The
+bundle embeds the exact canonical restricted view and adds only information that the human
+interface does not expose but that belongs to the controlled character, such as private
+identity instructions, private self-state, memory, beliefs, relationships, and prepared
+pending observations.
+
+Conceptual shape:
 
 ```json
 {
   "schemaVersion": 1,
+  "view": {},
   "character": {
-    "id": "hoodedWoman",
-    "name": "Hooded woman",
     "aiDescription": "...",
-    "abilities": []
+    "privateSelfData": {}
   },
   "mind": {},
-  "view": {},
-  "availableActions": {}
+  "pendingObservations": []
 }
 ```
 
-ContextBuilder remains a pure restricted-data projection. It must not call a model, retain conversation state outside the character, count tokens, summarize memories, mutate the world, or acknowledge observations. A separate browser-side adapter serializes this bundle into stage-specific model messages.
+The exact private-field organization may evolve, but these invariants are mandatory:
+
+1. `view` is built once by the same projection used by the player interface and is passed to
+   the model without removing, renaming, or duplicating its fields.
+2. AI-only context is strictly additive. It may add private information about the controlled
+   character, but it must not restate information already present in `view`.
+3. A concept has one serialized source of truth. No snake_case/camelCase aliases or parallel
+   copies of the same action catalog, inventory, location, character list, or other view data
+   are allowed in the model request.
+4. If the AI protocol needs internal validation metadata, it must derive it from `view` or keep
+   it in a non-serialized application envelope. Internal validator data must not be sent to the
+   model a second time.
+5. Raw runtime structures must be projected correctly at construction time. Do not first build
+   an over-complete context and then clone/delete duplicate fields at the protocol boundary.
+6. Prepared request observations may replace the raw observation inbox, but the context builder
+   must omit the raw inbox when constructing the AI mind projection rather than serializing both
+   and deleting one later.
+
+ContextBuilder remains a pure restricted-data projection. It must not call a model, retain
+conversation state outside the character, count tokens, summarize memories, mutate the world,
+or acknowledge observations. A separate browser-side adapter serializes this already-correct
+bundle into stage-specific model messages without restructuring its view.
 
 ## 16. HumanController invariant and permanent defaults
 
@@ -526,15 +570,7 @@ Main sections:
 Locations
 Characters
 Abilities
-Item types
-Items
 ```
-
-### Item model
-
-`itemDefinitions` describe item states such as `emptyMug` and `mugOfAle`. `items` describe persistent physical instances such as `emptyMug_1` and point to their current state through `definitionId`. A successful transform changes only that reference, so the item keeps its stable instance ID, ownership, and history.
-
-Consumable and fillable components declare explicit transitions. Environment requirements such as `ale_source` are supplied by the current sublocation rather than hard-coded to a location ID. Equippable slot metadata is authorable, but equip/unequip runtime mechanics are not implemented yet.
 
 ### Character form
 
@@ -584,8 +620,7 @@ The same core problems must be rejected before build and at runtime when relevan
 - default controller set to `human`;
 - invalid ability reference;
 - ability references an unknown action type;
-- deletion of referenced locations, sublocations, characters, abilities, item definitions, or item containers;
-- missing item definitions, invalid item transitions, and missing starting inventories;
+- deletion of referenced locations, sublocations, characters, or abilities;
 - malformed mind records;
 - restricted-view leaks of AI-private or engine-hidden data.
 
@@ -680,7 +715,9 @@ fixed, but the model comes from the build-validated `data/model_list.json` catal
   "defaultModelId": "thedrummer/cydonia-24b-v4.1",
   "models": [
     { "id": "thedrummer/cydonia-24b-v4.1", "name": "Cydonia 24B V4.1" },
-    { "id": "sao10k/l3.3-euryale-70b", "name": "Llama 3.3 Euryale 70B" }
+    { "id": "sao10k/l3.3-euryale-70b", "name": "Llama 3.3 Euryale 70B" },
+    { "id": "sao10k/l3.1-euryale-70b:nitro", "name": "Llama 3.1 Euryale 70B (Nitro)" },
+    { "id": "mistralai/mistral-small-3.2-24b-instruct", "name": "Mistral Small 3.2 24B" }
   ]
 }
 ```

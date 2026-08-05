@@ -132,9 +132,8 @@
         }
         const originalObservations = clone(actor.mind.pendingObservations.slice(0, 50));
         const observations = combineInteractionObservations(originalObservations, world);
-        const context = setup.ContextBuilder.build(actor.id);
+        const context = setup.ContextBuilder.build(actor.id, { pendingObservations: observations });
         if (context && context.ok === false) return context;
-        context.mind.pendingObservations = clone(observations);
         return {
             ok: true,
             actorId: actor.id,
@@ -144,8 +143,7 @@
             originalObservations: originalObservations,
             observationIds: originalObservations.map(function (item) { return item.id; }),
             context: context,
-            messages: setup.AIProtocol.decisionMessages(context, observations),
-            availableActions: context.availableActions
+            messages: setup.AIProtocol.decisionMessages(context)
         };
     }
 
@@ -161,7 +159,8 @@
             const described = observations.map(function (observation) {
                 return describeObservation(observation, world);
             });
-            const available = actor ? setup.CharacterAPI.getAvailableActions(actor.id) : {};
+            const actorView = actor ? setup.CharacterAPI.getView(actor.id) : null;
+            const available = actorView && actorView.available_actions || {};
             return {
                 index: index,
                 position: index + 1,

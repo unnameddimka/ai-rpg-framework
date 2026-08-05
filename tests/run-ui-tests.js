@@ -82,6 +82,9 @@ assert(uiSource.includes('id="action-submit"') && uiSource.includes('id="action-
     uiSource.includes('name="formal-action"') && uiSource.includes('value="" checked') &&
     uiSource.includes("setup.TurnFlow.submitHumanIntent") && uiSource.includes("setup.TurnFlow.pass"),
     "debug interaction UI should submit narrative plus at most one radio-selected formal action or explicitly pass");
+assert(uiSource.includes('id="action-fill-item"') && uiSource.includes('id="action-consume-item"') &&
+    uiSource.includes('["fill", "consume"]') && !uiSource.includes("pour_ale"),
+    "human controls should derive fill and consume from item actions and expose no source-less pour action");
 assert(!uiSource.includes('<button id="action-narrate"') && !uiSource.includes('<button id="action-give-money"') &&
     !uiSource.includes('<button id="action-move"'),
     "formal debug actions should no longer execute through independent buttons");

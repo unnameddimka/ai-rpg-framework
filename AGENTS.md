@@ -10,6 +10,18 @@
 - A formal action may mutate the world, emit public events, return private actor feedback, do any combination of those, or fail with grounded feedback.
 - Do not split physical and perceptual actions into separate execution systems.
 
+## Canonical character view and AI context
+
+- `setup.Game.getCharacterView(actorId)` (or its future equivalent) is the canonical public and operational projection for that character.
+- The normal HumanController interface must be built from this view.
+- AIController must receive the same view unchanged as the base of its model context. A model must see the same public situation and the same available controls that a human controlling the character would see.
+- AI context may add only character-private information that is not exposed by the normal UI, including private identity instructions, private self-state, mind records, and prepared pending observations.
+- Never serialize a second copy or alias of information already present in the view. This explicitly forbids pairs such as `view.available_actions` plus `context.availableActions`.
+- Every serialized concept has one source of truth. Do not repeat view data under different casing, names, wrappers, or independently recomputed projections.
+- Validator-only metadata must be derived from the canonical view or retained in a non-serialized application envelope.
+- Build the correct projection at the source. Do not construct an over-complete AI context and then clone/delete duplicate fields at the protocol boundary.
+- When prepared pending observations are supplied, build the AI mind projection without the raw runtime inbox; do not serialize both forms.
+
 ## Static authoring data and runtime state
 
 - `data/world.json` is the authoritative authoring source for locations, sublocations, characters, initial character minds, and character ability definitions.
@@ -77,8 +89,7 @@ The available formal action set for a character is the deduplicated union of:
 
 1. engine-defined base action types;
 2. action types granted by the current sublocation's `capabilities`;
-3. action types granted by the character's individual `abilityIds` through the ability catalog;
-4. action types granted by owned item definitions, with any required environment capability checked against the current sublocation.
+3. action types granted by the character's individual `abilityIds` through the ability catalog.
 
 Rules:
 
@@ -197,8 +208,8 @@ Validate in the editor, build generator, and runtime where applicable:
 - exactly one initial human-controlled character;
 - valid ability references;
 - ability `actionType` values that exist in the known engine action allowlist/registry;
-- no deleted location, sublocation, character, ability, item definition, or item still referenced by another record;
-- valid item-definition transitions and valid starting inventory references for every item instance.
+- valid item-definition references, transformation targets, and initial inventory references;
+- no deleted location, sublocation, character, ability, item type, or item instance still referenced by another record.
 
 ## Current scope
 
@@ -207,8 +218,9 @@ Implement and preserve:
 - existing tavern entrance, bar, common room, street, and the temporary village-temple prompt-lab room;
 - generated major physical passages;
 - sublocations, capacity, reachability, table inventories, and behind-bar capability;
-- inventories, wallets, movement, item transfer, money transfer, `place_item`, and item-state transitions through `consume` and `fill`;
-- authorable item definitions and persistent item instances whose `definitionId` changes without replacing the instance;
+- inventories, wallets, movement, item transfer, money transfer, and `place_item`;
+- persistent item instances with authored item definitions and definition-changing `fill` / `consume` actions;
+- the behind-bar mug cabinet, ten initial empty mugs, and the `ale_source` environment capability;
 - confirmed events and restricted views;
 - debug takeover of any character by the one HumanController;
 - authorable characters, initial minds, and individual abilities;
@@ -225,7 +237,7 @@ Do not add yet:
 - memory compression, token budgeting, embeddings, or vector search;
 - combat, health changes, or damage;
 - buying and selling;
-- equipment state and equip/unequip mechanics beyond authoring the `equippable` metadata;
+- item use effects or equipment;
 - quests or dialogue trees;
 - arbitrary author scripts.
 
@@ -252,4 +264,5 @@ Do not add yet:
 7. Verify a JSON serialize/parse round trip preserves every character mind.
 8. Test queue ordering, deduplication, stale-entry handling, scheduler request projection, executor serialization/minimum interval, combined human intents, interaction grouping, reaction-wave once-per-character behavior, single-request action turns, malformed JSON repair, failed-request rollback, consumed-observation removal by ID, and 24-hour key expiry.
 9. Verify no API key appears in a save, world dump, generated artifact, debug log, or copied AI context.
-10. Update `README.md` and `docs/status.md` with implemented results and remaining limitations.
+10. Verify the AI request contains the canonical player-facing `view` unchanged, contains no duplicate or aliased view data, and adds only private character context outside the view.
+11. Update `README.md` and `docs/status.md` with implemented results and remaining limitations.

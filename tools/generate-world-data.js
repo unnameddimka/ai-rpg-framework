@@ -14,8 +14,9 @@ const defaults = {
 
 const knownActions = new Set([
     "move", "move_within_location", "take_item", "drop_item", "give_item",
-    "give_money", "place_item", "consume", "fill", "read_aura"
+    "give_money", "place_item", "fill", "consume", "read_aura"
 ]);
+const knownEnvironmentCapabilities = new Set(["ale_source"]);
 const controllers = new Set(["human", "dummy", "ai"]);
 const confidences = new Set(["low", "medium", "high"]);
 
@@ -92,18 +93,9 @@ function validateWorld(document) {
 
     const passageOwners = new Map();
     const inventoryOwners = new Map();
-    const technicalIds = new Map();
-    function registerTechnicalId(id, kind) {
-        requireCondition(nonBlank(id) && /^[A-Za-z][A-Za-z0-9_-]*$/.test(id),
-            `${kind} ID '${String(id)}' must start with a letter and contain only letters, numbers, _ or -.`);
-        requireCondition(!technicalIds.has(id),
-            `Duplicate technical ID '${id}' is used by both ${technicalIds.get(id)} and ${kind}.`);
-        technicalIds.set(id, kind);
-    }
 
     for (const [id, location] of entries(document.locations)) {
         requireCondition(isObject(location) && location.id === id, `Location key ${id} must match its id.`);
-        registerTechnicalId(id, `location ${id}`);
         const passage = String(location.passage || "");
         requireCondition(nonBlank(passage) && !/[\r\n\[\]]/.test(passage),
             `Location ${id} has an invalid Twine passage name.`);
@@ -118,7 +110,6 @@ function validateWorld(document) {
         for (const [sublocationId, sublocation] of entries(location.sublocations)) {
             requireCondition(isObject(sublocation) && sublocation.id === sublocationId && sublocation.locationId === id,
                 `Sublocation ${sublocationId} has invalid identity or parent.`);
-            registerTechnicalId(sublocationId, `sublocation ${sublocationId}`);
             if (nonBlank(String(sublocation.inventoryId || ""))) {
                 registerInventory(inventoryOwners, String(sublocation.inventoryId), `sublocation ${sublocationId}`);
             }
@@ -126,22 +117,49 @@ function validateWorld(document) {
             for (const capability of capabilities) {
                 const action = String(capability || "");
                 if (nonBlank(action)) {
-                    requireCondition(knownActions.has(action),
+                    requireCondition(knownActions.has(action) || knownEnvironmentCapabilities.has(action),
                         `Sublocation ${sublocationId} grants unknown action '${action}'.`);
                 }
             }
-            const environmentCapabilities = Array.isArray(sublocation.environmentCapabilities)
-                ? sublocation.environmentCapabilities : [];
-            for (const capability of environmentCapabilities) {
-                requireCondition(nonBlank(String(capability || "")),
-                    `Sublocation ${sublocationId} has a blank environment capability.`);
+        }
+    }
+
+    for (const [id, definition] of entries(document.itemDefinitions)) {
+        requireCondition(isObject(definition) && definition.id === id,
+            `Item definition key ${id} must match its id.`);
+        requireCondition(nonBlank(definition.name) && nonBlank(definition.familyId),
+            `Item definition ${id} needs a name and familyId.`);
+        requireCondition(Array.isArray(definition.tags), `Item definition ${id} tags must be an array.`);
+        for (const flag of ["consumable", "equippable", "fillable"]) {
+            requireCondition(typeof definition[flag] === "boolean",
+                `Item definition ${id} ${flag} must be Boolean.`);
+        }
+        if (definition.fillAction) {
+            requireCondition(nonBlank(definition.fillAction.actionLabel) &&
+                nonBlank(definition.fillAction.requiredEnvironmentCapability) &&
+                nonBlank(definition.fillAction.resultDefinitionId),
+            `Item definition ${id} has an invalid fillAction.`);
+        }
+        if (definition.consumeAction) {
+            requireCondition(nonBlank(definition.consumeAction.actionLabel) &&
+                definition.consumeAction.resultType === "transform" &&
+                nonBlank(definition.consumeAction.resultDefinitionId),
+            `Item definition ${id} has an invalid consumeAction.`);
+        }
+    }
+
+    for (const [id, definition] of entries(document.itemDefinitions)) {
+        for (const actionField of ["fillAction", "consumeAction"]) {
+            const action = definition[actionField];
+            if (action) {
+                requireCondition(own(document.itemDefinitions, action.resultDefinitionId),
+                    `Item definition ${id} references missing result definition '${action.resultDefinitionId}'.`);
             }
         }
     }
 
     for (const [id, ability] of entries(document.abilities)) {
         requireCondition(isObject(ability) && ability.id === id, `Ability key ${id} must match its id.`);
-        registerTechnicalId(id, `ability ${id}`);
         requireCondition(knownActions.has(String(ability.actionType)),
             `Ability ${id} references unknown action '${ability.actionType}'.`);
     }
@@ -149,7 +167,6 @@ function validateWorld(document) {
     let humanCount = 0;
     for (const [id, character] of entries(document.characters)) {
         requireCondition(isObject(character) && character.id === id, `Character key ${id} must match its id.`);
-        registerTechnicalId(id, `character ${id}`);
         requireCondition(nonBlank(character.name), `Character ${id} needs a name.`);
         requireCondition(nonBlank(character.playerDescription) && nonBlank(character.aiDescription),
             `Character ${id} needs public and AI descriptions.`);
@@ -191,64 +208,16 @@ function validateWorld(document) {
         }
     }
 
-    requireCondition(humanCount === 1,
-        `Exactly one initial human-controlled character is required; found ${humanCount}.`);
-
-    for (const [id, definition] of entries(document.itemDefinitions)) {
-        requireCondition(isObject(definition) && definition.id === id,
-            `Item definition key ${id} must match its id.`);
-        registerTechnicalId(id, `item definition ${id}`);
-        requireCondition(nonBlank(definition.name), `Item definition ${id} needs a name.`);
-        requireCondition(typeof definition.description === "string",
-            `Item definition ${id} description must be a string.`);
-        requireCondition(nonBlank(definition.familyId), `Item definition ${id} needs a familyId.`);
-        requireCondition(Array.isArray(definition.tags) && definition.tags.every(nonBlank),
-            `Item definition ${id} tags must be a list of non-empty strings.`);
-
-        if (definition.consumable !== null && definition.consumable !== undefined) {
-            const component = definition.consumable;
-            requireCondition(isObject(component), `Item definition ${id} consumable must be an object or null.`);
-            requireCondition(nonBlank(component.actionLabel), `Item definition ${id} consumable needs an actionLabel.`);
-            requireCondition(component.resultType === "destroy" || component.resultType === "transform",
-                `Item definition ${id} consumable has an invalid resultType.`);
-            if (component.resultType === "transform") {
-                requireCondition(own(document.itemDefinitions, String(component.resultDefinitionId || "")),
-                    `Item definition ${id} consumable references missing result definition '${String(component.resultDefinitionId || "")}'.`);
-            }
-            requireCondition(typeof component.publicText === "string" && typeof component.feedbackText === "string",
-                `Item definition ${id} consumable texts must be strings.`);
-        }
-
-        if (definition.fillable !== null && definition.fillable !== undefined) {
-            const component = definition.fillable;
-            requireCondition(isObject(component), `Item definition ${id} fillable must be an object or null.`);
-            requireCondition(nonBlank(component.actionLabel), `Item definition ${id} fillable needs an actionLabel.`);
-            requireCondition(nonBlank(component.requiredEnvironmentCapability),
-                `Item definition ${id} fillable needs a requiredEnvironmentCapability.`);
-            requireCondition(own(document.itemDefinitions, String(component.resultDefinitionId || "")),
-                `Item definition ${id} fillable references missing result definition '${String(component.resultDefinitionId || "")}'.`);
-            requireCondition(typeof component.publicText === "string" && typeof component.feedbackText === "string",
-                `Item definition ${id} fillable texts must be strings.`);
-        }
-
-        if (definition.equippable !== null && definition.equippable !== undefined) {
-            requireCondition(isObject(definition.equippable),
-                `Item definition ${id} equippable must be an object or null.`);
-            requireCondition(Array.isArray(definition.equippable.slotIds) &&
-                definition.equippable.slotIds.every(nonBlank),
-                `Item definition ${id} equippable.slotIds must be a list of non-empty strings.`);
-        }
-    }
-
     for (const [id, item] of entries(document.items)) {
         requireCondition(isObject(item) && item.id === id, `Item key ${id} must match its id.`);
-        registerTechnicalId(id, `item ${id}`);
         requireCondition(own(document.itemDefinitions, String(item.definitionId || "")),
-            `Item ${id} references missing item definition '${String(item.definitionId || "")}'.`);
-        requireCondition(inventoryOwners.has(String(item.containerId || "")),
-            `Item ${id} references missing inventory '${String(item.containerId || "")}'.`);
+            `Item ${id} references missing definition '${item.definitionId}'.`);
+        requireCondition(inventoryOwners.has(String(item.inventoryId || "")),
+            `Item ${id} references missing inventory '${item.inventoryId}'.`);
     }
 
+    requireCondition(humanCount === 1,
+        `Exactly one initial human-controlled character is required; found ${humanCount}.`);
 }
 
 function generateArtifacts(document) {
