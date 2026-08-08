@@ -216,6 +216,33 @@ world = setup.Game.getWorld();
 assert(world.entities.player.sublocationId === "commonRoomTableOne",
     "save/load should preserve character sublocation");
 assert(setup.Game.getHumanCharacterId() === "player", "save/load should preserve one human controller");
+const generatedBeforeSaveReconciliation = setup.GeneratedWorldData;
+const savedForAuthoringReconciliation = JSON.parse(JSON.stringify(world));
+savedForAuthoringReconciliation.entities.hoodedWoman.aiDescription = "Old saved Mara prompt.";
+savedForAuthoringReconciliation.entities.hoodedWoman.mind.recentMemories.push({
+    id: "memory_save_reconcile", summary: "A saved relationship-building moment.", importance: 0.8, protected: false
+});
+savedForAuthoringReconciliation.entities.hoodedWoman.mind.beliefs.push({
+    id: "saved_belief", text: "The traveler is interesting.", confidence: "medium"
+});
+savedForAuthoringReconciliation.entities.hoodedWoman.mind.relationships.push({
+    targetCharacterId: "player", summary: "A relationship preserved from the save."
+});
+const generatedWithEditedMara = JSON.parse(JSON.stringify(generatedBeforeSaveReconciliation));
+generatedWithEditedMara.characters.hoodedWoman.aiDescription = "New editor-authored Mara prompt.";
+setup.GeneratedWorldData = generatedWithEditedMara;
+State.variables.world = savedForAuthoringReconciliation;
+assertOk(setup.Game.bootstrap(), "compatible save should reconcile current character AI description");
+world = setup.Game.getWorld();
+assert(world.entities.hoodedWoman.aiDescription === "New editor-authored Mara prompt.",
+    "current generated aiDescription should replace the saved authoring copy");
+assert(world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.id === "memory_save_reconcile"; }) &&
+    world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "saved_belief"; }) &&
+    world.entities.hoodedWoman.mind.relationships.some(function (relationship) { return relationship.summary === "A relationship preserved from the save."; }),
+    "save reconciliation should preserve runtime memories, beliefs, and relationships");
+setup.GeneratedWorldData = generatedBeforeSaveReconciliation;
+assertOk(setup.Game.bootstrap(), "restoring generated authoring data should keep the reconciled save valid");
+world = setup.Game.getWorld();
 world.control.assignments.innkeeper = "human";
 assert(setup.Game.getHumanCharacterId() === "player", "invalid multi-human state should repair to player");
 assertOk(setup.Game.validateWorld(), "world should validate after controller repair");

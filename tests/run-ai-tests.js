@@ -175,7 +175,10 @@ async function main() {
     assert(malformed.error.code === "MALFORMED_PROVIDER_RESPONSE", "malformed provider body should normalize");
 
     assert(setup.AIProtocol.extractObject("```json\n{\"action\":null}\n```").action === null, "protocol should extract fenced JSON");
-    const available = { move: { schema: { properties: { type: {}, destination_id: {} }, required: ["type", "destination_id"] } } };
+    const available = { move: {
+        schema: { properties: { type: {}, destination_id: {} }, required: ["type", "destination_id"] },
+        options: { destination_ids: ["bar"] }
+    } };
     const validationMessages = setup.AIProtocol.decisionMessages({
         schemaVersion: 1,
         view: { available_actions: available },
@@ -197,8 +200,11 @@ async function main() {
         decisionPrompt.includes("generic assistant-like or functional NPC replies") &&
         decisionPrompt.includes("one or two short narrative sentences plus dialogue") &&
         decisionPrompt.includes("Do not force narration or speech into every response") &&
-        decisionPrompt.includes("must not claim that the formal action successfully changed the world before the engine confirms it"),
-        "technical prompt should encourage concise characterful role-play without weakening grounded action authority");
+        decisionPrompt.includes("only a request and is still unconfirmed") &&
+        decisionPrompt.includes("must not claim that the formal action successfully changed the world before the engine confirms it") &&
+        decisionPrompt.includes("Memory updates in the same response must also avoid recording the requested formal action as completed") &&
+        decisionPrompt.includes("Only after a grounded engine result arrives in a later observation"),
+        "technical prompt should encourage concise characterful role-play while keeping pending actions and memory grounded");
     const tracedProviderFailure = await setup.AIProtocol.requestValidated(validationMessages, "decision", {
         chat: async function () { return detailedRateLimited; }
     });
@@ -210,6 +216,33 @@ async function main() {
         "valid no-action decision should pass");
     assert(setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available).ok,
         "valid single action decision should pass");
+    const unavailableMove = setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "street" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available);
+    assert(!unavailableMove.ok && unavailableMove.errors.some(function (error) { return error.includes("selected unavailable option") && error.includes("street"); }),
+        "action protocol should reject structurally valid values outside current view options");
+
+    const optionCatalog = {
+        take_item: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["mug"] } },
+        drop_item: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["mug"] } },
+        give_item: { schema: { properties: { type: {}, target_id: {}, item_id: {} }, required: ["type", "target_id", "item_id"] }, options: { target_ids: ["player"], item_ids: ["mug"] } },
+        give_money: { schema: { properties: { type: {}, target_id: {}, amount: { type: "integer", minimum: 1 } }, required: ["type", "target_id", "amount"] }, options: { target_ids: ["player"], maximum_amount: 3 } },
+        place_item: { schema: { properties: { type: {}, item_id: {}, target_inventory_id: {} }, required: ["type", "item_id", "target_inventory_id"] }, options: { item_ids: ["mug"], target_inventory_ids: ["table"] } },
+        fill: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["mug"] } },
+        consume: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["ale"] } }
+    };
+    function optionDecision(action) {
+        return setup.AIProtocol.validateDecision({ action: action, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, optionCatalog);
+    }
+    assert(!optionDecision({ type: "take_item", item_id: "missing" }).ok &&
+        !optionDecision({ type: "drop_item", item_id: "missing" }).ok &&
+        !optionDecision({ type: "give_item", target_id: "missing", item_id: "mug" }).ok &&
+        !optionDecision({ type: "give_item", target_id: "player", item_id: "missing" }).ok &&
+        !optionDecision({ type: "give_money", target_id: "missing", amount: 1 }).ok &&
+        !optionDecision({ type: "give_money", target_id: "player", amount: 4 }).ok &&
+        !optionDecision({ type: "place_item", item_id: "mug", target_inventory_id: "missing" }).ok &&
+        !optionDecision({ type: "fill", item_id: "missing" }).ok &&
+        !optionDecision({ type: "consume", item_id: "missing" }).ok &&
+        optionDecision({ type: "give_item", target_id: "player", item_id: "mug" }).ok,
+        "current action options should constrain item, target, destination, inventory, and amount parameters");
     assert(!setup.AIProtocol.validateDecision({ action: [{ type: "move" }], publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available).ok,
         "multiple actions should be rejected");
     assert(setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
@@ -239,6 +272,19 @@ async function main() {
     assert(repairedProtocol.ok && repairCalls === 2 && repairedProtocol.trace.attempts.length === 2 &&
         repairMessages.some(function (message) { return message.role === "user" && message.content.includes("Model response must contain one JSON object only"); }),
         "malformed JSON should trigger one repair request containing the concrete validation error");
+    let optionRepairCalls = 0;
+    let optionRepairMessages = null;
+    const optionRepairClient = { chat: async function (messages) {
+        optionRepairCalls++;
+        optionRepairMessages = messages;
+        return optionRepairCalls === 1
+            ? response({ action: { type: "move", destination_id: "street" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() })
+            : response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
+    } };
+    const optionRepaired = await setup.AIProtocol.requestValidated(validationMessages, "decision", optionRepairClient);
+    assert(optionRepaired.ok && optionRepairCalls === 2 && optionRepairMessages.some(function (message) {
+        return message.role === "user" && message.content.includes("selected unavailable option") && message.content.includes("street");
+    }), "unavailable concrete action options should enter the normal protocol repair path with a concrete error");
     repairCalls = 0;
     const badRepair = { chat: async function () { repairCalls++; return { ok: true, content: "still bad" }; } };
     assert(!(await setup.AIProtocol.requestValidated(validationMessages, "decision", badRepair)).ok && repairCalls === 2,
@@ -392,13 +438,17 @@ async function main() {
     "successful single-request turn should consume supplied IDs only and requeue the actor for observations that arrived during the request");
 
     world = queueHooded(); stage = 0;
-    const failedActionClient = { chat: async function () { stage++; return response({
-        action: { type: "take_item", item_id: "missing" }, publicNarrative: "She reaches for something that is not there.", spokenText: null, memoryUpdates: emptyUpdates()
-    }); } };
+    const failedActionClient = { chat: async function () {
+        stage++;
+        world.entities.hoodedWoman.sublocationId = "commonRoomFloor";
+        return response({
+            action: { type: "move_within_location", destination_id: "commonRoomFloor" }, publicNarrative: "She starts to rise from the table.", spokenText: null, memoryUpdates: emptyUpdates()
+        });
+    } };
     const failedActionTurn = await setup.AIController.takeNextTurn(failedActionClient);
-    assert(failedActionTurn.ok && failedActionTurn.actionResult.error.code === "ITEM_NOT_FOUND" && stage === 1 &&
+    assert(failedActionTurn.ok && failedActionTurn.actionResult.error.code === "ALREADY_AT_SUBLOCATION" && stage === 1 &&
         setup.AITurnQueue.peek().characterId === "hoodedWoman",
-        "grounded formal-action failure should complete the turn and remain as an observation for the next reaction wave");
+        "an action that was available in the request but becomes stale before execution should still fail at the engine boundary and remain as a grounded observation");
 
     world = queueHooded();
     const beforeRollback = JSON.stringify(world);

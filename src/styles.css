@@ -79,8 +79,11 @@
 }
 
 .framework-narrative-action textarea {
-    min-height: 12rem;
-    resize: vertical;
+    min-height: 2.35rem;
+    max-height: 12rem;
+    resize: none;
+    overflow-y: hidden;
+    line-height: 1.35;
 }
 
 .framework-narrative-controls {
@@ -130,19 +133,6 @@
     font-weight: bold;
 }
 
-.framework-debug {
-    margin-top: 1rem;
-}
-
-.framework-debug pre {
-    max-height: 420px;
-    overflow: auto;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    padding: 0.7rem;
-    border: 1px solid #555;
-    background: rgba(0, 0, 0, 0.25);
-}
 
 .prompt-lab-panel {
     margin: 1.5rem 0;
@@ -528,6 +518,14 @@
     .framework-spinner.is-visible {
         animation-duration: 1.8s;
     }
+}
+
+.framework-turn-panel {
+    margin-top: 1.25rem;
+}
+
+.framework-narrative-action {
+    margin: 0;
 }
 
 .framework-narrative-action textarea {

@@ -120,6 +120,32 @@
         return errors;
     }
 
+    function validateActionOptions(action, actionDefinition, path) {
+        const errors = [];
+        const options = isPlainObject(actionDefinition && actionDefinition.options) ? actionDefinition.options : {};
+        const optionKeys = {
+            destination_id: "destination_ids",
+            item_id: "item_ids",
+            target_id: "target_ids",
+            target_inventory_id: "target_inventory_ids"
+        };
+
+        Object.entries(optionKeys).forEach(function (entry) {
+            const propertyKey = entry[0];
+            const optionKey = entry[1];
+            if (!Object.prototype.hasOwnProperty.call(action, propertyKey) || !Array.isArray(options[optionKey])) return;
+            if (!options[optionKey].includes(action[propertyKey])) {
+                errors.push(`${path}.${propertyKey} selected unavailable option ${JSON.stringify(action[propertyKey])}.`);
+            }
+        });
+
+        if (Object.prototype.hasOwnProperty.call(action, "amount") && typeof options.maximum_amount === "number" &&
+                typeof action.amount === "number" && action.amount > options.maximum_amount) {
+            errors.push(`${path}.amount exceeds currently available maximum ${options.maximum_amount}.`);
+        }
+        return errors;
+    }
+
     function finishValidation(value, errors) {
         return errors.length === 0
             ? { ok: true, value: value, errors: [] }
@@ -139,7 +165,10 @@
             } else {
                 const actionDefinition = actionCatalog && actionCatalog[value.action.type];
                 if (!actionDefinition) errors.push(`response.action.type selected unavailable action ${JSON.stringify(value.action.type)}.`);
-                else errors.push.apply(errors, validateActionProperties(value.action, actionDefinition, "response.action"));
+                else {
+                    errors.push.apply(errors, validateActionProperties(value.action, actionDefinition, "response.action"));
+                    errors.push.apply(errors, validateActionOptions(value.action, actionDefinition, "response.action"));
+                }
             }
         }
         return finishValidation(value, errors);
@@ -158,7 +187,7 @@
         const stageRule = stage === "decision"
             ? "Return exactly the keys action, publicNarrative, spokenText, and memoryUpdates. action is null or one available formal action and may accompany speech or narrative behavior. Choose an action only when it serves the character's current goals or answers the situation, but do not merely promise future work when a practical first step is available now. When a goal requires multiple formal actions, choose only the first currently available step. After a grounded result arrives in a later observation, reevaluate the current view, view.available_actions, and new observations, then continue with the next available step when appropriate. Use a minimal recent memory update only when needed to retain the brief current goal and meaningful progress between reaction waves; do not write a detailed predetermined plan. Stop when the goal is complete, impossible, abandoned, or requires a new decision or action from another character. After failure, use the grounded feedback and do not blindly repeat the same action. The engine executes the selected action after this response. Do not claim through narrative or speech that a physical result succeeded before the engine confirms it; its grounded result will arrive later as an ordinary observation."
             : "Return exactly the keys publicNarrative, spokenText, and memoryUpdates. Do not choose another action; react only to the supplied grounded action result.";
-        const styleRule = "Treat each response as a moment in an ongoing role-playing scene, not merely as action selection or protocol completion. When natural, use publicNarrative for brief visible behavior such as expression, posture, gesture, hesitation, attention, or other atmospheric detail, and use spokenText for natural dialogue in this particular character's own voice. Let the supplied character description, memories, beliefs, relationships, and current situation shape that voice. Prefer concrete, characterful phrasing over generic assistant-like or functional NPC replies. Keep it concise by default: one or two short narrative sentences plus dialogue is usually enough when both are useful. Do not force narration or speech into every response; silence, null fields, or an action-only response remain valid when natural. Do not repeat information just to make the response longer. When selecting a formal action, narrative may describe accompanying non-state-changing behavior, preparation, expression, or intent, but it must not claim that the formal action successfully changed the world before the engine confirms it.";
+        const styleRule = "Treat each response as a moment in an ongoing role-playing scene, not merely as action selection or protocol completion. When natural, use publicNarrative for brief visible behavior such as expression, posture, gesture, hesitation, attention, or other atmospheric detail, and use spokenText for natural dialogue in this particular character's own voice. Let the supplied character description, memories, beliefs, relationships, and current situation shape that voice. Prefer concrete, characterful phrasing over generic assistant-like or functional NPC replies. Keep it concise by default: one or two short narrative sentences plus dialogue is usually enough when both are useful. Do not force narration or speech into every response; silence, null fields, or an action-only response remain valid when natural. Do not repeat information just to make the response longer. A formal action selected in this response is only a request and is still unconfirmed until the engine returns a later grounded result. When selecting a formal action, narrative or speech may describe accompanying non-state-changing behavior, preparation, expression, intent, or anticipation, but must not claim that the formal action successfully changed the world before the engine confirms it. Memory updates in the same response must also avoid recording the requested formal action as completed: do not add a recent memory, belief, or relationship summary that asserts unconfirmed success. A brief pending goal or preparation state is allowed when useful for multi-step continuity. Only after a grounded engine result arrives in a later observation may narration, speech, memories, beliefs, or relationships treat that result as confirmed.";
         return `You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else: no markdown fence, prose, chain-of-thought, hidden reasoning, patches, or extra fields. ${stageRule} ${styleRule} memoryUpdates must always contain exactly recentMemoriesToAdd, beliefsToUpsert, and relationshipsToUpsert, even when all are empty arrays. A recent memory record is {"summary":"...","importance":0.0}; use summary, never text, and importance must be from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. A relationship record is {"targetCharacterId":"character_id","summary":"..."}.`;
     }
 

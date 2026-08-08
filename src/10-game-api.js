@@ -570,6 +570,22 @@
         return spatialResult.ok ? validateItemInvariants(world) : spatialResult;
     }
 
+    function reconcileCurrentAuthoringData(world) {
+        const generated = setup.GeneratedWorldData && setup.GeneratedWorldData.characters;
+        if (!world || !world.entities || !generated) return world;
+
+        Object.entries(generated).forEach(function (entry) {
+            const characterId = entry[0];
+            const sourceCharacter = entry[1] || {};
+            const runtimeCharacter = world.entities[characterId];
+            if (!runtimeCharacter || runtimeCharacter.type !== "character") return;
+            runtimeCharacter.aiDescription = typeof sourceCharacter.aiDescription === "string"
+                ? sourceCharacter.aiDescription
+                : "";
+        });
+        return world;
+    }
+
     function ensureWorld() {
         const current = State.variables.world;
 
@@ -578,6 +594,7 @@
         }
 
         const world = getWorld();
+        reconcileCurrentAuthoringData(world);
 
         if (!world.debug) {
             world.debug = {

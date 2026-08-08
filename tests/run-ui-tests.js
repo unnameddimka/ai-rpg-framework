@@ -106,6 +106,17 @@ assert(gameUIModel.actionAvailableInView({ type: "move", destination_id: "street
     !gameUIModel.actionAvailableInView({ type: "move", destination_id: "missing" }, contextualView) &&
     gameUIModel.actionLabel({ type: "take_item", item_id: "cabinetMug" }, contextualView) === "Take Empty mug",
     "selected actions should be validated and labeled from the current canonical view");
+const conversationState = { interactionTargetId: "innkeeper", narrativeNoticeability: "hidden" };
+gameUIModel.reconcileConversationState(contextualView, conversationState);
+assert(conversationState.interactionTargetId === "innkeeper" && conversationState.narrativeNoticeability === "hidden",
+    "conversation state should preserve a still-visible addressee and quiet loudness across rerenders");
+gameUIModel.reconcileConversationState({ location: { characters: [] } }, conversationState);
+assert(conversationState.interactionTargetId === "" && conversationState.narrativeNoticeability === "hidden",
+    "conversation state should clear an unavailable addressee without resetting loudness");
+const fakeTextarea = { style: {}, scrollHeight: 72, clientHeight: 40 };
+gameUIModel.resizeNarrativeTextarea(fakeTextarea);
+assert(fakeTextarea.style.height === "72px" && fakeTextarea.style.overflowY === "auto",
+    "auto-growing narrative input should size itself from content and allow overflow only beyond its visible height");
 assert(uiSource.includes("framework-contextual-actions") && uiSource.includes('title: "Characters"') &&
     uiSource.includes('title: "Here"') && uiSource.includes('title: "Travel"') &&
     !uiSource.includes("setup.CharacterAPI.perform") &&
@@ -134,9 +145,12 @@ assert(uiSource.includes('id="stop-auto-ai-processing"') &&
 assert(uiSource.includes('id="action-submit"') && uiSource.includes('id="action-pass"') &&
     uiSource.includes('name="formal-action"') && uiSource.includes('value=""') &&
     uiSource.includes("setup.TurnFlow.submitHumanIntent") && uiSource.includes("setup.TurnFlow.pass") &&
-    uiSource.includes("Your turn &mdash;") && uiSource.includes("Submit turn") &&
-    uiSource.includes("Advanced formal actions") && uiSource.includes("Selected action:"),
-    "turn UI should submit narrative plus one shared selected formal action or explicitly pass");
+    uiSource.includes("Submit turn") && uiSource.includes("Advanced formal actions") && uiSource.includes("Selected action:") &&
+    uiSource.includes('id="action-narrative-text" rows="1"') && uiSource.includes("resizeNarrativeTextarea") &&
+    uiSource.includes("narrativeNoticeability") && uiSource.includes("reconcileConversationState") &&
+    uiSource.includes('actionRoot.className = "framework-turn-panel"') &&
+    !uiSource.includes("Your turn &mdash;") && !uiSource.includes("Framework debug"),
+    "turn UI should stay minimal, auto-grow narrative input, preserve conversation settings, and submit one shared action or Pass");
 assert(uiSource.includes('id="action-fill-item"') && uiSource.includes('id="action-consume-item"') &&
     uiSource.includes('["fill", "consume"]') && !uiSource.includes("pour_ale"),
     "human controls should derive fill and consume from item actions and expose no source-less pour action");

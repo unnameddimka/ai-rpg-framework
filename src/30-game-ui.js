@@ -36,6 +36,7 @@
         if (!State.variables.frameworkUI) {
             State.variables.frameworkUI = {
                 interactionTargetId: "",
+                narrativeNoticeability: "noticeable",
                 selectedAction: null,
                 locationStatus: "",
                 turnNarrative: [],
@@ -53,6 +54,9 @@
             State.variables.frameworkUI.selectedAction = null;
         }
         State.variables.frameworkUI.interactionTargetId = String(State.variables.frameworkUI.interactionTargetId || "");
+        State.variables.frameworkUI.narrativeNoticeability = State.variables.frameworkUI.narrativeNoticeability === "hidden"
+            ? "hidden"
+            : "noticeable";
         State.variables.frameworkUI.turnBusy = Boolean(State.variables.frameworkUI.turnBusy);
         return State.variables.frameworkUI;
     }
@@ -171,6 +175,25 @@
     function setControlValue(id, value) {
         const control = document.getElementById(id);
         if (control && value !== undefined && value !== null) control.value = String(value);
+    }
+
+    function reconcileConversationState(view, state) {
+        const uiState = state || getUIState();
+        const visibleTargets = view && view.location && Array.isArray(view.location.characters)
+            ? view.location.characters
+            : [];
+        if (!visibleTargets.some(function (target) { return target.id === uiState.interactionTargetId; })) {
+            uiState.interactionTargetId = "";
+        }
+        uiState.narrativeNoticeability = uiState.narrativeNoticeability === "hidden" ? "hidden" : "noticeable";
+        return uiState;
+    }
+
+    function resizeNarrativeTextarea(textarea) {
+        if (!textarea || !textarea.style) return;
+        textarea.style.height = "auto";
+        textarea.style.height = `${textarea.scrollHeight || 0}px`;
+        textarea.style.overflowY = textarea.scrollHeight > textarea.clientHeight ? "auto" : "hidden";
     }
 
     function syncActionSelectionUI(view) {
@@ -1095,11 +1118,10 @@
 
         const actorId = setup.Game.getHumanCharacterId();
         const view = setup.CharacterAPI.getView(actorId);
-        const world = setup.Game.getWorld();
-        const uiState = getUIState();
+        const uiState = reconcileConversationState(view, getUIState());
         const actionRoot = document.createElement("section");
         actionRoot.id = "framework-action-panel";
-        actionRoot.className = "framework-panel";
+        actionRoot.className = "framework-turn-panel";
 
         const moveOptions = view.location.exits || [];
         const takeOptions = view.accessible_inventories.flatMap(function (inventory) { return inventory.items; });
@@ -1108,7 +1130,6 @@
         const giveItemAction = view.available_actions.give_item;
         const reachableTargetIds = giveItemAction ? giveItemAction.options.target_ids : [];
         const reachableTargets = visibleTargets.filter(function (target) { return reachableTargetIds.includes(target.id); });
-        const recentEvents = world.events.slice(-12);
         const internalAction = view.available_actions.move_within_location;
         const internalDestinations = internalAction ? internalAction.options.destination_ids.map(function (id) {
             const position = view.location.sublocations.find(function (candidate) { return candidate.id === id; });
@@ -1152,16 +1173,14 @@
         })).join("");
 
         actionRoot.innerHTML = `
-            <h3>Your turn &mdash; ${escapeHtml(view.self.name)}</h3>
             <div class="framework-busy-row" aria-live="polite">
                 <span class="framework-spinner${busy ? " is-visible" : ""}" aria-hidden="true"></span>
                 <span id="framework-busy-text">${escapeHtml(busyState.text)}</span>
             </div>
             <div id="framework-action-status" class="framework-status"></div>
 
-            <fieldset class="framework-narrative-action"${busy ? " disabled" : ""}>
-                <legend>Narrative / speech</legend>
-                <textarea id="action-narrative-text" rows="8" placeholder="Speech outside *asterisks*, actions inside them. Leave empty to act silently."${disabledAttribute}></textarea>
+            <div class="framework-narrative-action">
+                <textarea id="action-narrative-text" rows="1" placeholder="Say or do something..."${disabledAttribute}></textarea>
                 <div class="framework-narrative-controls">
                     <label>Addressee<select id="action-narrative-target"${disabledAttribute}>
                         <option value="">No addressee</option>
@@ -1172,7 +1191,7 @@
                         <option value="hidden">Quiet / private</option>
                     </select></label>
                 </div>
-            </fieldset>
+            </div>
 
             <section class="framework-selected-action">
                 <div><strong>Selected action:</strong> <span id="selected-action-label">${escapeHtml(actionLabel(selectedAction, view))}</span></div>
@@ -1190,25 +1209,17 @@
                 <button id="action-pass"${(busy || (queue.head && !aiSettings.hasKey)) ? " disabled" : ""}>Pass</button>
             </div>
 
-            <details class="framework-debug">
-                <summary>Framework debug</summary>
-                <h4>Character view</h4>
-                <pre>${escapeHtml(JSON.stringify(view, null, 2))}</pre>
-                <h4>Last action result</h4>
-                <pre>${escapeHtml(formatResult(world.debug.lastActionResult))}</pre>
-                <h4>Recent confirmed events</h4>
-                <pre>${escapeHtml(JSON.stringify(recentEvents, null, 2))}</pre>
-                <h4>Controller log</h4>
-                <pre>${escapeHtml(JSON.stringify(world.debug.controllerLog.slice(-20), null, 2))}</pre>
-            </details>
         `;
 
         passage.appendChild(actionRoot);
 
-        if (!visibleTargets.some(function (target) { return target.id === uiState.interactionTargetId; })) {
-            uiState.interactionTargetId = "";
-        }
         $("#action-narrative-target").val(uiState.interactionTargetId);
+        $("#action-narrative-noticeability").val(uiState.narrativeNoticeability);
+        const narrativeTextarea = document.getElementById("action-narrative-text");
+        resizeNarrativeTextarea(narrativeTextarea);
+        $("#action-narrative-text").on("input", function () {
+            resizeNarrativeTextarea(this);
+        });
 
         function collectFormalActionFromControls() {
             const type = $("input[name='formal-action']:checked").val();
@@ -1233,6 +1244,9 @@
                 button.classList.toggle("is-selected", button.dataset.characterId === uiState.interactionTargetId);
             });
         });
+        $("#action-narrative-noticeability").on("change", function () {
+            uiState.narrativeNoticeability = $(this).val() === "hidden" ? "hidden" : "noticeable";
+        });
 
         $("input[name='formal-action']").on("change", function () {
             setSelectedAction($(this).val() ? collectFormalActionFromControls() : null, view);
@@ -1251,10 +1265,12 @@
                 return;
             }
             $(this).prop("disabled", true);
+            uiState.interactionTargetId = $("#action-narrative-target").val() || "";
+            uiState.narrativeNoticeability = $("#action-narrative-noticeability").val() === "hidden" ? "hidden" : "noticeable";
             await runHumanIntent({
                 text: text,
-                target_id: $("#action-narrative-target").val(),
-                noticeability: $("#action-narrative-noticeability").val(),
+                target_id: uiState.interactionTargetId,
+                noticeability: uiState.narrativeNoticeability,
                 action: cloneUIValue(action)
             }, Boolean(action && action.type === "move"));
         });
@@ -1299,6 +1315,8 @@
         buildContextualActionGroups: buildContextualActionGroups,
         actionAvailableInView: actionAvailableInView,
         actionLabel: actionLabel,
+        reconcileConversationState: reconcileConversationState,
+        resizeNarrativeTextarea: resizeNarrativeTextarea,
         busyState: getBusyState
     };
 
