@@ -50,6 +50,14 @@ function registerInventory(owners, id, owner) {
     owners.set(id, owner);
 }
 
+function registerTechnicalId(owners, id, owner) {
+    requireCondition(nonBlank(id), `${owner} must define a technical ID.`);
+    if (owners.has(id)) {
+        throw new Error(`Duplicate technical ID '${id}' is used by both ${owners.get(id)} and ${owner}.`);
+    }
+    owners.set(id, owner);
+}
+
 function validateMind(mind, characterId) {
     requireCondition(isObject(mind), `Character ${characterId} must define initialMind.`);
     for (const listName of ["knownFacts", "beliefs", "relationships", "recentMemories", "longTermMemories"]) {
@@ -93,9 +101,11 @@ function validateWorld(document) {
 
     const passageOwners = new Map();
     const inventoryOwners = new Map();
+    const technicalIdOwners = new Map();
 
     for (const [id, location] of entries(document.locations)) {
         requireCondition(isObject(location) && location.id === id, `Location key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `location ${id}`);
         const passage = String(location.passage || "");
         requireCondition(nonBlank(passage) && !/[\r\n\[\]]/.test(passage),
             `Location ${id} has an invalid Twine passage name.`);
@@ -110,6 +120,7 @@ function validateWorld(document) {
         for (const [sublocationId, sublocation] of entries(location.sublocations)) {
             requireCondition(isObject(sublocation) && sublocation.id === sublocationId && sublocation.locationId === id,
                 `Sublocation ${sublocationId} has invalid identity or parent.`);
+            registerTechnicalId(technicalIdOwners, sublocationId, `sublocation ${sublocationId}`);
             if (nonBlank(String(sublocation.inventoryId || ""))) {
                 registerInventory(inventoryOwners, String(sublocation.inventoryId), `sublocation ${sublocationId}`);
             }
@@ -127,6 +138,7 @@ function validateWorld(document) {
     for (const [id, definition] of entries(document.itemDefinitions)) {
         requireCondition(isObject(definition) && definition.id === id,
             `Item definition key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `item definition ${id}`);
         requireCondition(nonBlank(definition.name) && nonBlank(definition.familyId),
             `Item definition ${id} needs a name and familyId.`);
         requireCondition(Array.isArray(definition.tags), `Item definition ${id} tags must be an array.`);
@@ -160,6 +172,7 @@ function validateWorld(document) {
 
     for (const [id, ability] of entries(document.abilities)) {
         requireCondition(isObject(ability) && ability.id === id, `Ability key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `ability ${id}`);
         requireCondition(knownActions.has(String(ability.actionType)),
             `Ability ${id} references unknown action '${ability.actionType}'.`);
     }
@@ -167,6 +180,7 @@ function validateWorld(document) {
     let humanCount = 0;
     for (const [id, character] of entries(document.characters)) {
         requireCondition(isObject(character) && character.id === id, `Character key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `character ${id}`);
         requireCondition(nonBlank(character.name), `Character ${id} needs a name.`);
         requireCondition(nonBlank(character.playerDescription) && nonBlank(character.aiDescription),
             `Character ${id} needs public and AI descriptions.`);
@@ -210,6 +224,7 @@ function validateWorld(document) {
 
     for (const [id, item] of entries(document.items)) {
         requireCondition(isObject(item) && item.id === id, `Item key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `item ${id}`);
         requireCondition(own(document.itemDefinitions, String(item.definitionId || "")),
             `Item ${id} references missing definition '${item.definitionId}'.`);
         requireCondition(inventoryOwners.has(String(item.inventoryId || "")),

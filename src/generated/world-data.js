@@ -247,7 +247,7 @@
   "characters": {
     "player": {
       "id": "player",
-      "name": "You",
+      "name": "Traveler",
       "playerDescription": "A rain-soaked traveller takes in the surroundings.",
       "interactionLabel": "Speak with the traveller",
       "aiDescription": "You are a traveller newly arrived at a roadside tavern.",

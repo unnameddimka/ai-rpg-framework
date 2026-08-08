@@ -29,10 +29,10 @@ rejects(function (doc) { doc.locations.bar.passage = doc.locations.tavernEntranc
 rejects(function (doc) { doc.characters.player.inventoryId = doc.locations.bar.inventoryId; }, "Duplicate inventory");
 rejects(function (doc) { doc.characters.player.initialControllerId = "dummy"; }, "Exactly one");
 rejects(function (doc) { doc.abilities.readAura.actionType = "execute_code"; }, "unknown action");
-rejects(function (doc) { doc.items.emptyMug_1.definitionId = "missing"; }, "missing item definition");
-rejects(function (doc) { doc.items.emptyMug_1.containerId = "inventory_missing"; }, "missing inventory");
-rejects(function (doc) { doc.itemDefinitions.mugOfAle.consumable.resultDefinitionId = "missing"; }, "consumable references missing result");
-rejects(function (doc) { doc.itemDefinitions.emptyMug.fillable.resultDefinitionId = "missing"; }, "fillable references missing result");
+rejects(function (doc) { doc.items.emptyMug_1.definitionId = "missing"; }, "references missing definition");
+rejects(function (doc) { doc.items.emptyMug_1.inventoryId = "inventory_missing"; }, "missing inventory");
+rejects(function (doc) { doc.itemDefinitions.mugOfAle.consumeAction.resultDefinitionId = "missing"; }, "references missing result definition");
+rejects(function (doc) { doc.itemDefinitions.emptyMug.fillAction.resultDefinitionId = "missing"; }, "references missing result definition");
 rejects(function (doc) {
     doc.itemDefinitions.cleaningRag = clone(doc.itemDefinitions.cleaningRagType);
     doc.itemDefinitions.cleaningRag.id = "cleaningRag";

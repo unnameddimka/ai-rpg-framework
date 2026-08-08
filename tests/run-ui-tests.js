@@ -66,6 +66,59 @@ assert(model.getActorAbilityResult(state, "player").marker === "private-player" 
     model.getActorAbilityResult(state, "hoodedWoman") === null,
     "displayed private results should be isolated by controlled actor ID");
 
+
+const gameUIModel = context.setup.GameUIModel;
+const contextualView = {
+    self: {
+        id: "player",
+        name: "Traveler",
+        inventory: [{ id: "mug", name: "Empty mug" }],
+        abilities: [{ id: "readAura", name: "Read aura", playerDescription: "Sense auras.", actionType: "read_aura" }]
+    },
+    location: {
+        characters: [{ id: "innkeeper", name: "Bartender" }],
+        exits: [{ id: "street", name: "Village Street" }],
+        sublocations: [{ id: "bar", name: "Behind the bar", enter_label: "Stand behind the bar" }]
+    },
+    accessible_inventories: [{ id: "cabinet", name: "Mug cabinet", items: [{ id: "cabinetMug", name: "Empty mug" }] }],
+    available_actions: {
+        move: { options: { destination_ids: ["street"] }, schema: { properties: { type: {}, destination_id: {} }, required: ["type", "destination_id"] } },
+        move_within_location: { options: { destination_ids: ["bar"] }, schema: { properties: { type: {}, destination_id: {} }, required: ["type", "destination_id"] } },
+        take_item: { options: { item_ids: ["cabinetMug"] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
+        drop_item: { options: { item_ids: ["mug"] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
+        place_item: { options: { item_ids: ["mug"], target_inventory_ids: ["cabinet"] }, schema: { properties: { type: {}, item_id: {}, target_inventory_id: {} }, required: ["type", "item_id", "target_inventory_id"] } },
+        read_aura: {
+            description: "Read nearby auras.",
+            options: {},
+            schema: { type: "object", properties: { type: { const: "read_aura" } }, required: ["type"] },
+            sources: [{ kind: "character_ability", id: "readAura", name: "Read aura" }]
+        }
+    }
+};
+const groups = gameUIModel.buildContextualActionGroups(contextualView);
+assert(groups.characters.length === 1 && groups.characters[0].label === "Talk to Bartender" &&
+    groups.here.some(function (entry) { return entry.label === "Stand behind the bar"; }) &&
+    groups.here.some(function (entry) { return entry.label === "Take Empty mug"; }) &&
+    groups.here.some(function (entry) { return entry.label === "Read aura"; }) &&
+    groups.travel.length === 1 && groups.travel[0].label === "Go to Village Street",
+    "contextual shortcuts should be grouped into Characters, Here, and Travel from the canonical view");
+assert(gameUIModel.actionAvailableInView({ type: "move", destination_id: "street" }, contextualView) &&
+    !gameUIModel.actionAvailableInView({ type: "move", destination_id: "missing" }, contextualView) &&
+    gameUIModel.actionLabel({ type: "take_item", item_id: "cabinetMug" }, contextualView) === "Take Empty mug",
+    "selected actions should be validated and labeled from the current canonical view");
+assert(uiSource.includes("framework-contextual-actions") && uiSource.includes('title: "Characters"') &&
+    uiSource.includes('title: "Here"') && uiSource.includes('title: "Travel"') &&
+    !uiSource.includes("setup.CharacterAPI.perform") &&
+    !uiSource.includes("Use the narrative or formal-action controls below") &&
+    !uiSource.includes("Back to location"),
+    "normal location shortcuts should select shared turn state without immediate action execution or obsolete interaction panels");
+assert(uiSource.includes("framework-spinner") && uiSource.includes("AIRequestExecutor.getStatus") &&
+    uiSource.includes("AITurnScheduler.isWaveInFlight") && uiSource.includes("is thinking…") &&
+    uiSource.includes("Processing turn…"),
+    "turn panel should expose a spinner and derive busy state from existing AI execution sources");
+assert(uiSource.includes("What ${view.self.name} notices") && uiSource.includes("abilityResultsByActor[result.actorId]"),
+    "grounded private human-action feedback should remain visible after unified Submit");
+
 const aiPanelSource = uiSource.slice(uiSource.indexOf('id="ai-settings-panel"'), uiSource.indexOf("`;", uiSource.indexOf('id="ai-settings-panel"')));
 assert(aiPanelSource.includes("Provider: OpenRouter") && aiPanelSource.includes('id="openrouter-model-select"') &&
     aiPanelSource.includes("${modelOptions}") && aiPanelSource.includes('type="password"') &&
@@ -79,9 +132,11 @@ assert(uiSource.includes('id="stop-auto-ai-processing"') &&
     uiSource.includes("setup.AITurnScheduler.setAutoProcessingPaused"),
     "sidebar should expose a persistent switch that pauses automatic AI processing after Submit");
 assert(uiSource.includes('id="action-submit"') && uiSource.includes('id="action-pass"') &&
-    uiSource.includes('name="formal-action"') && uiSource.includes('value="" checked') &&
-    uiSource.includes("setup.TurnFlow.submitHumanIntent") && uiSource.includes("setup.TurnFlow.pass"),
-    "debug interaction UI should submit narrative plus at most one radio-selected formal action or explicitly pass");
+    uiSource.includes('name="formal-action"') && uiSource.includes('value=""') &&
+    uiSource.includes("setup.TurnFlow.submitHumanIntent") && uiSource.includes("setup.TurnFlow.pass") &&
+    uiSource.includes("Your turn &mdash;") && uiSource.includes("Submit turn") &&
+    uiSource.includes("Advanced formal actions") && uiSource.includes("Selected action:"),
+    "turn UI should submit narrative plus one shared selected formal action or explicitly pass");
 assert(uiSource.includes('id="action-fill-item"') && uiSource.includes('id="action-consume-item"') &&
     uiSource.includes('["fill", "consume"]') && !uiSource.includes("pour_ale"),
     "human controls should derive fill and consume from item actions and expose no source-less pour action");

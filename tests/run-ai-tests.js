@@ -183,6 +183,14 @@ async function main() {
         mind: { knownFacts: [], beliefs: [], relationships: [], recentMemories: [], longTermMemories: [] },
         pendingObservations: []
     });
+    const decisionPrompt = validationMessages[0].content;
+    assert(decisionPrompt.includes("do not merely promise future work") &&
+        decisionPrompt.includes("first currently available step") &&
+        decisionPrompt.includes("reevaluate the current view") &&
+        decisionPrompt.includes("brief current goal and meaningful progress") &&
+        decisionPrompt.includes("do not blindly repeat the same action") &&
+        !decisionPrompt.includes("Prefer action null"),
+        "decision prompt should support multi-step goals across grounded one-action reaction waves");
     const tracedProviderFailure = await setup.AIProtocol.requestValidated(validationMessages, "decision", {
         chat: async function () { return detailedRateLimited; }
     });

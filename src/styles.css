@@ -85,7 +85,7 @@
 
 .framework-narrative-controls {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(8rem, auto);
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
     gap: 0.65rem;
     align-items: end;
 }
@@ -455,5 +455,121 @@
 @media (max-width: 700px) {
     .framework-turn-controls {
         grid-template-columns: 1fr;
+    }
+}
+
+/* Unified contextual shortcuts */
+.framework-contextual-actions {
+    margin: 1.4rem 0 0.5rem;
+    padding-top: 0.35rem;
+    border-top: 1px solid rgba(140, 121, 92, 0.45);
+}
+
+.framework-contextual-group {
+    margin: 0.85rem 0;
+}
+
+.framework-contextual-group h3 {
+    margin: 0 0 0.45rem;
+    font-size: 1rem;
+    opacity: 0.88;
+}
+
+.framework-contextual-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+}
+
+.framework-contextual-buttons button {
+    cursor: pointer;
+}
+
+.framework-contextual-buttons button.is-selected {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+    font-weight: bold;
+}
+
+.framework-contextual-buttons button:disabled {
+    cursor: wait;
+}
+
+/* Turn panel status and selected action */
+.framework-busy-row {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    min-height: 1.6rem;
+    margin: 0.2rem 0 0.45rem;
+    font-weight: bold;
+}
+
+.framework-spinner {
+    width: 1rem;
+    height: 1rem;
+    box-sizing: border-box;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    opacity: 0;
+}
+
+.framework-spinner.is-visible {
+    opacity: 1;
+    animation: framework-spin 0.75s linear infinite;
+}
+
+@keyframes framework-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .framework-spinner.is-visible {
+        animation-duration: 1.8s;
+    }
+}
+
+.framework-narrative-action textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.framework-selected-action {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    margin-top: 0.9rem;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid #666;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.framework-selected-action button {
+    flex: 0 0 auto;
+}
+
+.framework-formal-action-section > summary {
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.framework-private-feedback {
+    margin: 1rem 0 1.4rem;
+    padding: 1rem;
+    border-left: 4px solid #796ca8;
+    background: rgba(121, 108, 168, 0.12);
+}
+
+.framework-private-feedback h3,
+.framework-private-feedback h4 {
+    margin-top: 0;
+}
+
+@media (max-width: 700px) {
+    .framework-selected-action {
+        align-items: stretch;
+        flex-direction: column;
     }
 }

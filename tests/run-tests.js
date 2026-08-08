@@ -45,6 +45,7 @@ load("src/20-controllers.js");
 assertOk(setup.Game.bootstrap(), "bootstrap should produce a valid world");
 let world = setup.Game.getWorld();
 
+assert(world.entities.player.name === "Traveler", "player display name should be Traveler without changing the player ID");
 assert(world.entities.player.sublocationId === "tavernEntranceFloor", "player should start on entrance floor");
 assert(world.entities.innkeeper.sublocationId === "barBehindCounter", "innkeeper should start behind bar");
 assert(world.entities.hoodedWoman.sublocationId === "commonRoomTableOne", "hooded woman should start at table one");

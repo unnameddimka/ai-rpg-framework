@@ -36,6 +36,7 @@
         if (!State.variables.frameworkUI) {
             State.variables.frameworkUI = {
                 interactionTargetId: "",
+                selectedAction: null,
                 locationStatus: "",
                 turnNarrative: [],
                 turnBusy: false,
@@ -48,8 +49,241 @@
         if (!Array.isArray(State.variables.frameworkUI.turnNarrative)) {
             State.variables.frameworkUI.turnNarrative = [];
         }
+        if (!State.variables.frameworkUI.selectedAction || typeof State.variables.frameworkUI.selectedAction !== "object") {
+            State.variables.frameworkUI.selectedAction = null;
+        }
+        State.variables.frameworkUI.interactionTargetId = String(State.variables.frameworkUI.interactionTargetId || "");
         State.variables.frameworkUI.turnBusy = Boolean(State.variables.frameworkUI.turnBusy);
         return State.variables.frameworkUI;
+    }
+
+    function cloneUIValue(value) {
+        return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    }
+
+    function getBusyState() {
+        const uiState = getUIState();
+        const controllerBusy = Boolean(setup.AIController && setup.AIController.isInFlight && setup.AIController.isInFlight());
+        const executorStatus = setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus
+            ? setup.AIRequestExecutor.getStatus()
+            : { busy: false };
+        const executorBusy = Boolean(executorStatus && executorStatus.busy);
+        const waveBusy = Boolean(setup.AITurnScheduler && setup.AITurnScheduler.isWaveInFlight && setup.AITurnScheduler.isWaveInFlight());
+        const aiBusy = controllerBusy || executorBusy || waveBusy;
+        const busy = uiState.turnBusy || aiBusy;
+        let text = "";
+        if (busy) {
+            if (aiBusy) {
+                const queue = setup.AITurnScheduler && setup.AITurnScheduler.getQueueView
+                    ? setup.AITurnScheduler.getQueueView()
+                    : null;
+                text = queue && queue.head && queue.head.recipientName
+                    ? `${queue.head.recipientName} is thinking…`
+                    : "AI is thinking…";
+            } else {
+                text = "Processing turn…";
+            }
+        }
+        return { busy: busy, aiBusy: aiBusy, text: text };
+    }
+
+    function actionKey(action) {
+        return action ? JSON.stringify(action) : "";
+    }
+
+    function findViewItem(view, itemId) {
+        const owned = view && view.self && Array.isArray(view.self.inventory) ? view.self.inventory : [];
+        const accessible = view && Array.isArray(view.accessible_inventories)
+            ? view.accessible_inventories.flatMap(function (inventory) { return inventory.items || []; })
+            : [];
+        return owned.concat(accessible).find(function (item) { return item.id === itemId; }) || null;
+    }
+
+    function actionLabel(action, view) {
+        if (!action || !action.type) return "None";
+        const item = action.item_id ? findViewItem(view, action.item_id) : null;
+        const target = action.target_id && view.location.characters.find(function (candidate) { return candidate.id === action.target_id; });
+        const destination = action.destination_id && view.location.exits.find(function (candidate) { return candidate.id === action.destination_id; });
+        const position = action.destination_id && view.location.sublocations.find(function (candidate) { return candidate.id === action.destination_id; });
+        const inventory = action.target_inventory_id && view.accessible_inventories.find(function (candidate) { return candidate.id === action.target_inventory_id; });
+        if (action.type === "move") return `Go to ${destination ? destination.name : action.destination_id}`;
+        if (action.type === "move_within_location") return position ? (position.enter_label || `Move to ${position.name}`) : `Move to ${action.destination_id}`;
+        if (action.type === "take_item") return `Take ${item ? item.name : action.item_id}`;
+        if (action.type === "drop_item") return `Drop ${item ? item.name : action.item_id}`;
+        if (action.type === "give_item") return `Give ${item ? item.name : action.item_id} to ${target ? target.name : action.target_id}`;
+        if (action.type === "give_money") return `Give ${action.amount} gold to ${target ? target.name : action.target_id}`;
+        if (action.type === "place_item") return `Place ${item ? item.name : action.item_id} on ${inventory ? inventory.name : action.target_inventory_id}`;
+        if (action.type === "fill" || action.type === "consume") {
+            const options = view.available_actions[action.type] && view.available_actions[action.type].options && view.available_actions[action.type].options.items || [];
+            const option = options.find(function (candidate) { return candidate.id === action.item_id; });
+            return option && option.action_label || `${action.type === "fill" ? "Fill" : "Consume"} ${item ? item.name : action.item_id}`;
+        }
+        const ability = view.self.abilities.find(function (candidate) { return candidate.actionType === action.type; });
+        const record = view.available_actions[action.type];
+        return ability && ability.name || record && record.description || action.type;
+    }
+
+    function actionAvailableInView(action, view) {
+        if (!action || !action.type || !view.available_actions[action.type]) return false;
+        const options = view.available_actions[action.type].options || {};
+        if (action.type === "move") return (options.destination_ids || []).includes(action.destination_id);
+        if (action.type === "move_within_location") return (options.destination_ids || []).includes(action.destination_id);
+        if (action.type === "take_item") return (options.item_ids || []).includes(action.item_id);
+        if (action.type === "drop_item") return (options.item_ids || []).includes(action.item_id);
+        if (action.type === "give_item") return (options.item_ids || []).includes(action.item_id) && (options.target_ids || []).includes(action.target_id);
+        if (action.type === "give_money") return (options.target_ids || []).includes(action.target_id) && Number.isFinite(Number(action.amount)) && Number(action.amount) > 0 && Number(action.amount) <= Number(options.maximum_amount || 0);
+        if (action.type === "place_item") return (options.item_ids || []).includes(action.item_id) && (options.target_inventory_ids || []).includes(action.target_inventory_id);
+        if (action.type === "fill" || action.type === "consume") return (options.item_ids || []).includes(action.item_id);
+        return isZeroInputAbilityAction(view.available_actions[action.type]);
+    }
+
+    function selectedActionForView(view) {
+        const uiState = getUIState();
+        if (!actionAvailableInView(uiState.selectedAction, view)) {
+            uiState.selectedAction = null;
+        }
+        return uiState.selectedAction;
+    }
+
+    function setSelectedAction(action, view) {
+        getUIState().selectedAction = action ? cloneUIValue(action) : null;
+        syncActionSelectionUI(view);
+    }
+
+    function toggleSelectedAction(action, view) {
+        const current = selectedActionForView(view);
+        setSelectedAction(current && actionKey(current) === actionKey(action) ? null : action, view);
+    }
+
+    function setInteractionTarget(targetId, view) {
+        const uiState = getUIState();
+        const target = view.location.characters.find(function (candidate) { return candidate.id === targetId; });
+        uiState.interactionTargetId = target ? target.id : "";
+        const select = document.getElementById("action-narrative-target");
+        if (select) select.value = uiState.interactionTargetId;
+        document.querySelectorAll(".framework-character-shortcut").forEach(function (button) {
+            button.classList.toggle("is-selected", button.dataset.characterId === uiState.interactionTargetId);
+        });
+        const textarea = document.getElementById("action-narrative-text");
+        if (textarea && !textarea.disabled) textarea.focus();
+    }
+
+    function setControlValue(id, value) {
+        const control = document.getElementById(id);
+        if (control && value !== undefined && value !== null) control.value = String(value);
+    }
+
+    function syncActionSelectionUI(view) {
+        const selected = selectedActionForView(view);
+        const key = actionKey(selected);
+        document.querySelectorAll(".framework-context-action").forEach(function (button) {
+            button.classList.toggle("is-selected", button.dataset.actionKey === key && Boolean(key));
+            button.setAttribute("aria-pressed", button.dataset.actionKey === key && Boolean(key) ? "true" : "false");
+        });
+        const label = document.getElementById("selected-action-label");
+        if (label) label.textContent = actionLabel(selected, view);
+        const clear = document.getElementById("clear-selected-action");
+        if (clear) clear.disabled = !selected || getBusyState().busy;
+
+        const noAction = document.querySelector('input[name="formal-action"][value=""]');
+        if (noAction) noAction.checked = !selected;
+        document.querySelectorAll('input[name="formal-action"]').forEach(function (radio) {
+            if (radio.value) radio.checked = Boolean(selected && radio.value === selected.type);
+        });
+        if (!selected) return;
+        if (selected.type === "move") setControlValue("action-move-destination", selected.destination_id);
+        if (selected.type === "move_within_location") setControlValue("action-move-within-destination", selected.destination_id);
+        if (selected.type === "take_item") setControlValue("action-take-item", selected.item_id);
+        if (selected.type === "drop_item") setControlValue("action-drop-item", selected.item_id);
+        if (selected.type === "give_item") {
+            setControlValue("action-give-item", selected.item_id);
+            setControlValue("action-give-item-target", selected.target_id);
+        }
+        if (selected.type === "give_money") {
+            setControlValue("action-money-amount", selected.amount);
+            setControlValue("action-money-target", selected.target_id);
+        }
+        if (selected.type === "place_item") {
+            setControlValue("action-place-item", selected.item_id);
+            setControlValue("action-place-inventory", selected.target_inventory_id);
+        }
+        if (selected.type === "fill") setControlValue("action-fill-item", selected.item_id);
+        if (selected.type === "consume") setControlValue("action-consume-item", selected.item_id);
+    }
+
+    function buildContextualActionGroups(view) {
+        const groups = { characters: [], here: [], travel: [] };
+        (view.location.characters || []).forEach(function (character) {
+            groups.characters.push({ kind: "character", label: `Talk to ${character.name}`, characterId: character.id });
+        });
+
+        const internalAction = view.available_actions.move_within_location;
+        (internalAction && internalAction.options.destination_ids || []).forEach(function (destinationId) {
+            const destination = view.location.sublocations.find(function (candidate) { return candidate.id === destinationId; });
+            if (destination) groups.here.push({ kind: "action", label: destination.enter_label || `Move to ${destination.name}`, action: { type: "move_within_location", destination_id: destination.id } });
+        });
+
+        const takeAction = view.available_actions.take_item;
+        const takeIds = takeAction && takeAction.options.item_ids || [];
+        const seenTake = new Set();
+        (view.accessible_inventories || []).forEach(function (inventory) {
+            (inventory.items || []).forEach(function (item) {
+                if (takeIds.includes(item.id) && !seenTake.has(item.id)) {
+                    seenTake.add(item.id);
+                    groups.here.push({ kind: "action", label: `Take ${item.name}`, action: { type: "take_item", item_id: item.id } });
+                }
+            });
+        });
+
+        const dropAction = view.available_actions.drop_item;
+        const dropIds = dropAction && dropAction.options.item_ids || [];
+        (view.self.inventory || []).forEach(function (item) {
+            if (dropIds.includes(item.id)) groups.here.push({ kind: "action", label: `Drop ${item.name}`, action: { type: "drop_item", item_id: item.id } });
+        });
+
+        const placeAction = view.available_actions.place_item;
+        const placeIds = placeAction && placeAction.options.item_ids || [];
+        const targetIds = placeAction && placeAction.options.target_inventory_ids || [];
+        (view.self.inventory || []).forEach(function (item) {
+            if (!placeIds.includes(item.id)) return;
+            targetIds.forEach(function (inventoryId) {
+                const inventory = view.accessible_inventories.find(function (candidate) { return candidate.id === inventoryId; });
+                if (inventory) groups.here.push({ kind: "action", label: `Place ${item.name} on ${inventory.name}`, action: { type: "place_item", item_id: item.id, target_inventory_id: inventory.id } });
+            });
+        });
+
+        ["fill", "consume"].forEach(function (actionType) {
+            const record = view.available_actions[actionType];
+            (record && record.options.items || []).forEach(function (item) {
+                groups.here.push({ kind: "action", label: item.action_label || record.description, action: { type: actionType, item_id: item.id } });
+            });
+        });
+
+        discoverAvailableAbilities(view).forEach(function (ability) {
+            groups.here.push({ kind: "action", label: ability.name, action: { type: ability.actionType } });
+        });
+
+        const moveAction = view.available_actions.move;
+        const moveIds = moveAction && moveAction.options.destination_ids || [];
+        (view.location.exits || []).forEach(function (destination) {
+            if (moveIds.includes(destination.id)) groups.travel.push({ kind: "action", label: `Go to ${destination.name}`, action: { type: "move", destination_id: destination.id } });
+        });
+        return groups;
+    }
+
+    function renderPrivateFeedback(root, actorId, view) {
+        const storedResult = getActorAbilityResult(getUIState(), actorId);
+        if (!storedResult) return;
+        const hasFeedback = Array.isArray(storedResult.feedback) && storedResult.feedback.length > 0;
+        if (storedResult.ok && !hasFeedback) return;
+        const resultArea = document.createElement("section");
+        resultArea.className = "framework-private-feedback";
+        appendTextElement(resultArea, "h3", `What ${view.self.name} notices`);
+        const content = document.createElement("div");
+        content.className = "framework-ability-result";
+        content.innerHTML = abilityResultMarkup(storedResult);
+        resultArea.appendChild(content);
+        root.appendChild(resultArea);
     }
 
     function isZeroInputAbilityAction(actionRecord) {
@@ -118,40 +352,8 @@
             : null;
     }
 
-    function renderAbilitySection(root, actorId, view) {
-        const abilities = discoverAvailableAbilities(view);
-        if (abilities.length === 0) {
-            return;
-        }
-        const section = document.createElement("section");
-        section.className = "framework-ability-panel";
-        appendTextElement(section, "h3", "Abilities");
-        abilities.forEach(function (ability) {
-            const abilityBlock = document.createElement("section");
-            abilityBlock.className = "framework-ability-control";
-            appendTextElement(abilityBlock, "h4", ability.name);
-            appendTextElement(abilityBlock, "p", ability.playerDescription);
-            const button = appendTextElement(abilityBlock, "button", ability.name);
-            button.type = "button";
-            button.addEventListener("click", function () {
-                const currentActorId = setup.Game.getHumanCharacterId();
-                if (currentActorId !== actorId) {
-                    return;
-                }
-                const result = setup.CharacterAPI.perform(actorId, { type: ability.actionType });
-                getUIState().abilityResultsByActor[actorId] = result;
-                refreshCurrentPassage();
-            });
-            section.appendChild(abilityBlock);
-        });
-        const storedResult = getActorAbilityResult(getUIState(), actorId);
-        if (storedResult) {
-            const resultArea = document.createElement("div");
-            resultArea.className = "framework-ability-result";
-            resultArea.innerHTML = abilityResultMarkup(storedResult);
-            section.appendChild(resultArea);
-        }
-        root.appendChild(section);
+    function renderAbilitySection() {
+        // Abilities are rendered as contextual formal-action shortcuts.
     }
 
     function formatResult(result) {
@@ -185,42 +387,8 @@
         return element;
     }
 
-    function renderInteractionView(root, view) {
-        const uiState = getUIState();
-        if (!uiState.interactionTargetId) {
-            return;
-        }
-
-        const target = view.location.characters.find(function (character) {
-            return character.id === uiState.interactionTargetId;
-        });
-
-        if (!target) {
-            uiState.interactionTargetId = "";
-            const message = "That character is no longer nearby.";
-            uiState.locationStatus = message;
-            const status = document.getElementById("location-status");
-            if (status) {
-                status.textContent = message;
-                uiState.locationStatus = "";
-            }
-            return;
-        }
-
-        const panel = document.createElement("section");
-        panel.className = "framework-interaction-panel";
-        appendTextElement(panel, "h3", target.name);
-        appendTextElement(panel, "p", target.presence_text);
-        appendTextElement(panel, "p", "Use the narrative or formal-action controls below to interact with this character.");
-
-        const closeButton = appendTextElement(panel, "button", "Back to location");
-        closeButton.type = "button";
-        closeButton.addEventListener("click", function () {
-            uiState.interactionTargetId = "";
-            renderLocationView();
-            renderActionPanel();
-        });
-        root.appendChild(panel);
+    function renderInteractionView() {
+        // Character shortcuts select the turn-panel addressee without opening a second panel.
     }
 
     function promptLabJson(value, emptyText) {
@@ -456,14 +624,34 @@
 
         $(".prompt-lab-test-queue").on("click", async function () {
             const characterId = $(this).closest(".prompt-lab-queue-entry").attr("data-character-id");
+            const uiState = getUIState();
+            if (getBusyState().busy) return;
+            uiState.turnBusy = true;
             showImmediateStatus(`The crystal sphere is dry-running the queued request for ${characterId}...`);
-            await setup.PromptLab.testQueued(characterId);
+            redraw();
+            try {
+                const pending = setup.PromptLab.testQueued(characterId);
+                redraw();
+                await pending;
+            } finally {
+                uiState.turnBusy = false;
+            }
             redraw();
         });
 
         $(".prompt-lab-process-live").on("click", async function () {
+            const uiState = getUIState();
+            if (getBusyState().busy) return;
+            uiState.turnBusy = true;
             showImmediateStatus("The crystal sphere is processing the next scheduler entry live...");
-            await setup.PromptLab.processNextLive();
+            redraw();
+            try {
+                const pending = setup.PromptLab.processNextLive();
+                redraw();
+                await pending;
+            } finally {
+                uiState.turnBusy = false;
+            }
             redraw();
         });
 
@@ -552,13 +740,12 @@
 
     function renderLocationView() {
         const root = document.getElementById("location-view");
-        if (!root) {
-            return;
-        }
+        if (!root) return;
 
         const actorId = setup.Game.getHumanCharacterId();
         const view = setup.CharacterAPI.getView(actorId);
         const uiState = getUIState();
+        const busyState = getBusyState();
         root.replaceChildren();
 
         appendTextElement(root, "h2", view.location.name);
@@ -576,13 +763,13 @@
             root.appendChild(narrative);
         }
 
+        renderPrivateFeedback(root, actorId, view);
+
         view.location.description.forEach(function (paragraph) {
             appendTextElement(root, "p", paragraph);
         });
         view.location.sublocations.forEach(function (sublocation) {
-            if (sublocation.public_text) {
-                appendTextElement(root, "p", sublocation.public_text, "framework-furniture-text");
-            }
+            if (sublocation.public_text) appendTextElement(root, "p", sublocation.public_text, "framework-furniture-text");
         });
         appendTextElement(root, "p", view.self.position_text, "framework-position-text");
         view.location.characters.forEach(function (character) {
@@ -591,108 +778,44 @@
 
         renderPromptLab(root, view);
 
-        if (view.location.characters.length > 0) {
-            const interactions = document.createElement("div");
-            interactions.className = "framework-location-links";
-            view.location.characters.forEach(function (character) {
-                const button = appendTextElement(interactions, "button", character.interaction_label);
+        const groups = buildContextualActionGroups(view);
+        const shortcuts = document.createElement("section");
+        shortcuts.className = "framework-contextual-actions";
+        const definitions = [
+            { key: "characters", title: "Characters" },
+            { key: "here", title: "Here" },
+            { key: "travel", title: "Travel" }
+        ];
+        definitions.forEach(function (definition) {
+            const entries = groups[definition.key];
+            if (!entries.length) return;
+            const group = document.createElement("section");
+            group.className = "framework-contextual-group";
+            appendTextElement(group, "h3", definition.title);
+            const buttons = document.createElement("div");
+            buttons.className = "framework-contextual-buttons";
+            entries.forEach(function (entry) {
+                const button = appendTextElement(buttons, "button", entry.label);
                 button.type = "button";
-                button.dataset.characterId = character.id;
-                button.addEventListener("click", function () {
-                    setup.GameUI.openInteraction(character.id);
-                });
+                button.disabled = busyState.busy;
+                if (entry.kind === "character") {
+                    button.className = "framework-character-shortcut";
+                    button.dataset.characterId = entry.characterId;
+                    button.classList.toggle("is-selected", uiState.interactionTargetId === entry.characterId);
+                    button.addEventListener("click", function () { setInteractionTarget(entry.characterId, view); });
+                } else {
+                    button.className = "framework-context-action";
+                    button.dataset.actionKey = actionKey(entry.action);
+                    button.setAttribute("aria-pressed", "false");
+                    button.addEventListener("click", function () { toggleSelectedAction(entry.action, view); });
+                }
+                buttons.appendChild(button);
             });
-            root.appendChild(interactions);
-        }
-
-        const movement = document.createElement("div");
-        movement.className = "framework-location-links";
-        view.location.exits.forEach(function (destination) {
-            const button = appendTextElement(movement, "button", `Go to ${destination.name}`);
-            button.type = "button";
-            button.dataset.destinationId = destination.id;
-            button.addEventListener("click", function () {
-                setup.GameUI.moveHuman(destination.id);
-            });
+            group.appendChild(buttons);
+            shortcuts.appendChild(group);
         });
-        root.appendChild(movement);
-
-        const internalMovement = document.createElement("div");
-        internalMovement.className = "framework-location-links";
-        const internalDestinationIds = view.available_actions.move_within_location.options.destination_ids;
-        internalDestinationIds.forEach(function (destinationId) {
-            const destination = view.location.sublocations.find(function (candidate) {
-                return candidate.id === destinationId;
-            });
-            if (!destination) {
-                return;
-            }
-            const button = appendTextElement(internalMovement, "button", destination.enter_label);
-            button.type = "button";
-            button.addEventListener("click", function () {
-                runAction({ type: "move_within_location", destination_id: destination.id });
-            });
-        });
-        root.appendChild(internalMovement);
-
-        const itemActions = document.createElement("div");
-        itemActions.className = "framework-location-links";
-        for (const actionType of ["fill", "consume"]) {
-            const actionRecord = view.available_actions[actionType];
-            const options = actionRecord && actionRecord.options && actionRecord.options.items || [];
-            options.forEach(function (itemOption) {
-                const button = appendTextElement(itemActions, "button", itemOption.action_label || actionRecord.description);
-                button.type = "button";
-                button.addEventListener("click", function () {
-                    runAction({ type: actionType, item_id: itemOption.id });
-                });
-            });
-        }
-        if (itemActions.childNodes.length > 0) root.appendChild(itemActions);
-
-        view.accessible_inventories.forEach(function (inventory) {
-            if (inventory.items.length === 0) {
-                return;
-            }
-            const surface = document.createElement("section");
-            surface.className = "framework-surface-panel";
-            appendTextElement(surface, "h3", inventory.name);
-            inventory.items.forEach(function (item) {
-                const button = appendTextElement(surface, "button", `Take ${item.name}`);
-                button.type = "button";
-                button.addEventListener("click", function () {
-                    runAction({ type: "take_item", item_id: item.id });
-                });
-            });
-            root.appendChild(surface);
-        });
-
-        const placementTargets = view.available_actions.place_item
-            ? view.available_actions.place_item.options.target_inventory_ids
-            : [];
-        if (placementTargets.length > 0 && view.self.inventory.length > 0) {
-            const placement = document.createElement("section");
-            placement.className = "framework-surface-panel";
-            const targetInventory = view.accessible_inventories.find(function (inventory) {
-                return inventory.id === placementTargets[0];
-            });
-            appendTextElement(placement, "h3", `Place on ${targetInventory.name}`);
-            view.self.inventory.forEach(function (item) {
-                const button = appendTextElement(placement, "button", `Place ${item.name}`);
-                button.type = "button";
-                button.addEventListener("click", function () {
-                    runAction({
-                        type: "place_item",
-                        item_id: item.id,
-                        target_inventory_id: targetInventory.id
-                    });
-                });
-            });
-            root.appendChild(placement);
-        }
-
-        renderAbilitySection(root, actorId, view);
-        renderInteractionView(root, view);
+        if (shortcuts.childNodes.length > 0) root.appendChild(shortcuts);
+        syncActionSelectionUI(view);
     }
 
     function renderSidebar() {
@@ -845,10 +968,25 @@
         });
 
         $("#take-next-ai-turn").on("click", async function () {
+            const uiState = getUIState();
+            if (getBusyState().busy) return;
+            uiState.turnBusy = true;
             $(this).prop("disabled", true);
             $("#ai-turn-status").text("Scheduler is processing the next AI event...");
-            const result = await setup.AITurnScheduler.processNext();
-            setup.AITransientDebug.lastSafeError = result.ok ? "" : result.error.message;
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
+            let result;
+            try {
+                const pending = setup.AITurnScheduler.processNext();
+                renderSidebar();
+                renderLocationView();
+                renderActionPanel();
+                result = await pending;
+            } finally {
+                uiState.turnBusy = false;
+            }
+            setup.AITransientDebug.lastSafeError = result && result.ok ? "" : result && result.error ? result.error.message : "AI processing failed.";
             renderSidebar();
             renderLocationView();
             renderActionPanel();
@@ -857,28 +995,40 @@
 
     async function runHumanIntent(input, navigateOnMove) {
         const uiState = getUIState();
-        if (uiState.turnBusy) {
+        if (getBusyState().busy) {
             return { ok: false, error: { code: "TURN_IN_FLIGHT", message: "A turn is already being processed." } };
         }
 
         uiState.turnBusy = true;
         uiState.locationStatus = "Processing turn...";
         renderSidebar();
+        renderLocationView();
         renderActionPanel();
 
         let result;
         try {
-            result = await setup.TurnFlow.submitHumanIntent(input);
+            const pending = setup.TurnFlow.submitHumanIntent(input);
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
+            result = await pending;
         } finally {
             uiState.turnBusy = false;
         }
 
-        if (!result.ok) {
-            uiState.locationStatus = result.error.message;
+        if (!result || !result.ok) {
+            uiState.locationStatus = result && result.error ? result.error.message : "The turn could not be completed.";
             refreshCurrentPassage();
             return result;
         }
 
+        const actionResult = result.intentResult && result.intentResult.actionResult;
+        if (actionResult) {
+            const hasFeedback = Array.isArray(actionResult.feedback) && actionResult.feedback.length > 0;
+            if (!actionResult.ok || hasFeedback) uiState.abilityResultsByActor[result.actorId] = cloneUIValue(actionResult);
+            else delete uiState.abilityResultsByActor[result.actorId];
+        }
+        uiState.selectedAction = null;
         uiState.turnNarrative = result.narrativeFragments || [];
         if (result.waveResult && result.waveResult.paused) {
             uiState.locationStatus = `Intent submitted. Automatic AI processing is paused; ${result.waveResult.remainingQueue.count} turn(s) remain queued.`;
@@ -899,24 +1049,30 @@
 
     async function passHumanTurn() {
         const uiState = getUIState();
-        if (uiState.turnBusy) {
+        if (getBusyState().busy) {
             return { ok: false, error: { code: "TURN_IN_FLIGHT", message: "A turn is already being processed." } };
         }
         uiState.turnBusy = true;
         uiState.locationStatus = "Processing queued AI reactions...";
         renderSidebar();
+        renderLocationView();
         renderActionPanel();
 
         let result;
         try {
-            result = await setup.TurnFlow.pass();
+            const pending = setup.TurnFlow.pass();
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
+            result = await pending;
         } finally {
             uiState.turnBusy = false;
         }
-        uiState.turnNarrative = result.narrativeFragments || [];
-        uiState.locationStatus = result.ok
+        uiState.selectedAction = null;
+        uiState.turnNarrative = result && result.narrativeFragments || [];
+        uiState.locationStatus = result && result.ok
             ? `Pass complete. ${result.waveResult.processedCount} AI character(s) reacted.`
-            : `AI processing stopped: ${result.error.message}`;
+            : `AI processing stopped: ${result && result.error ? result.error.message : "Unknown error."}`;
         refreshCurrentPassage();
         return result;
     }
@@ -958,73 +1114,80 @@
             const position = view.location.sublocations.find(function (candidate) { return candidate.id === id; });
             return position ? { id: position.id, name: position.name } : null;
         }).filter(Boolean) : [];
-        const placementInventoryIds = view.available_actions.place_item
-            ? view.available_actions.place_item.options.target_inventory_ids
-            : [];
-        const placementInventories = view.accessible_inventories.filter(function (inventory) {
-            return placementInventoryIds.includes(inventory.id);
-        });
+        const placementInventoryIds = view.available_actions.place_item ? view.available_actions.place_item.options.target_inventory_ids : [];
+        const placementInventories = view.accessible_inventories.filter(function (inventory) { return placementInventoryIds.includes(inventory.id); });
         const fillItems = view.available_actions.fill ? view.available_actions.fill.options.items : [];
         const consumableItems = view.available_actions.consume ? view.available_actions.consume.options.items : [];
         const knownActionTypes = new Set(["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume"]);
         const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
-            const actionType = entry[0];
-            const record = entry[1];
-            return !knownActionTypes.has(actionType) && isZeroInputAbilityAction(record);
+            return !knownActionTypes.has(entry[0]) && isZeroInputAbilityAction(entry[1]);
         });
         const aiSettings = setup.AIRuntimeSettings.getStatus();
         const queue = setup.AITurnScheduler.getQueueView();
-        const busy = uiState.turnBusy || setup.AIController.isInFlight() || setup.AITurnScheduler.isWaveInFlight();
+        const busyState = getBusyState();
+        const busy = busyState.busy;
+        const selectedAction = selectedActionForView(view);
+        const disabledAttribute = busy ? " disabled" : "";
 
-        function radioField(actionType, legend, controls, disabled) {
-            return `<fieldset class="framework-formal-action${disabled ? " framework-formal-action-disabled" : ""}">
+        function radioField(actionType, legend, controls, unavailable) {
+            const disabled = unavailable || busy;
+            return `<fieldset class="framework-formal-action${unavailable ? " framework-formal-action-disabled" : ""}"${busy ? " disabled" : ""}>
                 <legend><label><input type="radio" name="formal-action" value="${escapeHtml(actionType)}"${disabled ? " disabled" : ""}> ${escapeHtml(legend)}</label></legend>
                 <div class="formal-action-parameters">${controls || ""}</div>
             </fieldset>`;
         }
 
         const formalMarkup = [
-            radioField("move", "Move", `<select id="action-move-destination">${optionMarkup(moveOptions, "No connected locations")}</select>`, moveOptions.length === 0),
-            radioField("move_within_location", "Move within location", `<select id="action-move-within-destination">${optionMarkup(internalDestinations, "No internal destination")}</select>`, internalDestinations.length === 0),
-            radioField("take_item", "Take item", `<select id="action-take-item">${optionMarkup(takeOptions, "No items here")}</select>`, takeOptions.length === 0),
-            radioField("drop_item", "Drop item", `<select id="action-drop-item">${optionMarkup(ownedItems, "Inventory is empty")}</select>`, ownedItems.length === 0),
-            radioField("give_item", "Give item", `<select id="action-give-item">${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-give-item-target">${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, ownedItems.length === 0 || reachableTargets.length === 0),
-            radioField("give_money", "Give money", `<input id="action-money-amount" type="number" min="1" step="1" value="1"><select id="action-money-target">${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, reachableTargets.length === 0),
-            radioField("place_item", "Place item", `<select id="action-place-item">${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-place-inventory">${optionMarkup(placementInventories, "No accessible surface")}</select>`, ownedItems.length === 0 || placementInventories.length === 0),
-            radioField("fill", "Fill item", `<select id="action-fill-item">${itemActionOptionMarkup(fillItems, "No fillable item here")}</select>`, fillItems.length === 0),
-            radioField("consume", "Consume item", `<select id="action-consume-item">${itemActionOptionMarkup(consumableItems, "No consumable item")}</select>`, consumableItems.length === 0)
+            radioField("move", "Move", `<select id="action-move-destination"${disabledAttribute}>${optionMarkup(moveOptions, "No connected locations")}</select>`, moveOptions.length === 0),
+            radioField("move_within_location", "Move within location", `<select id="action-move-within-destination"${disabledAttribute}>${optionMarkup(internalDestinations, "No internal destination")}</select>`, internalDestinations.length === 0),
+            radioField("take_item", "Take item", `<select id="action-take-item"${disabledAttribute}>${optionMarkup(takeOptions, "No items here")}</select>`, takeOptions.length === 0),
+            radioField("drop_item", "Drop item", `<select id="action-drop-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select>`, ownedItems.length === 0),
+            radioField("give_item", "Give item", `<select id="action-give-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-give-item-target"${disabledAttribute}>${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, ownedItems.length === 0 || reachableTargets.length === 0),
+            radioField("give_money", "Give money", `<input id="action-money-amount" type="number" min="1" step="1" value="1"${disabledAttribute}><select id="action-money-target"${disabledAttribute}>${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, reachableTargets.length === 0),
+            radioField("place_item", "Place item", `<select id="action-place-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-place-inventory"${disabledAttribute}>${optionMarkup(placementInventories, "No accessible surface")}</select>`, ownedItems.length === 0 || placementInventories.length === 0),
+            radioField("fill", "Fill item", `<select id="action-fill-item"${disabledAttribute}>${itemActionOptionMarkup(fillItems, "No fillable item here")}</select>`, fillItems.length === 0),
+            radioField("consume", "Consume item", `<select id="action-consume-item"${disabledAttribute}>${itemActionOptionMarkup(consumableItems, "No consumable item")}</select>`, consumableItems.length === 0)
         ].concat(zeroInputExtras.map(function (entry) {
             return radioField(entry[0], entry[1].description || entry[0], "<p>No parameters.</p>", false);
         })).join("");
 
         actionRoot.innerHTML = `
-            <h3>Framework controls &mdash; acting as ${escapeHtml(view.self.name)}</h3>
+            <h3>Your turn &mdash; ${escapeHtml(view.self.name)}</h3>
+            <div class="framework-busy-row" aria-live="polite">
+                <span class="framework-spinner${busy ? " is-visible" : ""}" aria-hidden="true"></span>
+                <span id="framework-busy-text">${escapeHtml(busyState.text)}</span>
+            </div>
             <div id="framework-action-status" class="framework-status"></div>
 
-            <fieldset class="framework-narrative-action">
+            <fieldset class="framework-narrative-action"${busy ? " disabled" : ""}>
                 <legend>Narrative / speech</legend>
-                <textarea id="action-narrative-text" rows="8" placeholder="Speech outside *asterisks*, actions inside them. Leave empty to act silently."></textarea>
+                <textarea id="action-narrative-text" rows="8" placeholder="Speech outside *asterisks*, actions inside them. Leave empty to act silently."${disabledAttribute}></textarea>
                 <div class="framework-narrative-controls">
-                    <label>Addressee<select id="action-narrative-target">
+                    <label>Addressee<select id="action-narrative-target"${disabledAttribute}>
                         <option value="">No addressee</option>
                         ${visibleTargets.map(function (target) { return `<option value="${escapeHtml(target.id)}">${escapeHtml(target.name)}</option>`; }).join("")}
                     </select></label>
-                    <label>Loudness<select id="action-narrative-noticeability">
+                    <label>Loudness<select id="action-narrative-noticeability"${disabledAttribute}>
                         <option value="noticeable">Normal</option>
                         <option value="hidden">Quiet / private</option>
                     </select></label>
                 </div>
             </fieldset>
 
-            <section class="framework-formal-action-section">
-                <h4>Formal action &mdash; choose at most one</h4>
-                <label class="framework-no-action"><input type="radio" name="formal-action" value="" checked> No formal action</label>
-                <div class="framework-action-grid">${formalMarkup}</div>
+            <section class="framework-selected-action">
+                <div><strong>Selected action:</strong> <span id="selected-action-label">${escapeHtml(actionLabel(selectedAction, view))}</span></div>
+                <button id="clear-selected-action" type="button"${(!selectedAction || busy) ? " disabled" : ""}>Clear</button>
             </section>
 
+            <details class="framework-formal-action-section">
+                <summary>Advanced formal actions</summary>
+                <label class="framework-no-action"><input type="radio" name="formal-action" value=""${selectedAction ? "" : " checked"}${disabledAttribute}> No formal action</label>
+                <div class="framework-action-grid">${formalMarkup}</div>
+            </details>
+
             <div class="framework-turn-controls">
-                <button id="action-submit"${busy ? " disabled" : ""}>Submit</button>
-                <button id="action-pass"${(busy || (queue.head && !aiSettings.hasKey)) ? " disabled" : ""}>Pass / Next turn</button>
+                <button id="action-submit"${busy ? " disabled" : ""}>Submit turn</button>
+                <button id="action-pass"${(busy || (queue.head && !aiSettings.hasKey)) ? " disabled" : ""}>Pass</button>
             </div>
 
             <details class="framework-debug">
@@ -1042,14 +1205,12 @@
 
         passage.appendChild(actionRoot);
 
-        const selectedTargetId = getUIState().interactionTargetId;
-        if (visibleTargets.some(function (target) { return target.id === selectedTargetId; })) {
-            $("#action-give-item-target").val(selectedTargetId);
-            $("#action-money-target").val(selectedTargetId);
-            $("#action-narrative-target").val(selectedTargetId);
+        if (!visibleTargets.some(function (target) { return target.id === uiState.interactionTargetId; })) {
+            uiState.interactionTargetId = "";
         }
+        $("#action-narrative-target").val(uiState.interactionTargetId);
 
-        function collectFormalAction() {
+        function collectFormalActionFromControls() {
             const type = $("input[name='formal-action']:checked").val();
             if (!type) return null;
             if (type === "move") return { type: type, destination_id: $("#action-move-destination").val() };
@@ -1064,9 +1225,27 @@
             return { type: type };
         }
 
+        syncActionSelectionUI(view);
+
+        $("#action-narrative-target").on("change", function () {
+            uiState.interactionTargetId = $(this).val() || "";
+            document.querySelectorAll(".framework-character-shortcut").forEach(function (button) {
+                button.classList.toggle("is-selected", button.dataset.characterId === uiState.interactionTargetId);
+            });
+        });
+
+        $("input[name='formal-action']").on("change", function () {
+            setSelectedAction($(this).val() ? collectFormalActionFromControls() : null, view);
+        });
+        $(".formal-action-parameters select, .formal-action-parameters input").on("change input", function () {
+            const selectedType = $("input[name='formal-action']:checked").val();
+            if (selectedType) setSelectedAction(collectFormalActionFromControls(), view);
+        });
+        $("#clear-selected-action").on("click", function () { setSelectedAction(null, view); });
+
         $("#action-submit").on("click", async function () {
             const text = $("#action-narrative-text").val();
-            const action = collectFormalAction();
+            const action = selectedActionForView(view);
             if (!String(text || "").trim() && !action) {
                 $("#framework-action-status").text("Enter narrative text, select one formal action, or press Pass.");
                 return;
@@ -1076,7 +1255,7 @@
                 text: text,
                 target_id: $("#action-narrative-target").val(),
                 noticeability: $("#action-narrative-noticeability").val(),
-                action: action
+                action: cloneUIValue(action)
             }, Boolean(action && action.type === "move"));
         });
 
@@ -1116,6 +1295,13 @@
         getActorAbilityResult: getActorAbilityResult
     };
 
+    setup.GameUIModel = {
+        buildContextualActionGroups: buildContextualActionGroups,
+        actionAvailableInView: actionAvailableInView,
+        actionLabel: actionLabel,
+        busyState: getBusyState
+    };
+
     setup.GameUI = {
         moveHuman: function (destinationId) {
             return runAction({
@@ -1128,6 +1314,7 @@
             const result = setup.Game.takeHumanControl(characterId);
             if (result.ok) {
                 getUIState().interactionTargetId = "";
+                getUIState().selectedAction = null;
                 Engine.play(currentPassageForHuman());
             }
             return result;
@@ -1150,9 +1337,7 @@
                 };
             }
 
-            uiState.interactionTargetId = target.id;
-            renderLocationView();
-            renderActionPanel();
+            setInteractionTarget(target.id, view);
             return { ok: true, targetId: target.id };
         },
 
