@@ -191,6 +191,14 @@ async function main() {
         decisionPrompt.includes("do not blindly repeat the same action") &&
         !decisionPrompt.includes("Prefer action null"),
         "decision prompt should support multi-step goals across grounded one-action reaction waves");
+    assert(decisionPrompt.includes("ongoing role-playing scene") &&
+        decisionPrompt.includes("use publicNarrative for brief visible behavior") &&
+        decisionPrompt.includes("spokenText for natural dialogue in this particular character's own voice") &&
+        decisionPrompt.includes("generic assistant-like or functional NPC replies") &&
+        decisionPrompt.includes("one or two short narrative sentences plus dialogue") &&
+        decisionPrompt.includes("Do not force narration or speech into every response") &&
+        decisionPrompt.includes("must not claim that the formal action successfully changed the world before the engine confirms it"),
+        "technical prompt should encourage concise characterful role-play without weakening grounded action authority");
     const tracedProviderFailure = await setup.AIProtocol.requestValidated(validationMessages, "decision", {
         chat: async function () { return detailedRateLimited; }
     });
