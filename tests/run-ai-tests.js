@@ -16,6 +16,7 @@ function normalizeDecisionFixture(value) {
     if (value && typeof value === "object" && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, "action")) {
         const normalized = Object.assign({}, value);
         if (!Object.prototype.hasOwnProperty.call(normalized, "spokenTargetId")) normalized.spokenTargetId = null;
+        if (!Object.prototype.hasOwnProperty.call(normalized, "spokenLoudness")) normalized.spokenLoudness = normalized.spokenText === null ? null : "noticeable";
         if (!Object.prototype.hasOwnProperty.call(normalized, "continuation")) normalized.continuation = null;
         return normalized;
     }
@@ -108,6 +109,44 @@ async function main() {
         setup.AITurnQueue.getStatus().entries[0].characterId === "hoodedWoman" &&
         setup.AITurnScheduler.getQueueView().head.characterId === "innkeeper",
         "initiative should be derived additively from pending targeted observations and may reorder the stable saved queue");
+
+    function prepareInnkeeperSpeechFixture() {
+        const speechWorld = fresh();
+        ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "bar" }), "speech loudness fixture moves player to bar");
+        speechWorld.entities.hoodedWoman.locationId = "bar";
+        speechWorld.entities.hoodedWoman.sublocationId = "barPublicSide";
+        speechWorld.entities.hoodedWoman.mind.pendingObservations = [];
+        return speechWorld;
+    }
+    function sortedRecipients(event) { return event.recipients.slice().sort().join(","); }
+
+    world = prepareInnkeeperSpeechFixture();
+    const humanQuietEvent = setup.CharacterAPI.narrate("innkeeper", {
+        text: "Keep this between us.", target_id: "player", noticeability: "hidden"
+    }).event;
+    const expectedQuietRecipients = sortedRecipients(humanQuietEvent);
+    world = prepareInnkeeperSpeechFixture();
+    const aiQuietTurn = await setup.AIController.takeQueuedTurn("innkeeper", { chat: async function () { return response({
+        action: null, publicNarrative: null, spokenText: "Keep this between us.", spokenTargetId: "player", spokenLoudness: "hidden", memoryUpdates: emptyUpdates()
+    }); } });
+    const aiQuietEvent = aiQuietTurn.intentResult.narrativeResult.event;
+    assert(aiQuietTurn.ok && aiQuietEvent.noticeability === "hidden" && sortedRecipients(aiQuietEvent) === expectedQuietRecipients &&
+        expectedQuietRecipients === "player" && !aiQuietEvent.recipients.includes("hoodedWoman"),
+        "AI quiet speech should use the same canonical delivery semantics as equivalent HumanController quiet speech");
+
+    world = prepareInnkeeperSpeechFixture();
+    const humanNormalEvent = setup.CharacterAPI.narrate("innkeeper", {
+        text: "*whispers* This wording is only style.", target_id: "player", noticeability: "noticeable"
+    }).event;
+    const expectedNormalRecipients = sortedRecipients(humanNormalEvent);
+    world = prepareInnkeeperSpeechFixture();
+    const aiNormalTurn = await setup.AIController.takeQueuedTurn("innkeeper", { chat: async function () { return response({
+        action: null, publicNarrative: null, spokenText: "*whispers* This wording is only style.", spokenTargetId: "player", spokenLoudness: "noticeable", memoryUpdates: emptyUpdates()
+    }); } });
+    const aiNormalEvent = aiNormalTurn.intentResult.narrativeResult.event;
+    assert(aiNormalTurn.ok && aiNormalEvent.noticeability === "noticeable" && sortedRecipients(aiNormalEvent) === expectedNormalRecipients &&
+        aiNormalEvent.recipients.includes("hoodedWoman"),
+        "AI narrated whisper wording must not override structured normal loudness or change canonical recipients");
 
     world = fresh();
     let automaticTickCalls = 0;
@@ -255,47 +294,53 @@ async function main() {
         pendingObservations: []
     });
     const decisionPrompt = validationMessages[0].content;
-    assert(decisionPrompt.includes("do not merely promise future work") &&
-        decisionPrompt.includes("choose only one currently available step") &&
-        decisionPrompt.includes("Reevaluate the current view") &&
-        decisionPrompt.includes("continuation is your own nullable working intention") &&
-        decisionPrompt.includes("framework does not interpret it") &&
-        decisionPrompt.includes("Continuation records the unfinished purpose, not a predetermined sequence") &&
-        decisionPrompt.includes("normally keep that unfinished purpose in continuation") &&
-        decisionPrompt.includes("instead of writing workflow progress into recent memory") &&
-        decisionPrompt.includes("Do not use routine recent memory as a substitute") &&
-        decisionPrompt.includes("prefer that meaningful next step over an empty no-op") &&
-        decisionPrompt.includes("never follow continuation blindly") &&
-        decisionPrompt.includes("completed, impossible, irrelevant, superseded, deliberately abandoned") &&
-        decisionPrompt.includes("do not blindly repeat the same action") &&
-        !decisionPrompt.includes("Prefer action null"),
-        "decision prompt should support model-owned continuations across grounded one-action reaction waves");
-    assert(decisionPrompt.includes("Meaningful speech directly addressed to you normally deserves an in-character reaction") &&
-        decisionPrompt.includes("completely empty no-op after direct address should be intentional") &&
-        decisionPrompt.includes("accidental failure to react to supplied direct speech is undesirable") &&
-        decisionPrompt.includes("already passed the framework's perception and delivery rules") &&
+    assert(decisionPrompt.includes("Available actions are capabilities, not recommendations") &&
+        decisionPrompt.includes("Spontaneous initiative is valid") &&
+        decisionPrompt.includes("Do not invent a task merely because an action is available") &&
+        decisionPrompt.includes("continuation is your nullable, free-form, private working intention") &&
+        decisionPrompt.includes("unfinished purpose, never an action queue") &&
+        decisionPrompt.includes("keep that purpose in continuation") &&
+        decisionPrompt.includes("do not start a purposive movement or task and immediately discard why") &&
+        decisionPrompt.includes("complete local action may leave continuation null") &&
+        decisionPrompt.includes("normally make progress rather than return an accidental no-op") &&
+        decisionPrompt.includes("do not blindly repeat the same action"),
+        "decision prompt should distinguish capabilities from motives and preserve unfinished purpose without creating a plan queue");
+    assert(decisionPrompt.includes("Directly addressed meaningful speech normally deserves an in-character response") &&
+        decisionPrompt.includes("completely empty no-op after direct address should be deliberate") &&
+        decisionPrompt.includes("already passed deterministic perception and delivery rules") &&
         decisionPrompt.includes("treat it as perceived") &&
-        decisionPrompt.includes("do not second-guess whether you could hear or see it") &&
-        decisionPrompt.includes("deterministic framework owns observation delivery"),
+        decisionPrompt.includes("do not second-guess audibility or visibility"),
         "decision prompt should treat delivered direct speech as perceived while preserving intentional in-character silence");
+    assert(decisionPrompt.includes("Character IDs are persistent identities") &&
+        decisionPrompt.includes("same character id is the same person after leaving and returning") &&
+        decisionPrompt.includes("location changes do not reset familiarity") &&
+        decisionPrompt.includes("memoryUpdates should normally remain empty") &&
+        decisionPrompt.includes("not copies of obvious current view state") &&
+        decisionPrompt.includes("relationships describe durable or developing social state") &&
+        decisionPrompt.includes("do not use them to store momentary presence"),
+        "decision prompt should preserve social identity across room transitions and avoid transient mind pollution");
+    assert(decisionPrompt.includes("spokenLoudness is per utterance, not persistent state") &&
+        decisionPrompt.includes('must be "noticeable" or "hidden"') &&
+        decisionPrompt.includes("Choose spokenLoudness structurally for this utterance") &&
+        decisionPrompt.includes("writing *whispers*, *in a low voice*, or similar prose does not change mechanical loudness") &&
+        decisionPrompt.includes("framework owns who receives the resulting observation"),
+        "decision prompt should make speech loudness a structured per-utterance mechanic rather than prose inference");
     assert(decisionPrompt.includes("ongoing role-playing scene") &&
-        decisionPrompt.includes("use publicNarrative for brief standalone visible behavior") &&
-        decisionPrompt.includes("spokenText for natural dialogue in this character's own voice") &&
+        decisionPrompt.includes("publicNarrative is brief visible behavior or atmosphere") &&
+        decisionPrompt.includes("Use spokenText for dialogue in the character's own voice") &&
         decisionPrompt.includes("ordinary text is spoken dialogue") &&
         decisionPrompt.includes("paired single asterisks") &&
         decisionPrompt.includes("spokenText may include short *inline narration*") &&
-        decisionPrompt.includes("Narrated behavior never mutates canonical state by itself") &&
-        decisionPrompt.includes("generic assistant-like or functional NPC replies") &&
-        decisionPrompt.includes("one or two short narrative sentences plus dialogue") &&
-        decisionPrompt.includes("Do not force narration or speech into every response") &&
-        decisionPrompt.includes("only a request and is still unconfirmed") &&
-        decisionPrompt.includes("must not claim that the formal action successfully changed the world before the engine confirms it") &&
-        decisionPrompt.includes("Memory updates in the same response must also avoid recording the requested formal action as completed") &&
-        decisionPrompt.includes("Only after an engine-confirmed result arrives in a later observation"),
-        "technical prompt should explain inline RP narration while keeping pending actions and memory grounded");
+        decisionPrompt.includes("Narrated behavior never mutates canonical state") &&
+        decisionPrompt.includes("generic assistant-like NPC replies") &&
+        decisionPrompt.includes("formal action in this response is only an attempt") &&
+        decisionPrompt.includes("must not claim that the formal action successfully changed the world"),
+        "technical prompt should retain concise RP and engine grounding while being more structured");
     const requiredShape = JSON.parse(validationMessages[1].content).requiredResponseShape;
     assert(Object.prototype.hasOwnProperty.call(requiredShape, "continuation") && requiredShape.continuation === null,
         "decision requests should require a nullable continuation field");
+    assert(Object.prototype.hasOwnProperty.call(requiredShape, "spokenLoudness") && requiredShape.spokenLoudness === null,
+        "decision requests should require per-utterance structured speech loudness");
     const tracedProviderFailure = await setup.AIProtocol.requestValidated(validationMessages, "decision", {
         chat: async function () { return detailedRateLimited; }
     });
@@ -342,10 +387,18 @@ async function main() {
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
         memoryUpdates: { recentMemoriesToAdd: [{ summary: "I decided to leave.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }), available).ok,
         "one response may combine narrative, one formal action, and memory updates");
-    assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Mara?", spokenTargetId: "hoodedWoman", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
-        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Who are you?", spokenTargetId: "missing", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
-        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, spokenTargetId: "hoodedWoman", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok,
+    assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Mara?", spokenTargetId: "hoodedWoman", spokenLoudness: "noticeable", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
+        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Who are you?", spokenTargetId: "missing", spokenLoudness: "noticeable", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
+        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, spokenTargetId: "hoodedWoman", spokenLoudness: null, continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok,
         "structured spokenTargetId should identify a visible speech addressee without being inferred from free-form dialogue");
+    const canonicalLoudness = setup.CharacterAPI.getSpeechLoudnessValues();
+    assert(JSON.stringify(canonicalLoudness) === JSON.stringify(["noticeable", "hidden"]) &&
+        canonicalLoudness.every(function (value) {
+            return setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Test.", spokenTargetId: null, spokenLoudness: value, continuation: null, memoryUpdates: emptyUpdates() }, available).ok;
+        }) &&
+        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Test.", spokenTargetId: null, spokenLoudness: "whisper", continuation: null, memoryUpdates: emptyUpdates() }, available).ok &&
+        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, spokenTargetId: null, spokenLoudness: "hidden", continuation: null, memoryUpdates: emptyUpdates() }, available).ok,
+        "AI speech loudness should reuse the canonical HumanController values and reject inconsistent or invented values");
     const detailedValidation = setup.AIProtocol.validateDecision(decisionFixture({
         action: null,
         publicNarrative: null,

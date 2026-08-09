@@ -4,6 +4,7 @@
     const WORLD_VERSION = 6;
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
+    const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden"]);
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value));
@@ -1870,8 +1871,8 @@
             }
         }
 
-        const noticeability = input.noticeability === "hidden"
-            ? "hidden"
+        const noticeability = SPEECH_LOUDNESS_VALUES.includes(input.noticeability)
+            ? input.noticeability
             : "noticeable";
 
         const event = emitEvent({
@@ -2169,7 +2170,8 @@
         recordGroundedActionFailure: recordGroundedActionFailure,
         perform: executeAction,
         narrate: submitNarrative,
-        submitIntent: submitIntent
+        submitIntent: submitIntent,
+        getSpeechLoudnessValues: function () { return SPEECH_LOUDNESS_VALUES.slice(); }
     };
     setup.ContextBuilder = { build: buildContext };
 }());

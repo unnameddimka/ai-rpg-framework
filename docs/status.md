@@ -47,11 +47,14 @@
   it without interpreting it. The old immediate `game-result` request has been removed. Grounded
   success or failure becomes an ordinary observation for a later Human-triggered world tick,
   where the model re-evaluates the continuation against the new canonical view.
-- The common AI system prompt now treats delivered observations as already perceived instead of
-  asking the model to second-guess distance or loudness. Meaningful direct address normally calls
-  for an in-character reaction unless silence is deliberate. Unfinished concrete multi-step purposes
-  should normally remain in `continuation`, and an obvious available step toward an active purpose
-  is preferred over an accidental empty no-op while still being re-evaluated every reaction.
+- The common AI decision prompt is organized around current canonical state, coherent reasons to act,
+  stable character identity, model-owned continuation, structured speech loudness, grounding, and
+  memory discipline. Delivered observations are already perceived; returning character IDs remain the
+  same known people; available actions are capabilities rather than recommendations; spontaneous NPC
+  initiative remains valid; unfinished purposive atomic steps retain their purpose in `continuation`.
+- AI decisions now include per-utterance `spokenLoudness` using the same canonical `noticeable` /
+  `hidden` values and the same `CharacterAPI.submitIntent()` perception path as HumanController.
+  Whisper-like prose has no mechanical effect on loudness, and AI loudness is not persisted between turns.
 - `CharacterAPI.submitIntent()` is the common commit path for human and AI envelopes. Formal
   action authority remains deterministic: model or human prose cannot establish objective
   world consequences. Ordinary scene text is speech while paired `*...*` spans are inline visible
@@ -84,7 +87,8 @@
   transient busy/cooldown status, and performs no automatic rate-limit retry.
 - The local JSON-only protocol rejects arbitrary fields and permits at most one repair request
   for malformed or schema-invalid JSON. `spokenTargetId` gives addressed speech an explicit
-  structured target independent of the formal-action target. The prompt treats the current
+  structured target independent of the formal-action target, while `spokenLoudness` selects the
+  canonical Human/AI noticeability for the current utterance. The prompt treats the current
   canonical view as authoritative and keeps narrative/speech in the attempt phase until engine
   confirmation.
 - Engine-owned bounded memory updates support recent-memory append, belief upsert, and

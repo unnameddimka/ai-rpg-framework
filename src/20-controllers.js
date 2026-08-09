@@ -141,7 +141,7 @@
             intentResult = setup.CharacterAPI.submitIntent(actorId, {
                 text: narrativeText,
                 target_id: decision.spokenTargetId || "",
-                noticeability: "noticeable",
+                noticeability: decision.spokenLoudness || undefined,
                 action: decision.action
             });
             if (!intentResult.ok) throw intentResult.error;

@@ -147,12 +147,14 @@ that already reacted remain queued for the next wave. The normal sidebar keeps r
 diagnostics but no longer provides a manual processing button. The crystal sphere still allows
 one-entry live processing for explicit debug work. There is no timer or background loop.
 
-Human and AI intents use the same envelope: optional narrative, optional speech, and at most
-one formal action. Matching narrative and action events share an `interactionId`; the
-scheduler groups them into one coherent observation before prompting an AI character. An AI
-reaction uses one model request only. The engine executes the selected formal action locally,
-and its grounded success or failure is queued as an ordinary later observation for that
-actor. There is no immediate `game-result` request.
+Human and AI intents use the same canonical narrative/action commit path: optional narrative or
+speech plus at most one formal action. AI speech chooses a structured per-utterance
+`spokenTargetId` and `spokenLoudness`; loudness reuses the same `noticeable` / `hidden` delivery
+semantics as the HumanController control, while prose such as `*whispers*` remains style only.
+Matching narrative and action events share an `interactionId`; the scheduler groups them into one
+coherent observation before prompting an AI character. An AI reaction uses one model request only.
+The engine executes the selected formal action locally, and its grounded success or failure is queued
+as an ordinary later observation for that actor. There is no immediate `game-result` request.
 
 The restricted character `view` is the common canonical input for both the browser interface
 and the AI controller. The model receives the same view unchanged, including the one
