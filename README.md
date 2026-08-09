@@ -135,8 +135,9 @@ The same file names the default model. The catalog contains:
 Within one reaction wave, each queued AI character may react at most once. Direct addressees
 and formal-action targets are processed before ordinary observers. Later characters see
 confirmed events produced by earlier reactions. New observations delivered to a character
-that already reacted remain queued for the next wave. The sidebar and crystal sphere still
-provide one-entry manual processing for debugging. There is no timer or background loop.
+that already reacted remain queued for the next wave. The normal sidebar keeps read-only queue
+diagnostics but no longer provides a manual processing button. The crystal sphere still allows
+one-entry live processing for explicit debug work. There is no timer or background loop.
 
 Human and AI intents use the same envelope: optional narrative, optional speech, and at most
 one formal action. Matching narrative and action events share an `interactionId`; the
@@ -148,15 +149,23 @@ actor. There is no immediate `game-result` request.
 The restricted character `view` is the common canonical input for both the browser interface
 and the AI controller. The model receives the same view unchanged, including the one
 `view.available_actions` catalog used to construct human controls. `ContextBuilder` adds only
-private character instructions, projected mind records, and prepared observations. It does
-not repeat view fields under alternate names, and the protocol validator reads action rules
-from the view already embedded in the request.
+private character instructions, projected mind records, prepared observations, and the AI's
+private nullable `continuation` working intention. Continuation is stored outside durable mind;
+the framework returns it later without interpreting it. It does not repeat view fields under
+alternate names, and the protocol validator reads action rules from the view already embedded
+in the request.
 
 The main location view shows a **Latest turn** narrative assembled deterministically from the
 human intent, AI narrative fragments, and grounded action events in causal order. It is not
-a separate narrator-model request. For a movement Submit, the automatic reaction wave is
-resolved before the destination passage is rendered, so departure reactions can appear in
-the turn narrative before the new location view.
+a separate narrator-model request. Scene text uses the shared RP convention that ordinary text
+is speech and paired `*...*` spans are visible narration; the UI renders those spans as dimmed
+italics without treating them as canonical state changes. For a movement Submit, the automatic
+reaction wave is resolved before the destination passage is rendered, so departure reactions
+can appear in the turn narrative before the new location view.
+
+The left sidebar also exposes a **Character** window for the current Human-controlled character.
+It edits only runtime Name and `playerDescription`, shows inventory read-only, never exposes
+`aiDescription`, and saves/discards without advancing the world tick.
 
 The key is never stored in SugarCube state, saves, world data, generated artifacts,
 controller logs, copied AI context, or visible errors. Optional persistence uses a
@@ -189,8 +198,9 @@ OpenRouter client, JSON parser, schema validator, and one-repair protocol as rea
 The sphere shows the complete scheduler queue as ordered cards. Each card identifies the
 recipient, location, queue reason, request size, and a preview of the observations that will
 be sent. The first card is marked as the next live request. Any queued request may be
-inspected or dry-run; only the queue head exposes **Process live**, which invokes the same
-manual scheduler as the sidebar and advances the real world on success. A scrollable
+inspected or dry-run; only the queue head exposes **Process live**, which invokes the scheduler's explicit single-head
+debug path and advances the real world on success. The normal gameplay sidebar has no equivalent
+manual processing control. A scrollable
 **Narrative history** window above the queue accumulates the public narrative and confirmed
 formal-action event text from each successful live sphere turn. Its **Clear** button resets
 only this transient history.

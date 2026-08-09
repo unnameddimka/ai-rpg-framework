@@ -37,7 +37,7 @@ The controller types are:
 
 - `human` — receives commands from the browser UI;
 - `dummy` — performs no autonomous actions and may write debug logs;
-- `ai` — uses the browser-side OpenRouter adapter and the currently selected validated catalog model when a user-triggered reaction wave or manual sphere/sidebar step processes its queue entry.
+- `ai` — uses the browser-side OpenRouter adapter and the currently selected validated catalog model when a user-triggered reaction wave or manual crystal-sphere debug step processes its queue entry.
 
 ### Critical HumanController invariant
 
@@ -135,7 +135,7 @@ Narrative and a formal action may be submitted together in one intent envelope. 
 ## AI turn queue and controller integration
 
 - Human `Submit` that consumes a turn and explicit `Pass / Next turn` are the only normal triggers for a global AI world tick (implemented as the reaction-wave scheduler). There is still no timer or background loop.
-- The sidebar checkbox `Stop automatic AI request processing` pauses the wave that normally follows `Submit`; `Pass`, the sidebar step, and the sphere remain explicit manual controls.
+- The sidebar checkbox `Stop automatic AI request processing` pauses the wave that normally follows `Submit`; `Pass` and the crystal sphere remain explicit controls. The normal gameplay sidebar must not expose a manual one-head AI processing button; it may show read-only queue diagnostics.
 - Objective events and feedback may enqueue eligible characters whose current controller assignment is `ai`.
 - The queue must be deterministic, JSON-serializable, saveable with SugarCube, and deduplicated by character ID.
 - Reaction order is derived from pending targeted observations: addressed speech contributes +1, targeted formal-action events contribute +2, and an observation originating from the current HumanController contributes an additional +2. Contributions accumulate while observations remain pending; ties use stable saved queue order.
@@ -166,8 +166,8 @@ Narrative and a formal action may be submitted together in one intent envelope. 
 - Never treat model prose as objective world state.
 - Parse and locally validate model JSON. Do not depend on native provider strict-schema support.
 - Permit at most one repair request for malformed or schema-invalid JSON. No general automatic retries.
-- One AI request returns optional narrative, optional speech, bounded memory updates, and no more than one available formal action.
-- There is no immediate result-stage model call. Execute the formal action locally, record its normalized grounded result as a new observation for the actor, and let the actor interpret that result during a later Human-triggered world tick.
+- One AI request returns optional narrative, optional speech, one nullable model-owned `continuation`, bounded memory updates, and no more than one available formal action.
+- There is no immediate result-stage model call. Execute the formal action locally, record its normalized grounded result as a new observation for the actor, and let the actor interpret that result during a later Human-triggered world tick. Store the latest `continuation` separately from durable character `mind` and return it to that actor on future AI reactions without interpreting its meaning.
 - Do not let model narrative claim that an unexecuted formal action succeeded. Objective consequences come only from `CharacterAPI.perform()`.
 - Commit the validated response atomically against a pre-turn snapshot. A request or commit failure must not consume observations or partially mutate the turn.
 - Apply combined narrative/action through `setup.CharacterAPI.submitIntent()`; lower-level public narrative still flows through `narrate()` internally.
@@ -185,7 +185,7 @@ Narrative and a formal action may be submitted together in one intent envelope. 
 - Physical location prose, nearby-character presence, interaction links, and exits must be rendered from the restricted character view and runtime world state.
 - Normal movement UI must submit the registered `move` action through the same combined turn flow as other human intents.
 - Never show the controlled character as a nearby character or interaction target.
-- Keep the formal action panel as a developer/debug interface below the player-facing view. It uses one narrative area, addressee/loudness controls, radio buttons for at most one formal action, and shared `Submit` / `Pass` controls.
+- Keep the formal action panel as a developer/debug interface below the player-facing view. It uses one narrative area, addressee/loudness controls, radio buttons for at most one formal action, and shared `Submit` / `Pass` controls. The normal scene-text convention is ordinary speech plus inline `*...*` narration; narration never mutates canonical state by itself. The in-game Character window may edit only the current Human-controlled character name and `playerDescription`, never `aiDescription`.
 - Assigned character abilities are an exception: currently available zero-input abilities must also appear as normal player-facing controls above the debug panel.
 
 ## World editor
@@ -226,8 +226,8 @@ Implement and preserve:
 - authorable characters, initial minds, and individual abilities;
 - one sample grounded individual ability, `read_aura`;
 - direct browser OpenRouter integration with a validated two-model catalog and authored default;
-- one deterministic saved AI turn queue, Human-triggered global AI world ticks, manual scheduler stepping, and an auto-processing pause checkbox;
-- validated single-request AI turns with combined narrative/action and bounded memory updates;
+- one deterministic saved AI turn queue, Human-triggered global AI world ticks, crystal-sphere debug stepping, read-only sidebar queue diagnostics, and an auto-processing pause checkbox;
+- validated single-request AI turns with combined narrative/action, one model-owned continuation, and bounded memory updates;
 - 24-hour optional local API-key persistence outside SugarCube.
 
 Do not add yet:

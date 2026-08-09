@@ -75,8 +75,11 @@
 
     function combineNarrative(response) {
         const text = [];
-        if (response.publicNarrative && response.publicNarrative.trim()) text.push(response.publicNarrative.trim());
-        if (response.spokenText && response.spokenText.trim()) text.push(`"${response.spokenText.trim()}"`);
+        if (response.publicNarrative && response.publicNarrative.trim()) {
+            const narrative = response.publicNarrative.trim().replace(/\*/g, "");
+            if (narrative) text.push(`*${narrative}*`);
+        }
+        if (response.spokenText && response.spokenText.trim()) text.push(response.spokenText.trim());
         return text.join("\n");
     }
 
@@ -149,6 +152,9 @@
             const memoryResult = setup.AIMemory.applyUpdates(actorId, decision.memoryUpdates);
             if (!memoryResult.ok) throw memoryResult.error;
         }
+
+        const continuationResult = setup.AIWorkingState.setContinuation(actorId, decision.continuation);
+        if (!continuationResult.ok) throw continuationResult.error;
 
         const consumeResult = setup.AIMemory.consumeObservations(actorId, consumedIds);
         if (!consumeResult.ok) throw consumeResult.error;

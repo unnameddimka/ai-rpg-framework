@@ -512,7 +512,8 @@ Conceptual shape:
     "privateSelfData": {}
   },
   "mind": {},
-  "pendingObservations": []
+  "pendingObservations": [],
+  "continuation": null
 }
 ```
 
@@ -533,6 +534,9 @@ The exact private-field organization may evolve, but these invariants are mandat
 6. Prepared request observations may replace the raw observation inbox, but the context builder
    must omit the raw inbox when constructing the AI mind projection rather than serializing both
    and deleting one later.
+7. `continuation` is private AI working state, not part of `view` or durable character `mind`. The
+   framework stores one nullable string per character and returns it to that AI without parsing,
+   prioritizing, completing, or decomposing its meaning.
 
 ContextBuilder remains a pure restricted-data projection. It must not call a model, retain
 conversation state outside the character, count tokens, summarize memories, mutate the world,
@@ -552,7 +556,7 @@ Exactly one character must have `initialControllerId: "human"`. No character may
 
 When human control moves from character A to character B, the atomic candidate assignment map must set A directly to `A.defaultControllerId` and B to `human`. Do not track `controllerBeforeHuman`. Normal gameplay does not change authored default controllers in this milestone. A future dumb mob may therefore keep a scripted controller as its default for the entire game.
 
-If A returns to `ai` and already has pending observations, queue A for a later manual AI turn. Controller switching itself does not immediately execute that turn.
+If A returns to `ai` and already has pending observations, queue A for a later AI reaction. Controller switching itself does not immediately execute that reaction. No additional catch-up/reconciliation behavior is required in the current milestone.
 
 ## 17. Editor architecture
 
@@ -626,7 +630,7 @@ The same core problems must be rejected before build and at runtime when relevan
 
 ## 19. Save behavior
 
-Runtime mind is ordinary JSON state under `State.variables.world`.
+Runtime mind and AI working state are ordinary JSON state under `State.variables.world`.
 
 The implementation must prove that:
 
@@ -634,7 +638,7 @@ The implementation must prove that:
 world
   → JSON.stringify
   → JSON.parse
-  → equivalent character minds and pending observations
+  → equivalent character minds, pending observations, and AI continuations
 ```
 
 No separate log replay or model call is required after loading.
@@ -658,7 +662,7 @@ The following remain later work:
 
 The runtime owns a deterministic JSON-serializable queue. Normal play advances it only after a human **Submit** or explicit **Pass / Next turn**. There is no timer or background execution.
 
-The sidebar still exposes **Process next AI event** and the crystal sphere still exposes the full queue for debugging. Those controls process one queue entry manually. The sidebar checkbox **Stop automatic AI request processing** pauses only the wave normally started after Submit; explicit Pass and sphere/sidebar stepping remain available.
+The normal gameplay sidebar exposes read-only queue diagnostics but no manual one-head processing button. The sidebar checkbox **Stop automatic AI request processing** pauses only the wave normally started after Submit; explicit **Pass / Next turn** remains a normal world-tick trigger. The crystal sphere still exposes the full queue and may process the queue head live for explicit debug work.
 
 Conceptual saved state:
 
@@ -667,7 +671,10 @@ world.ai = {
   turnQueue: [
     { characterId: "innkeeper", reason: "event" },
     { characterId: "hoodedWoman", reason: "event" }
-  ]
+  ],
+  continuations: {
+    innkeeper: "Serve the traveler the ale he paid for."
+  }
 };
 ```
 
@@ -786,14 +793,15 @@ A live AI reaction uses one model request:
 4. submit its optional narrative and optional single formal action through `CharacterAPI.submitIntent()`;
 5. apply bounded memory updates;
 6. consume only the snapshotted observation IDs;
-7. remove the character from the queue and re-enqueue it when new observations remain.
+7. store the model-returned nullable `continuation` separately from durable mind;
+8. remove the character from the queue and re-enqueue it when new observations remain.
 
 There is no immediate result-stage request.
 
 If the formal action succeeds, the engine records a grounded `action_result` observation for the AI actor. If it fails validation, the existing grounded `action_feedback` observation remains. The actor interprets either result during a later wave. This creates the cycle:
 
 ```text
-observation -> intention -> deterministic world result -> later observation
+observation + continuation -> one attempted action -> deterministic world result -> later observation + continuation
 ```
 
 A provider, parser, validation, or commit failure restores the failed character's pre-reaction snapshot and preserves its queue entry and unconsumed observations. During a full world tick the scheduler then stops immediately; reactions already committed earlier in that tick remain committed, and later/unprocessed characters remain pending for a later HumanController tick.
@@ -811,9 +819,10 @@ Conceptual response:
     "target_id": "innkeeper",
     "amount": 2
   },
-  "publicNarrative": "The traveller places two coins on the counter.",
-  "spokenText": "Pour me an ale.",
+  "publicNarrative": "The traveller reaches toward the counter.",
+  "spokenText": "Pour me an ale. *He watches the innkeeper carefully.*",
   "spokenTargetId": "innkeeper",
+  "continuation": "Buy an ale from the innkeeper.",
   "memoryUpdates": {
     "recentMemoriesToAdd": [],
     "beliefsToUpsert": [],
@@ -822,9 +831,9 @@ Conceptual response:
 }
 ```
 
-`action` is `null` or one currently available formal action. Narrative, speech, action, and bounded memory updates may coexist in one response. The system prompt instructs the model to prefer `action: null` when no formal action clearly advances the character's goals and never to select an action merely because it is available.
+`action` is `null` or one currently available formal action. Narrative, speech, continuation, action, and bounded memory updates may coexist in one response. `continuation` is one nullable model-owned working intention. The engine/controller does not parse it or turn it into a plan; the model may preserve, replace, or clear it on any reaction. The system prompt instructs the model to prefer `action: null` when no formal action clearly advances the character's goals and never to select an action merely because it is available.
 
-The model must not claim that a selected formal action succeeded. Only the engine's normalized action result establishes objective consequences. No chain-of-thought, hidden reasoning, arbitrary world patch, arbitrary mind replacement, or executable code is accepted.
+The model must not claim or remember that a selected formal action succeeded before the engine confirms it. Only the engine's normalized action result establishes objective consequences. Routine unfinished workflow belongs in `continuation`, not recent memory. No chain-of-thought, hidden reasoning, arbitrary world patch, arbitrary mind replacement, plan array, or executable code is accepted.
 
 ## 25. Validated memory updates
 
@@ -840,11 +849,17 @@ Applying updates must use an engine-owned function and must be part of the turn 
 
 ## 26. Combined intent commit and turn display
 
-Human and AI controllers submit the same conceptual envelope: optional attempt-phase narrative plus at most one formal action. `CharacterAPI.submitIntent()` assigns an `interactionId`; only deterministic registry execution establishes the completed objective action result.
+Human and AI controllers submit the same conceptual envelope: optional attempt-phase scene text plus at most one formal action. `CharacterAPI.submitIntent()` assigns an `interactionId`; only deterministic registry execution establishes the completed objective action result. Scene text uses one RP convention: ordinary text is spoken dialogue and paired `*...*` spans are visible narration/behavior. Narration may describe unmodeled gestures directly, but it never mutates canonical state. When narration implies a modeled world-changing operation, the matching formal action remains authoritative; if prose and engine result disagree, the engine wins. No NLP validator attempts to infer formal actions from prose.
 
 A successful major-location transition emits one `character_moved` event containing `fromLocationId` and `toLocationId`. Its recipients are the union of observers in the source and destination locations, so both sides receive the same full movement fact.
 
 The browser composes **Latest turn** from canonical event recipients. Visibility is evaluated per emitted event rather than by snapshotting whether the reacting actor was visible at the start of the AI reaction. Off-screen reactions still mutate the world and reach AI recipients. A default-off **Show invisible events** checkbox may reveal current-turn suppressed presentation entries with an explicit debug-only marker; it never changes perception or simulation state.
+
+The left-sidebar **Character** control opens a non-turn modal for the current Human-controlled
+character. It may edit runtime `name` and `playerDescription` and show inventory read-only.
+`aiDescription` remains authoring-only and is never exposed by this gameplay window. **Save and
+close** applies only those runtime profile fields; **Close without saving** discards edits. Neither
+path emits events, creates observations, runs AI, navigates locations, or advances a world tick.
 
 ## 27. Failure and rollback
 
@@ -871,11 +886,12 @@ The AI panel should show:
 - next scheduler recipient, first-event preview, and queue length;
 - `Stop automatic AI request processing`;
 - default-off `Show invisible events` for current-turn suppressed presentation entries;
-- `Process next AI event`;
 - shared executor busy/cooldown information where useful;
 - last safe error;
 - last token usage and cost when returned by OpenRouter;
 - optional transient request/response diagnostics, with credentials and user-scoped provider identifiers excluded.
+
+The sidebar may observe pending scheduler state but must not provide an alternate manual execution path.
 
 Raw prompts and responses are never written to SugarCube state, game saves, world data, or
 generated source files. They may appear in closure-owned transient diagnostics and in an
@@ -906,8 +922,9 @@ Any card may be inspected or dry-run, but only the queue head may be processed l
 `ContextBuilder`, and `AIProtocol`. It may capture any queued decision request or the last
 request actually issued by `AIController`. Dry-running or retrying a loaded request does not
 call `CharacterAPI.perform()`, `CharacterAPI.narrate()`, `AIMemory.applyUpdates()`, or
-observation consumption. The sphere's explicit **Process live** control is different: it
-invokes the same manual scheduler as the sidebar and commits a normal AI turn.
+observation consumption. The sphere's explicit **Process live** control invokes the scheduler's explicit single-head
+debug path and commits a normal AI turn. The normal gameplay sidebar has no equivalent
+processing control.
 
 The protocol returns a transient trace containing:
 

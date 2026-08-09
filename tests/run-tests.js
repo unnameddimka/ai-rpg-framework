@@ -209,6 +209,17 @@ assert(view.location.characters.some(function (character) {
 }), "old controlled character should appear with current position");
 
 assertOk(setup.Game.takeHumanControl("player"), "control should return to player");
+const profileEventCount = world.events.length;
+const profileQueue = JSON.stringify(world.ai.turnQueue);
+assertOk(setup.Game.updateCharacterProfile("player", {
+    name: "Edited Traveler",
+    playerDescription: "A traveler whose public description was edited in the in-game Character window."
+}), "runtime character profile should be editable without a gameplay action");
+assert(world.entities.player.name === "Edited Traveler" &&
+    world.entities.player.playerDescription.includes("edited in the in-game Character window") &&
+    setup.CharacterAPI.getView("player").self.playerDescription === world.entities.player.playerDescription &&
+    world.events.length === profileEventCount && JSON.stringify(world.ai.turnQueue) === profileQueue,
+    "runtime profile edits should update canonical public identity without events, observations, or scheduler work");
 const serializedWorld = JSON.stringify(world);
 State.variables.world = JSON.parse(serializedWorld);
 assertOk(setup.Game.bootstrap(), "JSON save/load round trip should preserve a valid world");
@@ -216,6 +227,8 @@ world = setup.Game.getWorld();
 assert(world.entities.player.sublocationId === "commonRoomTableOne",
     "save/load should preserve character sublocation");
 assert(setup.Game.getHumanCharacterId() === "player", "save/load should preserve one human controller");
+assert(world.entities.player.name === "Edited Traveler" && world.entities.player.playerDescription.includes("edited in the in-game Character window"),
+    "save/load should preserve runtime Name and playerDescription edits");
 const generatedBeforeSaveReconciliation = setup.GeneratedWorldData;
 const savedForAuthoringReconciliation = JSON.parse(JSON.stringify(world));
 savedForAuthoringReconciliation.entities.hoodedWoman.aiDescription = "Old saved Mara prompt.";
@@ -236,6 +249,8 @@ assertOk(setup.Game.bootstrap(), "compatible save should reconcile current chara
 world = setup.Game.getWorld();
 assert(world.entities.hoodedWoman.aiDescription === "New editor-authored Mara prompt.",
     "current generated aiDescription should replace the saved authoring copy");
+assert(world.entities.player.name === "Edited Traveler" && world.entities.player.playerDescription.includes("edited in the in-game Character window"),
+    "aiDescription authoring reconciliation must not overwrite runtime public profile edits");
 assert(world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.id === "memory_save_reconcile"; }) &&
     world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "saved_belief"; }) &&
     world.entities.hoodedWoman.mind.relationships.some(function (relationship) { return relationship.summary === "A relationship preserved from the save."; }),
@@ -247,8 +262,8 @@ world.control.assignments.innkeeper = "human";
 assert(setup.Game.getHumanCharacterId() === "player", "invalid multi-human state should repair to player");
 assertOk(setup.Game.validateWorld(), "world should validate after controller repair");
 
-assert(world.entities.player.playerDescription === setup.GeneratedWorldData.characters.player.playerDescription,
-    "runtime characters should be loaded from generated world data");
+assert(world.entities.player.playerDescription.includes("edited in the in-game Character window"),
+    "runtime public profile edits should remain independent from aiDescription authoring reconciliation");
 assert(world.entities.player.mind && Array.isArray(world.entities.player.mind.pendingObservations),
     "runtime character should own a pending observation inbox");
 const baseActions = setup.CharacterAPI.getAvailableActions("player");

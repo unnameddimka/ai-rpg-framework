@@ -589,3 +589,68 @@
 .framework-invisible-debug-entry p {
     margin: 0.2rem 0 0;
 }
+
+.framework-inline-narration {
+    font-style: italic;
+    opacity: 0.72;
+}
+
+.framework-character-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.62);
+    box-sizing: border-box;
+}
+
+.framework-character-window {
+    width: min(42rem, 100%);
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: 1.2rem;
+    border: 1px solid #777;
+    border-radius: 0.35rem;
+    background: #f4f0e8;
+    color: #211d18;
+    box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+}
+
+.framework-character-window h2 {
+    margin-top: 0;
+}
+
+.framework-character-window label {
+    display: block;
+    margin: 0.8rem 0;
+    font-weight: bold;
+}
+
+.framework-character-window input,
+.framework-character-window textarea {
+    display: block;
+    width: 100%;
+    margin-top: 0.35rem;
+    box-sizing: border-box;
+}
+
+.framework-character-window textarea {
+    resize: vertical;
+}
+
+.framework-character-inventory {
+    margin-top: 1rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid #aaa;
+}
+
+.framework-character-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin-top: 1rem;
+}

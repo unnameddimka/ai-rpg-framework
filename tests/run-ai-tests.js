@@ -13,8 +13,11 @@ function ok(value, message) { assert(value && value.ok, `${message}: ${JSON.stri
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [], relationshipsToUpsert: [] }; }
 function normalizeDecisionFixture(value) {
-    if (value && typeof value === "object" && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, "action") && !Object.prototype.hasOwnProperty.call(value, "spokenTargetId")) {
-        return Object.assign({ spokenTargetId: null }, value);
+    if (value && typeof value === "object" && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, "action")) {
+        const normalized = Object.assign({}, value);
+        if (!Object.prototype.hasOwnProperty.call(normalized, "spokenTargetId")) normalized.spokenTargetId = null;
+        if (!Object.prototype.hasOwnProperty.call(normalized, "continuation")) normalized.continuation = null;
+        return normalized;
     }
     return value;
 }
@@ -247,27 +250,37 @@ async function main() {
         view: { available_actions: available },
         character: { aiDescription: "Test actor" },
         mind: { knownFacts: [], beliefs: [], relationships: [], recentMemories: [], longTermMemories: [] },
+        continuation: null,
         pendingObservations: []
     });
     const decisionPrompt = validationMessages[0].content;
     assert(decisionPrompt.includes("do not merely promise future work") &&
-        decisionPrompt.includes("first currently available step") &&
+        decisionPrompt.includes("choose only one currently available step") &&
         decisionPrompt.includes("reevaluate the current view") &&
-        decisionPrompt.includes("brief current goal and meaningful progress") &&
+        decisionPrompt.includes("continuation is your own nullable working intention") &&
+        decisionPrompt.includes("framework does not interpret it") &&
+        decisionPrompt.includes("instead of writing workflow progress into recent memory") &&
         decisionPrompt.includes("do not blindly repeat the same action") &&
         !decisionPrompt.includes("Prefer action null"),
-        "decision prompt should support multi-step goals across grounded one-action reaction waves");
+        "decision prompt should support model-owned continuations across grounded one-action reaction waves");
     assert(decisionPrompt.includes("ongoing role-playing scene") &&
-        decisionPrompt.includes("use publicNarrative for brief visible behavior") &&
-        decisionPrompt.includes("spokenText for natural dialogue in this particular character's own voice") &&
+        decisionPrompt.includes("use publicNarrative for brief standalone visible behavior") &&
+        decisionPrompt.includes("spokenText for natural dialogue in this character's own voice") &&
+        decisionPrompt.includes("ordinary text is spoken dialogue") &&
+        decisionPrompt.includes("paired single asterisks") &&
+        decisionPrompt.includes("spokenText may include short *inline narration*") &&
+        decisionPrompt.includes("Narrated behavior never mutates canonical state by itself") &&
         decisionPrompt.includes("generic assistant-like or functional NPC replies") &&
         decisionPrompt.includes("one or two short narrative sentences plus dialogue") &&
         decisionPrompt.includes("Do not force narration or speech into every response") &&
         decisionPrompt.includes("only a request and is still unconfirmed") &&
         decisionPrompt.includes("must not claim that the formal action successfully changed the world before the engine confirms it") &&
         decisionPrompt.includes("Memory updates in the same response must also avoid recording the requested formal action as completed") &&
-        decisionPrompt.includes("Only after a grounded engine result arrives in a later observation"),
-        "technical prompt should encourage concise characterful role-play while keeping pending actions and memory grounded");
+        decisionPrompt.includes("Only after an engine-confirmed result arrives in a later observation"),
+        "technical prompt should explain inline RP narration while keeping pending actions and memory grounded");
+    const requiredShape = JSON.parse(validationMessages[1].content).requiredResponseShape;
+    assert(Object.prototype.hasOwnProperty.call(requiredShape, "continuation") && requiredShape.continuation === null,
+        "decision requests should require a nullable continuation field");
     const tracedProviderFailure = await setup.AIProtocol.requestValidated(validationMessages, "decision", {
         chat: async function () { return detailedRateLimited; }
     });
@@ -277,6 +290,9 @@ async function main() {
         "AI protocol traces should preserve provider HTTP diagnostics instead of collapsing them to code and message");
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "valid no-action decision should pass");
+    assert(setup.AIProtocol.validateDecision(decisionFixture({ action: null, publicNarrative: null, spokenText: null, continuation: "Keep watching the traveler.", memoryUpdates: emptyUpdates() }), available).ok &&
+        !setup.AIProtocol.validateDecision(decisionFixture({ action: null, publicNarrative: null, spokenText: null, continuation: { goal: "invalid" }, memoryUpdates: emptyUpdates() }), available).ok,
+        "continuation should accept only a string or null");
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "valid single action decision should pass");
     const unavailableMove = setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "street" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available);
@@ -311,9 +327,9 @@ async function main() {
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
         memoryUpdates: { recentMemoriesToAdd: [{ summary: "I decided to leave.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }), available).ok,
         "one response may combine narrative, one formal action, and memory updates");
-    assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Mara?", spokenTargetId: "hoodedWoman", memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
-        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Who are you?", spokenTargetId: "missing", memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
-        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, spokenTargetId: "hoodedWoman", memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok,
+    assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Mara?", spokenTargetId: "hoodedWoman", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
+        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Who are you?", spokenTargetId: "missing", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
+        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, spokenTargetId: "hoodedWoman", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok,
         "structured spokenTargetId should identify a visible speech addressee without being inferred from free-form dialogue");
     const detailedValidation = setup.AIProtocol.validateDecision(decisionFixture({
         action: null,
@@ -379,9 +395,19 @@ async function main() {
         !Object.prototype.hasOwnProperty.call(scheduledPayload.context.character, "id") &&
         !Object.prototype.hasOwnProperty.call(scheduledPayload.context.character, "name") &&
         !Object.prototype.hasOwnProperty.call(scheduledPayload.context.character, "abilities") &&
+        scheduledPayload.context.continuation === null &&
         JSON.stringify(setup.AIProtocol.actionCatalogFromMessages(scheduledRequest.messages)) ===
             JSON.stringify(canonicalScheduledView.available_actions),
         "AI request should embed the unchanged canonical player view once and add only private character context");
+
+    ok(setup.AIWorkingState.setContinuation("hoodedWoman", "Follow the traveler until I understand what they want."), "store model working continuation");
+    const continuationRequest = setup.AITurnScheduler.buildDecisionRequest("hoodedWoman");
+    assert(continuationRequest.context.continuation === "Follow the traveler until I understand what they want." &&
+        setup.AIWorkingState.getContinuation("hoodedWoman") === "Follow the traveler until I understand what they want.",
+        "stored continuation should return unchanged in later AI context without interpretation");
+    State.variables.world = JSON.parse(JSON.stringify(setup.Game.getWorld()));
+    assert(setup.Game.bootstrap().ok && setup.AIWorkingState.getContinuation("hoodedWoman") === "Follow the traveler until I understand what they want.",
+        "continuation should survive a normal JSON save/load round trip");
 
     world = fresh();
     ok(setup.Game.assignNonHumanController("innkeeper", "ai"), "make innkeeper AI for combined-intent test");
@@ -540,12 +566,13 @@ async function main() {
         "shared request executor should serialize game, sphere, repair, and future scheduler requests");
 
     world = queueHooded();
-    const oneStage = { chat: async function () { return response({ action: null, publicNarrative: "She nods.", spokenText: "Greetings.", memoryUpdates: {
+    const oneStage = { chat: async function () { return response({ action: null, publicNarrative: "She nods.", spokenText: "Greetings.", continuation: "Learn why the traveller approached me.", memoryUpdates: {
         recentMemoriesToAdd: [{ summary: "The traveller greeted me.", importance: .5 }], beliefsToUpsert: [{ id: "belief_greeting", text: "The traveller is civil.", confidence: "medium" }], relationshipsToUpsert: [{ targetCharacterId: "player", summary: "A civil new acquaintance." }]
     } }, { total_tokens: 10 }); } };
     const oneResult = await setup.AIController.takeNextTurn(oneStage);
-    assert(oneResult.ok && oneResult.stages === 1 && setup.AITurnQueue.peek() === null && world.entities.hoodedWoman.mind.recentMemories.some(function (m) { return m.summary.includes("greeted"); }),
-        "one-stage turn should commit narrative/memory, consume observations, and remove queue head");
+    assert(oneResult.ok && oneResult.stages === 1 && setup.AITurnQueue.peek() === null && world.entities.hoodedWoman.mind.recentMemories.some(function (m) { return m.summary.includes("greeted"); }) &&
+        setup.AIWorkingState.getContinuation("hoodedWoman") === "Learn why the traveller approached me.",
+        "one-stage turn should commit narrative/memory/continuation, consume observations, and remove queue head");
 
     world = queueHooded();
     ok(setup.Game.assignNonHumanController("innkeeper", "ai"), "make innkeeper an AI recipient");
@@ -604,14 +631,16 @@ async function main() {
         action: { type: "move_within_location", destination_id: "commonRoomFloor" },
         publicNarrative: "She starts to rise and tests her footing.",
         spokenText: "One moment.",
+        continuation: "Get across the room despite the obstacle.",
         memoryUpdates: { recentMemoriesToAdd: [{ summary: "I successfully crossed the room.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] }
     }); } });
     setup.Game.ActionRegistry.move_within_location.validate = originalMoveWithinValidate;
     assert(attemptedFailureTurn.ok && attemptedFailureTurn.actionResult.error.code === "TEST_GROUNDED_FAILURE" &&
         attemptedFailureTurn.narrativeText.includes("tests her footing") && attemptedFailureTurn.intentResult.narrativeResult &&
         attemptedFailureTurn.memorySuppressed && !world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.summary === "I successfully crossed the room."; }) &&
+        setup.AIWorkingState.getContinuation("hoodedWoman") === "Get across the room despite the obstacle." &&
         world.entities.hoodedWoman.mind.pendingObservations.some(function (item) { return item.code === "TEST_GROUNDED_FAILURE"; }),
-        "a valid in-world failed action should keep attempt-phase speech/narrative while suppressing success-dependent memory and preserving grounded failure feedback");
+        "a valid in-world failed action should keep attempt-phase speech/narrative and continuation while suppressing success-dependent memory and preserving grounded failure feedback");
 
     world = queueHooded();
     const beforeRollback = JSON.stringify(world);
@@ -695,7 +724,7 @@ async function main() {
         "crystal sphere live processing should invoke the same manual scheduler and advance only its queue head");
     assert(liveNarrativeSnapshot.narrativeHistory.length === 1 &&
         liveNarrativeSnapshot.narrativeHistory[0].actorId === "hoodedWoman" &&
-        liveNarrativeSnapshot.narrativeHistory[0].fragments.includes("The sphere permits the scheduled reaction."),
+        liveNarrativeSnapshot.narrativeHistory[0].fragments.some(function (fragment) { return fragment.includes("The sphere permits the scheduled reaction."); }),
         "successful sphere live processing should append its public narrative to the transient narrative history");
 
     ok(setup.CharacterAPI.narrate("player", { text: "Please leave the room.", target_id: "hoodedWoman" }),

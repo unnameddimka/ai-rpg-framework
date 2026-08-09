@@ -39,7 +39,7 @@
         const speaker = actorName(actorId);
         const addressee = input && input.target_id ? targetName(input.target_id) : "";
 
-        if (text) fragments.push(`${speaker}${addressee ? ` to ${addressee}` : ""} said: “${text}”`);
+        if (text) fragments.push(`${speaker}${addressee ? ` to ${addressee}` : ""}: ${text}`);
         actionTexts.forEach(function (item) { fragments.push(item); });
 
         if (actionResult && !actionResult.ok && actionResult.error) {

@@ -412,6 +412,29 @@
         return element;
     }
 
+    function inlineRPMarkup(value) {
+        const source = String(value === undefined || value === null ? "" : value);
+        const pattern = /\*([^*]+)\*/g;
+        let output = "";
+        let lastIndex = 0;
+        let match;
+        while ((match = pattern.exec(source)) !== null) {
+            output += escapeHtml(source.slice(lastIndex, match.index));
+            output += `<em class="framework-inline-narration">${escapeHtml(match[1])}</em>`;
+            lastIndex = match.index + match[0].length;
+        }
+        output += escapeHtml(source.slice(lastIndex));
+        return output;
+    }
+
+    function appendRPElement(parent, tagName, value, className) {
+        const element = document.createElement(tagName);
+        element.innerHTML = inlineRPMarkup(value);
+        if (className) element.className = className;
+        parent.appendChild(element);
+        return element;
+    }
+
     function renderInteractionView() {
         // Character shortcuts select the turn-panel addressee without opening a second panel.
     }
@@ -463,7 +486,7 @@
         return entries.map(function (entry, index) {
             const fragments = Array.isArray(entry.fragments) ? entry.fragments : [];
             const body = fragments.length
-                ? fragments.map(function (fragment) { return `<p>${escapeHtml(fragment)}</p>`; }).join("")
+                ? fragments.map(function (fragment) { return `<p>${inlineRPMarkup(fragment)}</p>`; }).join("")
                 : `<p class="prompt-lab-narrative-empty">No public narrative or formal-action event was produced.</p>`;
             return `<article class="prompt-lab-narrative-entry">
                 <h5>${escapeHtml(index + 1)}. ${escapeHtml(entry.actorName || entry.actorId || "Unknown character")}</h5>
@@ -784,7 +807,7 @@
             narrative.className = "framework-turn-narrative";
             appendTextElement(narrative, "h3", "Latest turn");
             uiState.turnNarrative.forEach(function (fragment) {
-                appendTextElement(narrative, "p", fragment);
+                appendRPElement(narrative, "p", fragment);
             });
             if (showInvisibleEvents) {
                 currentTurnHiddenNarrative.forEach(function (entry) {
@@ -792,7 +815,7 @@
                     row.className = "framework-invisible-debug-entry";
                     const context = [entry.actorName, entry.locationName].filter(Boolean).join(", ");
                     appendTextElement(row, "strong", `[DEBUG — NOT VISIBLE TO PLAYER]${context ? ` ${context}` : ""}`);
-                    appendTextElement(row, "p", entry.text || "");
+                    appendRPElement(row, "p", entry.text || "");
                     narrative.appendChild(row);
                 });
             }
@@ -854,6 +877,64 @@
         syncActionSelectionUI(view);
     }
 
+    function closeCharacterWindow() {
+        const existing = document.getElementById("framework-character-overlay");
+        if (existing) existing.remove();
+    }
+
+    function renderCharacterWindow() {
+        closeCharacterWindow();
+        const actorId = setup.Game.getHumanCharacterId();
+        const view = setup.CharacterAPI.getView(actorId);
+        if (!view || view.ok === false) return;
+        const inventory = view.self.inventory || [];
+        const overlay = document.createElement("div");
+        overlay.id = "framework-character-overlay";
+        overlay.className = "framework-character-overlay";
+        overlay.setAttribute("role", "dialog");
+        overlay.setAttribute("aria-modal", "true");
+        overlay.setAttribute("aria-labelledby", "framework-character-title");
+        overlay.innerHTML = `
+            <section class="framework-character-window">
+                <h2 id="framework-character-title">Character</h2>
+                <label>Name
+                    <input id="framework-character-name" type="text" maxlength="120" value="${escapeHtml(view.self.name || "")}">
+                </label>
+                <label>Description
+                    <textarea id="framework-character-description" rows="6" maxlength="2000">${escapeHtml(view.self.playerDescription || "")}</textarea>
+                </label>
+                <section class="framework-character-inventory">
+                    <h3>Inventory</h3>
+                    ${inventory.length
+                        ? `<ul>${inventory.map(function (item) { return `<li>${escapeHtml(item.name)}</li>`; }).join("")}</ul>`
+                        : `<p>Empty</p>`}
+                </section>
+                <div id="framework-character-status" class="framework-status"></div>
+                <div class="framework-character-actions">
+                    <button id="framework-character-save-close" type="button">Save and close</button>
+                    <button id="framework-character-close" type="button">Close without saving</button>
+                </div>
+            </section>
+        `;
+        document.body.appendChild(overlay);
+
+        $("#framework-character-save-close").on("click", function () {
+            const result = setup.Game.updateCharacterProfile(actorId, {
+                name: $("#framework-character-name").val(),
+                playerDescription: $("#framework-character-description").val()
+            });
+            if (!result.ok) {
+                $("#framework-character-status").text(result.error.message);
+                return;
+            }
+            closeCharacterWindow();
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
+        });
+        $("#framework-character-close").on("click", closeCharacterWindow);
+    }
+
     function renderSidebar() {
         const root = document.getElementById("framework-sidebar");
         if (!root) {
@@ -899,6 +980,7 @@
                     }).join("")}
                 </select>
                 <button id="take-control-button">Take control</button>
+                <br><button id="open-character-window" type="button">Character</button>
             </div>
             <div class="framework-sidebar-block">
                 <strong>${escapeHtml(actor.name)}</strong><br>
@@ -933,7 +1015,6 @@
                 <label class="framework-auto-ai-toggle"><input id="stop-auto-ai-processing" type="checkbox"${autoProcessingPaused ? " checked" : ""}${aiBusy ? " disabled" : ""}> Stop automatic AI request processing</label><br>
                 <label class="framework-auto-ai-toggle"><input id="show-invisible-events" type="checkbox"${showInvisibleEvents ? " checked" : ""}> Show invisible events</label><br>
                 <span id="ai-queue-status">${queueText}</span><br>
-                <button id="take-next-ai-turn"${(!aiQueue.head || !aiSettings.hasKey || aiBusy) ? " disabled" : ""}>Process next AI event</button>
                 <div id="ai-turn-status" class="framework-status">${escapeHtml(setup.AITransientDebug.lastSafeError || "")}</div>
                 <div id="ai-usage-status" class="framework-status">${usageText}</div>
             </div>
@@ -952,6 +1033,10 @@
             getUIState().interactionTargetId = "";
             const passage = currentPassageForHuman();
             Engine.play(passage);
+        });
+
+        $("#open-character-window").on("click", function () {
+            renderCharacterWindow();
         });
 
         $("#validate-world-button").on("click", function () {
@@ -1001,7 +1086,7 @@
         $("#stop-auto-ai-processing").on("change", function () {
             const result = setup.AITurnScheduler.setAutoProcessingPaused($(this).prop("checked"));
             $("#ai-turn-status").text(result.paused
-                ? "Automatic processing after Submit is paused. Pass and sphere controls remain manual."
+                ? "Automatic processing after Submit is paused. Pass and sphere controls remain available."
                 : "Automatic processing after Submit is enabled.");
         });
 
@@ -1010,30 +1095,6 @@
             renderLocationView();
         });
 
-        $("#take-next-ai-turn").on("click", async function () {
-            const uiState = getUIState();
-            if (getBusyState().busy) return;
-            uiState.turnBusy = true;
-            $(this).prop("disabled", true);
-            $("#ai-turn-status").text("Scheduler is processing the next AI event...");
-            renderSidebar();
-            renderLocationView();
-            renderActionPanel();
-            let result;
-            try {
-                const pending = setup.AITurnScheduler.processNext();
-                renderSidebar();
-                renderLocationView();
-                renderActionPanel();
-                result = await pending;
-            } finally {
-                uiState.turnBusy = false;
-            }
-            setup.AITransientDebug.lastSafeError = result && result.ok ? "" : result && result.error ? result.error.message : "AI processing failed.";
-            renderSidebar();
-            renderLocationView();
-            renderActionPanel();
-        });
     }
 
     async function runHumanIntent(input, navigateOnMove) {
@@ -1344,6 +1405,7 @@
         actionLabel: actionLabel,
         reconcileConversationState: reconcileConversationState,
         resizeNarrativeTextarea: resizeNarrativeTextarea,
+        inlineRPMarkup: inlineRPMarkup,
         busyState: getBusyState,
         getInvisibleEventDebugState: function () {
             return { show: showInvisibleEvents, entries: cloneUIValue(currentTurnHiddenNarrative) };

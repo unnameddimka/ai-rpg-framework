@@ -128,7 +128,7 @@
             nextMemoryId: 1,
             nextGeneratedItemId: 1,
             nextIntentId: 1,
-            ai: { turnQueue: [] },
+            ai: { turnQueue: [], continuations: {} },
 
             debug: {
                 lastActionResult: null,
@@ -175,8 +175,23 @@
         return ok({ characterId: characterId });
     }
 
+    function ensureAIState(world) {
+        if (!world.ai || typeof world.ai !== "object" || Array.isArray(world.ai)) world.ai = {};
+        if (!Array.isArray(world.ai.turnQueue)) world.ai.turnQueue = [];
+        if (!world.ai.continuations || typeof world.ai.continuations !== "object" || Array.isArray(world.ai.continuations)) {
+            world.ai.continuations = {};
+        }
+        Object.keys(world.ai.continuations).forEach(function (characterId) {
+            const value = world.ai.continuations[characterId];
+            if (!getCharacter(characterId, world) || (value !== null && (typeof value !== "string" || value.length > 2000))) {
+                delete world.ai.continuations[characterId];
+            }
+        });
+        return world.ai;
+    }
+
     function repairAIQueue(world) {
-        if (!world.ai || !Array.isArray(world.ai.turnQueue)) world.ai = { turnQueue: [] };
+        ensureAIState(world);
         const seen = new Set();
         world.ai.turnQueue = world.ai.turnQueue.filter(function (entry) {
             const characterId = typeof entry === "string" ? entry : entry && entry.characterId;
@@ -555,7 +570,20 @@
         }
 
         const spatialResult = validateSpatialInvariants(world);
-        return spatialResult.ok ? validateItemInvariants(world) : spatialResult;
+        if (!spatialResult.ok) return spatialResult;
+        const itemResult = validateItemInvariants(world);
+        if (!itemResult.ok) return itemResult;
+
+        ensureAIState(world);
+        for (const [characterId, continuation] of Object.entries(world.ai.continuations)) {
+            if (!getCharacter(characterId, world)) {
+                return fail("AI_CONTINUATION_CHARACTER_INVALID", `AI continuation references missing character ${characterId}.`);
+            }
+            if (continuation !== null && (typeof continuation !== "string" || continuation.length > 2000)) {
+                return fail("AI_CONTINUATION_INVALID", `AI continuation for ${characterId} must be a string up to 2000 characters or null.`);
+            }
+        }
+        return ok();
     }
 
     function reconcileCurrentAuthoringData(world) {
@@ -1530,6 +1558,7 @@
             self: {
                 id: actor.id,
                 name: actor.name,
+                playerDescription: actor.playerDescription || "",
                 controller_id: world.control.assignments[actor.id],
                 location_id: actor.locationId,
                 sublocation_id: actor.sublocationId,
@@ -1900,12 +1929,65 @@
             ? clone(options.pendingObservations)
             : [];
         const view = getCharacterView(actorId);
+        ensureAIState(world);
         return clone({
             schemaVersion: 1,
             view: view,
             character: buildPrivateCharacterContext(actor, world),
             mind: buildAIMindContext(actor),
+            continuation: Object.prototype.hasOwnProperty.call(world.ai.continuations, actorId)
+                ? world.ai.continuations[actorId]
+                : null,
             pendingObservations: preparedObservations
+        });
+    }
+
+    function setAIContinuation(actorId, continuation) {
+        const world = ensureWorld();
+        if (!getCharacter(actorId, world)) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        if (continuation !== null && typeof continuation !== "string") {
+            return fail("AI_CONTINUATION_INVALID", "AI continuation must be a string or null.");
+        }
+        if (typeof continuation === "string" && continuation.length > 2000) {
+            return fail("AI_CONTINUATION_INVALID", "AI continuation must not exceed 2000 characters.");
+        }
+        ensureAIState(world);
+        if (continuation === null) delete world.ai.continuations[actorId];
+        else world.ai.continuations[actorId] = continuation;
+        return ok({ actorId: actorId, continuation: continuation });
+    }
+
+    function getAIContinuation(actorId) {
+        const world = ensureWorld();
+        if (!getCharacter(actorId, world)) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        ensureAIState(world);
+        return Object.prototype.hasOwnProperty.call(world.ai.continuations, actorId)
+            ? world.ai.continuations[actorId]
+            : null;
+    }
+
+    function updateCharacterProfile(characterId, input) {
+        const world = ensureWorld();
+        const character = getCharacter(characterId, world);
+        if (!character) return fail("CHARACTER_NOT_FOUND", "Character does not exist.");
+        input = input && typeof input === "object" ? input : {};
+        const name = typeof input.name === "string" ? input.name.trim() : "";
+        const playerDescription = typeof input.playerDescription === "string" ? input.playerDescription.trim() : "";
+        if (!name || name.length > 120) {
+            return fail("CHARACTER_NAME_INVALID", "Character name must contain 1 to 120 characters.");
+        }
+        if (playerDescription.length > 2000) {
+            return fail("CHARACTER_DESCRIPTION_INVALID", "Character description must not exceed 2000 characters.");
+        }
+        character.name = name;
+        character.playerDescription = playerDescription;
+        if (world.inventories[character.inventoryId]) world.inventories[character.inventoryId].name = name;
+        const validation = validateWorld(world);
+        if (!validation.ok) return validation;
+        return ok({
+            characterId: characterId,
+            name: character.name,
+            playerDescription: character.playerDescription
         });
     }
 
@@ -1992,6 +2074,7 @@
         },
         takeHumanControl: takeHumanControl,
         assignNonHumanController: assignNonHumanController,
+        updateCharacterProfile: updateCharacterProfile,
         acknowledgeEvent: acknowledgeEvent,
         getPendingEventsFor: getPendingEventsFor,
         canReachCharacter: function (actorId, targetId) {
@@ -2016,6 +2099,11 @@
     };
 
     setup.AIMemory = { applyUpdates: applyAIMemoryUpdates, consumeObservations: consumeObservations };
+
+    setup.AIWorkingState = {
+        getContinuation: getAIContinuation,
+        setContinuation: setAIContinuation
+    };
 
     setup.CharacterAPI = {
         getView: getCharacterView,

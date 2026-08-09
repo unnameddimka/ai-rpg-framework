@@ -68,6 +68,13 @@ assert(model.getActorAbilityResult(state, "player").marker === "private-player" 
 
 
 const gameUIModel = context.setup.GameUIModel;
+const inlineRP = gameUIModel.inlineRPMarkup('Hello. *Mara narrows <her> eyes.* Still listening.');
+assert(inlineRP.includes('Hello. ') && inlineRP.includes('<em class="framework-inline-narration">Mara narrows &lt;her&gt; eyes.</em>') &&
+    inlineRP.includes(' Still listening.') && !inlineRP.includes('*Mara') && !inlineRP.includes('<her>'),
+    "inline RP rendering should hide paired asterisks, style narration, and safely escape content");
+const unmatchedRP = gameUIModel.inlineRPMarkup('Wait *this never closes');
+assert(unmatchedRP.includes('Wait *this never closes'),
+    "unmatched asterisks should remain literal instead of breaking RP rendering");
 const contextualView = {
     self: {
         id: "player",
@@ -133,12 +140,13 @@ assert(uiSource.includes("What ${view.self.name} notices") && uiSource.includes(
 const aiPanelSource = uiSource.slice(uiSource.indexOf('id="ai-settings-panel"'), uiSource.indexOf("`;", uiSource.indexOf('id="ai-settings-panel"')));
 assert(aiPanelSource.includes("Provider: OpenRouter") && aiPanelSource.includes('id="openrouter-model-select"') &&
     aiPanelSource.includes("${modelOptions}") && aiPanelSource.includes('type="password"') &&
-    aiPanelSource.includes("Process next AI event"),
-    "AI panel should show a model selector backed by generated options, password key input, and one global scheduler button");
+    aiPanelSource.includes("${queueText}") && !aiPanelSource.includes("Process next AI event"),
+    "AI panel should show model/key controls plus read-only scheduler diagnostics without a manual processing button");
 assert(uiSource.includes("setup.AIRuntimeSettings.selectModel") && !uiSource.includes("ai-character-select"),
     "model selection should update runtime settings while the AI queue UI remains free of a character picker");
-assert(uiSource.includes("!aiQueue.head || !aiSettings.hasKey || aiBusy"),
-    "queue button should disable for empty queue, missing key, or in-flight request");
+assert(!uiSource.includes('id="take-next-ai-turn"') && !uiSource.includes('$("#take-next-ai-turn")') &&
+    !uiSource.includes("setup.AITurnScheduler.processNext();"),
+    "normal gameplay sidebar must not provide a manual one-head AI execution path");
 assert(uiSource.includes('id="stop-auto-ai-processing"') &&
     uiSource.includes("setup.AITurnScheduler.setAutoProcessingPaused"),
     "sidebar should expose a persistent switch that pauses automatic AI processing after Submit");
@@ -161,6 +169,12 @@ assert(uiSource.includes('id="action-fill-item"') && uiSource.includes('id="acti
 assert(!uiSource.includes('<button id="action-narrate"') && !uiSource.includes('<button id="action-give-money"') &&
     !uiSource.includes('<button id="action-move"'),
     "formal debug actions should no longer execute through independent buttons");
+assert(uiSource.includes('id="open-character-window"') && uiSource.includes('overlay.id = "framework-character-overlay"') &&
+    uiSource.includes('id="framework-character-name"') && uiSource.includes('id="framework-character-description"') &&
+    uiSource.includes("view.self.playerDescription") && uiSource.includes("view.self.inventory") &&
+    uiSource.includes("setup.Game.updateCharacterProfile") && uiSource.includes("Save and close") &&
+    uiSource.includes("Close without saving") && !uiSource.includes("framework-character-ai-description"),
+    "sidebar Character window should edit Name/playerDescription, show read-only inventory, and never expose aiDescription");
 
 assert(uiSource.includes('view.location.id !== "villageTemple"') &&
     uiSource.includes("Scheduler queue") &&
@@ -201,6 +215,13 @@ assert(!escapedNarrativeHistory.includes("<img") &&
     escapedNarrativeHistory.includes("&lt;img") &&
     escapedNarrativeHistory.includes("&lt;unsafe narrative&gt;"),
     "prompt-lab narrative history should escape actor names and model-produced public text");
+const styledNarrativeHistory = promptLabModel.narrativeHistoryMarkup([{
+    actorId: "mara",
+    actorName: "Mara",
+    fragments: ["Maybe. *She smiles faintly.* Maybe not."]
+}]);
+assert(styledNarrativeHistory.includes('framework-inline-narration') && !styledNarrativeHistory.includes('*She smiles faintly.*'),
+    "prompt-lab narrative history should use the same inline RP narration renderer");
 
 const escapedQueue = promptLabModel.queueMarkup({
     busy: false,

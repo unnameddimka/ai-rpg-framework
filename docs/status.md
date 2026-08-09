@@ -34,19 +34,29 @@
   +1, targeted formal action +2, plus +2 when the originating actor was HumanController.
 - **Submit** commits the human intent and normally runs one complete global AI world tick. The
   sidebar checkbox **Stop automatic AI request processing** pauses that automatic wave.
-  **Pass / Next turn**, the sidebar step, and the crystal sphere remain explicit controls.
-  There is no timer or background loop.
+  **Pass / Next turn** remains the normal explicit world-tick trigger; the sidebar shows queue
+  diagnostics but no longer exposes a manual one-head processing button. The crystal sphere
+  keeps explicit single-head live processing for debug work. There is no timer or background loop.
 - During one Human-triggered world tick, each eligible AI character reacts at most once.
   Later characters see grounded events produced by earlier reactions. New observations for an
   already-reacted character, including its own action result, remain pending for a later tick.
   Off-screen pending observations remain eligible; there are no idle model calls.
 - A live AI reaction uses one model request returning optional narrative, optional speech,
-  bounded memory updates, and at most one formal action. The old immediate `game-result`
-  request has been removed. Grounded success or failure becomes an ordinary observation for
-  a later Human-triggered world tick.
+  one nullable model-owned `continuation`, bounded memory updates, and at most one formal action.
+  Continuation is private working state outside durable `mind`; the framework stores and returns
+  it without interpreting it. The old immediate `game-result` request has been removed. Grounded
+  success or failure becomes an ordinary observation for a later Human-triggered world tick,
+  where the model re-evaluates the continuation against the new canonical view.
 - `CharacterAPI.submitIntent()` is the common commit path for human and AI envelopes. Formal
   action authority remains deterministic: model or human prose cannot establish objective
-  world consequences.
+  world consequences. Ordinary scene text is speech while paired `*...*` spans are inline visible
+  narration; the UI renders those spans as dimmed italics, but narration never overrides engine
+  state or substitutes for a modeled formal action.
+- The gameplay sidebar now opens a modal **Character** window for the current Human-controlled
+  character. It edits runtime Name and `playerDescription`, shows inventory read-only, never
+  exposes authoring-only `aiDescription`, and provides **Save and close** / **Close without saving**
+  without generating a world tick, event, or AI reaction. Runtime profile edits survive normal
+  compatible save/load.
 - The location UI renders **Latest turn** from canonical per-event recipients. Major-location
   movement emits one `character_moved` event visible to observers on both source and destination
   sides. A default-off **Show invisible events** checkbox can reveal only the current turn's
@@ -98,8 +108,9 @@
   advances a world tick.
 - The current loudness control distinguishes normal/public delivery from quiet/private
   delivery. Shouts and propagation into neighboring locations are not implemented.
-- One submitted intent may contain at most one formal action. There is no multi-action ordering,
-  partial commit, or rollback policy.
+- One submitted intent may contain at most one formal action. Multi-step behavior is model-driven
+  across later reactions through one opaque `continuation`; there is no plan array, goal stack,
+  workflow engine, multi-action ordering, or partial multi-action commit.
 - The **Latest turn** output is deterministic concatenation of existing narrative and grounded
   fragments; there is no separate literary narrator or summarizer model.
 - A paused movement Submit commits and renders the destination without first draining AI

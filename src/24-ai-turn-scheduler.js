@@ -65,7 +65,7 @@
             const textParts = [];
             if (narrativeText) {
                 const addressee = narrativeTargetId ? characterName(narrativeTargetId, world) : null;
-                textParts.push(`${actor}${addressee ? ` to ${addressee}` : ""} said: “${narrativeText}”`);
+                textParts.push(`${actor}${addressee ? ` to ${addressee}` : ""}: ${narrativeText}`);
             }
             if (mechanicalText) textParts.push(mechanicalText);
 
@@ -104,8 +104,8 @@
             summary = text || `${actor} performed a combined intent.`;
         } else if (type === "narrative_input") {
             summary = target
-                ? `${actor} to ${target}: “${text}”`
-                : `${actor}: “${text}”`;
+                ? `${actor} to ${target}: ${text}`
+                : `${actor}: ${text}`;
         } else if (type === "character_moved") {
             summary = `${actor} moved from ${locationName(data.fromLocationId, world)} to ${locationName(data.toLocationId, world)}.`;
         } else if (type === "character_entered_location") {
