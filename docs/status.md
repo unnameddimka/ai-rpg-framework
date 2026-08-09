@@ -6,7 +6,7 @@
   nonhuman controller defaults, abilities, and hidden engine facts.
 - Exactly one HumanController remains an atomic temporary override. Released characters
   return directly to their authored `defaultControllerId`; no controller stack is stored.
-- The sample player, hooded woman, and innkeeper use permanent AI defaults so temporary
+- The sample player, hooded woman, Garrick the Innkeeper, Captain Price, and Nell use permanent AI defaults so temporary
   HumanController takeover always returns them to AI control.
 - Formal actions, restricted views, grounded feedback, observations, `ContextBuilder`, the
   generic zero-input ability UI, and targetless `read_aura` remain deterministic.
@@ -47,6 +47,11 @@
   it without interpreting it. The old immediate `game-result` request has been removed. Grounded
   success or failure becomes an ordinary observation for a later Human-triggered world tick,
   where the model re-evaluates the continuation against the new canonical view.
+- The common AI system prompt now treats delivered observations as already perceived instead of
+  asking the model to second-guess distance or loudness. Meaningful direct address normally calls
+  for an in-character reaction unless silence is deliberate. Unfinished concrete multi-step purposes
+  should normally remain in `continuation`, and an obvious available step toward an active purpose
+  is preferred over an accidental empty no-op while still being re-evaluated every reaction.
 - `CharacterAPI.submitIntent()` is the common commit path for human and AI envelopes. Formal
   action authority remains deterministic: model or human prose cannot establish objective
   world consequences. Ordinary scene text is speech while paired `*...*` spans are inline visible
@@ -85,6 +90,12 @@
 - Engine-owned bounded memory updates support recent-memory append, belief upsert, and
   relationship upsert only. Observation consumption removes supplied IDs rather than clearing
   an inbox wholesale.
+- The authored tavern world now names the innkeeper **Garrick the Innkeeper**. Garrick is a
+  retired soldier turned practical, miserly tavern owner; he and Nell begin with mutual authored
+  `knownFacts` and `relationships` describing their established almost-family/employer relationship,
+  so neither AI treats the other as a stranger or new applicant.
+- Task specifications are organized under `docs/engine/` for technical/framework work and
+  `docs/world/` for authored world/character work.
 - Provider, parser, validator, or AI commit failures restore the failed reaction snapshot,
   preserve its unconsumed observations, and stop the current AI world tick. Earlier committed
   reactions remain committed; later Human turns may add more observations until processing

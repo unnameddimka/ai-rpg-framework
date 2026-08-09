@@ -37,6 +37,8 @@ tools/generate-world-data.js Cross-platform world validator/embedder
 tools/generate-model-list.js Cross-platform model-list validator/embedder
 docs/architecture.md    Current architecture
 docs/status.md          Current implementation status
+docs/engine/            Technical implementation task specifications
+docs/world/             World/character authoring task specifications
 AGENTS.md                Instructions for Codex and other coding agents
 tests/run-tests.js       Node test harness
 build.bat / build.sh     Windows and Bash builds
@@ -56,6 +58,12 @@ The tavern item loop uses persistent instances rather than spawning filled mugs.
 `emptyMug_*` instances begin in the behind-bar **Mug cabinet**. An actor must take one, then
 use `fill` at the `ale_source` behind the bar. The same item changes definition to `mugOfAle`.
 Using `consume` changes that instance back to `emptyMug`, making it refillable again.
+
+The authored tavern cast includes Captain John Price, Nell, and Garrick the Innkeeper. Garrick
+and Nell begin with mutual `knownFacts` and `relationships` in their authored `initialMind`, so
+their established history is private character context from the start rather than something the
+model must infer from a first encounter. World/character task specs live under `docs/world/`;
+engine, controller, UI, and protocol task specs live under `docs/engine/`.
 
 `src/generated/world-data.js`, `src/generated/world-passages.twee`,
 `src/generated/world-storydata.twee`, and `src/00-model-list.js` are derived build files and

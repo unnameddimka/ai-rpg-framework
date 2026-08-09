@@ -257,13 +257,27 @@ async function main() {
     const decisionPrompt = validationMessages[0].content;
     assert(decisionPrompt.includes("do not merely promise future work") &&
         decisionPrompt.includes("choose only one currently available step") &&
-        decisionPrompt.includes("reevaluate the current view") &&
+        decisionPrompt.includes("Reevaluate the current view") &&
         decisionPrompt.includes("continuation is your own nullable working intention") &&
         decisionPrompt.includes("framework does not interpret it") &&
+        decisionPrompt.includes("Continuation records the unfinished purpose, not a predetermined sequence") &&
+        decisionPrompt.includes("normally keep that unfinished purpose in continuation") &&
         decisionPrompt.includes("instead of writing workflow progress into recent memory") &&
+        decisionPrompt.includes("Do not use routine recent memory as a substitute") &&
+        decisionPrompt.includes("prefer that meaningful next step over an empty no-op") &&
+        decisionPrompt.includes("never follow continuation blindly") &&
+        decisionPrompt.includes("completed, impossible, irrelevant, superseded, deliberately abandoned") &&
         decisionPrompt.includes("do not blindly repeat the same action") &&
         !decisionPrompt.includes("Prefer action null"),
         "decision prompt should support model-owned continuations across grounded one-action reaction waves");
+    assert(decisionPrompt.includes("Meaningful speech directly addressed to you normally deserves an in-character reaction") &&
+        decisionPrompt.includes("completely empty no-op after direct address should be intentional") &&
+        decisionPrompt.includes("accidental failure to react to supplied direct speech is undesirable") &&
+        decisionPrompt.includes("already passed the framework's perception and delivery rules") &&
+        decisionPrompt.includes("treat it as perceived") &&
+        decisionPrompt.includes("do not second-guess whether you could hear or see it") &&
+        decisionPrompt.includes("deterministic framework owns observation delivery"),
+        "decision prompt should treat delivered direct speech as perceived while preserving intentional in-character silence");
     assert(decisionPrompt.includes("ongoing role-playing scene") &&
         decisionPrompt.includes("use publicNarrative for brief standalone visible behavior") &&
         decisionPrompt.includes("spokenText for natural dialogue in this character's own voice") &&
