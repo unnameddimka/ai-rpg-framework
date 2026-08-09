@@ -175,15 +175,6 @@
         return ok({ characterId: characterId });
     }
 
-    function hasDirectPendingObservation(characterId, world) {
-        const character = getCharacter(characterId, world);
-        if (!character || !character.mind || !Array.isArray(character.mind.pendingObservations)) return false;
-        return character.mind.pendingObservations.some(function (observation) {
-            const targetId = observation.targetId || observation.data && observation.data.targetId || null;
-            return targetId === characterId;
-        });
-    }
-
     function repairAIQueue(world) {
         if (!world.ai || !Array.isArray(world.ai.turnQueue)) world.ai = { turnQueue: [] };
         const seen = new Set();
@@ -191,17 +182,14 @@
             const characterId = typeof entry === "string" ? entry : entry && entry.characterId;
             if (!characterId || seen.has(characterId) || !isAIQueueEligible(characterId, world)) return false;
             seen.add(characterId);
-            if (typeof entry === "string") return true;
-            entry.characterId = characterId;
-            entry.reason = typeof entry.reason === "string" ? entry.reason : "observation";
             return true;
-        }).map(function (entry, index) {
-            const normalized = typeof entry === "string" ? { characterId: entry, reason: "repaired" } : entry;
-            return { entry: normalized, index: index, direct: hasDirectPendingObservation(normalized.characterId, world) };
-        }).sort(function (left, right) {
-            if (left.direct !== right.direct) return left.direct ? -1 : 1;
-            return left.index - right.index;
-        }).map(function (record) { return record.entry; });
+        }).map(function (entry) {
+            const characterId = typeof entry === "string" ? entry : entry.characterId;
+            return {
+                characterId: characterId,
+                reason: typeof entry === "object" && typeof entry.reason === "string" ? entry.reason : "observation"
+            };
+        });
         return world.ai.turnQueue;
     }
 
@@ -754,6 +742,15 @@
             return event.targetId ? [event.targetId] : [];
         }
 
+        if (event.type === "character_moved") {
+            const visibleLocationIds = new Set([event.fromLocationId, event.toLocationId].filter(Boolean));
+            return getCharacters(world)
+                .filter(function (character) {
+                    return character.id !== event.actorId && visibleLocationIds.has(character.locationId);
+                })
+                .map(function (character) { return character.id; });
+        }
+
         return getCharacters(world)
             .filter(function (character) {
                 return character.id !== event.actorId &&
@@ -848,6 +845,9 @@
             text: "",
             processedBy: []
         }, eventData);
+        if (!event.sourceControllerId && event.actorId && world.control.assignments[event.actorId]) {
+            event.sourceControllerId = world.control.assignments[event.actorId];
+        }
 
         event.recipients = recipientsForEvent(event, world);
         event.pendingFor = event.recipients.slice();
@@ -865,6 +865,7 @@
                 turn: event.id,
                 actorId: event.actorId || null,
                 targetId: event.targetId || null,
+                sourceControllerId: event.sourceControllerId || null,
                 text: event.text,
                 data: clone(event)
             }, world);
@@ -927,21 +928,14 @@
                 actor.locationId = action.destination_id;
                 actor.sublocationId = destination.defaultSublocationId;
                 return [{
-                    type: "character_left_location",
-                    actorId: actor.id,
-                    locationId: fromLocationId,
-                    fromLocationId: fromLocationId,
-                    toLocationId: action.destination_id,
-                    fromSublocationId: fromSublocationId,
-                    text: `${actor.name} left ${fromLocationId}.`
-                }, {
-                    type: "character_entered_location",
+                    type: "character_moved",
                     actorId: actor.id,
                     locationId: action.destination_id,
                     fromLocationId: fromLocationId,
                     toLocationId: action.destination_id,
+                    fromSublocationId: fromSublocationId,
                     toSublocationId: actor.sublocationId,
-                    text: `${actor.name} entered ${destination.name}.`
+                    text: `${actor.name} moved from ${getLocation(fromLocationId, world).name} to ${destination.name}.`
                 }];
             }
         },
@@ -1597,6 +1591,85 @@
         };
     }
 
+    function actionRequestErrors(action, actionDefinition) {
+        const errors = [];
+        if (!action || typeof action !== "object" || Array.isArray(action) || typeof action.type !== "string") {
+            return ["Action must be one object with a string type."];
+        }
+        if (!actionDefinition) return [`Action ${String(action.type)} is not currently available.`];
+        const schema = actionDefinition.schema || {};
+        const properties = schema.properties || {};
+        const required = schema.required || ["type"];
+        Object.keys(action).forEach(function (key) {
+            if (!Object.prototype.hasOwnProperty.call(properties, key)) errors.push(`Action field ${key} is not allowed for ${action.type}.`);
+        });
+        required.forEach(function (key) {
+            if (!Object.prototype.hasOwnProperty.call(action, key)) errors.push(`Action field ${key} is required for ${action.type}.`);
+        });
+        Object.keys(properties).forEach(function (key) {
+            if (!Object.prototype.hasOwnProperty.call(action, key)) return;
+            const rule = properties[key] || {};
+            const value = action[key];
+            if (Object.prototype.hasOwnProperty.call(rule, "const") && value !== rule.const) errors.push(`Action field ${key} has an invalid value.`);
+            if (rule.type === "string" && typeof value !== "string") errors.push(`Action field ${key} must be a string.`);
+            if (rule.type === "number" && (typeof value !== "number" || !Number.isFinite(value))) errors.push(`Action field ${key} must be a finite number.`);
+            if (rule.type === "integer" && !Number.isInteger(value)) errors.push(`Action field ${key} must be an integer.`);
+            if (typeof rule.minimum === "number" && typeof value === "number" && value < rule.minimum) errors.push(`Action field ${key} is below its minimum.`);
+            if (Array.isArray(rule.enum) && !rule.enum.includes(value)) errors.push(`Action field ${key} selected an invalid value.`);
+        });
+        const options = actionDefinition.options && typeof actionDefinition.options === "object" ? actionDefinition.options : {};
+        const optionKeys = {
+            destination_id: "destination_ids",
+            item_id: "item_ids",
+            target_id: "target_ids",
+            target_inventory_id: "target_inventory_ids"
+        };
+        Object.entries(optionKeys).forEach(function (entry) {
+            const propertyKey = entry[0];
+            const optionKey = entry[1];
+            if (!Object.prototype.hasOwnProperty.call(action, propertyKey) || !Array.isArray(options[optionKey])) return;
+            if (!options[optionKey].includes(action[propertyKey])) errors.push(`Action field ${propertyKey} selected an unavailable option.`);
+        });
+        if (Object.prototype.hasOwnProperty.call(action, "amount") && typeof options.maximum_amount === "number" &&
+                typeof action.amount === "number" && action.amount > options.maximum_amount) {
+            errors.push("Action amount exceeds the currently available maximum.");
+        }
+        return errors;
+    }
+
+    function validateActionRequest(actorId, action) {
+        const actor = getCharacter(actorId, ensureWorld());
+        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        const available = getAvailableActions(actorId);
+        const definition = action && typeof action === "object" ? available[action.type] : null;
+        const errors = actionRequestErrors(action, definition);
+        if (errors.length > 0) {
+            return fail("ACTION_CONTRACT_REJECTED", errors[0], { details: errors });
+        }
+        return ok({ action: clone(action) });
+    }
+
+    function recordGroundedActionFailure(actorId, action, errorData, metadata) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        if (!actor) return { ok: false, action: clone(action || {}), events: [], feedback: [], error: { code: "ACTOR_NOT_FOUND", message: "Actor character does not exist." } };
+        const normalizedError = {
+            code: errorData && errorData.code || "ACTION_FAILED",
+            message: errorData && errorData.message || "The formal action could not be completed."
+        };
+        const feedback = [{
+            recipientId: actor.id,
+            kind: "observation",
+            code: normalizedError.code,
+            text: normalizedError.message,
+            data: { ok: false, action: clone(action || {}), targetId: action && action.target_id || null }
+        }];
+        routeFeedback(feedback, action || { type: "unknown" }, world, metadata);
+        const result = { ok: false, action: clone(action || {}), events: [], feedback: clone(feedback), error: normalizedError };
+        world.debug.lastActionResult = clone(result);
+        return result;
+    }
+
     function executeAction(actorId, action, metadata) {
         let world = ensureWorld();
         const actor = getCharacter(actorId, world);
@@ -1676,7 +1749,11 @@
         } catch (error) {
             State.variables.world = snapshot;
             world = getWorld();
-            const result = { ok: false, action: clone(action), events: [], feedback: [], error: { code: "ACTION_EXECUTION_FAILED", message: error.message } };
+            const failure = { code: "ACTION_EXECUTION_FAILED", message: error.message };
+            if (world.control.assignments[actorId] === "ai") {
+                return recordGroundedActionFailure(actorId, action, failure, metadata);
+            }
+            const result = { ok: false, action: clone(action), events: [], feedback: [], error: failure };
             world.debug.lastActionResult = result;
             return result;
         }
@@ -1737,16 +1814,17 @@
         const action = input.action && typeof input.action === "object" ? clone(input.action) : null;
         if (!text && !action) return fail("EMPTY_INTENT", "Submit a narrative, one formal action, or both.");
 
+        if (action) {
+            const contractValidation = validateActionRequest(actorId, action);
+            if (!contractValidation.ok) return contractValidation;
+        }
+
         const snapshot = clone(world);
         const interactionId = world.nextIntentId++;
-        const originLocationId = actor.locationId;
         let actionResult = null;
         let narrativeResult = null;
 
         try {
-            if (action) {
-                actionResult = executeAction(actorId, action, { interactionId: interactionId });
-            }
             if (text) {
                 narrativeResult = submitNarrative(actorId, {
                     text: text,
@@ -1754,19 +1832,23 @@
                     noticeability: input.noticeability || "noticeable"
                 }, {
                     interactionId: interactionId,
-                    locationId: action && action.type === "move" ? originLocationId : getCharacter(actorId, world).locationId
+                    locationId: actor.locationId
                 });
                 if (!narrativeResult.ok) throw narrativeResult.error;
             }
-            const validation = validateWorld(world);
+            if (action) {
+                actionResult = executeAction(actorId, action, { interactionId: interactionId });
+            }
+            const validation = validateWorld(getWorld());
             if (!validation.ok) throw validation.error;
             const result = ok({
                 interactionId: interactionId,
                 action: action,
                 actionResult: actionResult,
-                narrativeResult: narrativeResult
+                narrativeResult: narrativeResult,
+                narrativeSuppressed: false
             });
-            world.debug.lastActionResult = clone(result);
+            getWorld().debug.lastActionResult = clone(result);
             return result;
         } catch (error) {
             State.variables.world = snapshot;
@@ -1938,6 +2020,8 @@
     setup.CharacterAPI = {
         getView: getCharacterView,
         getAvailableActions: getAvailableActions,
+        validateActionRequest: validateActionRequest,
+        recordGroundedActionFailure: recordGroundedActionFailure,
         perform: executeAction,
         narrate: submitNarrative,
         submitIntent: submitIntent

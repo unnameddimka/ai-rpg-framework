@@ -60,9 +60,14 @@
             const actor = characterName(actorId, world);
             const mechanicalText = mechanicalItems.map(function (item) { return item.text; }).filter(Boolean).join(" ");
             const narrativeText = narrativeItems.map(function (item) { return item.text; }).filter(Boolean).join(" ");
+            const narrativeTargetId = narrativeItems.find(function (item) { return item.targetId; })?.targetId || null;
+            const mechanicalTargetId = mechanicalItems.find(function (item) { return item.targetId; })?.targetId || null;
             const textParts = [];
+            if (narrativeText) {
+                const addressee = narrativeTargetId ? characterName(narrativeTargetId, world) : null;
+                textParts.push(`${actor}${addressee ? ` to ${addressee}` : ""} said: “${narrativeText}”`);
+            }
             if (mechanicalText) textParts.push(mechanicalText);
-            if (narrativeText) textParts.push(`${actor} said: “${narrativeText}”`);
 
             return {
                 id: first.id,
@@ -71,12 +76,14 @@
                 kind: "intent",
                 turn: first.turn || null,
                 actorId: actorId,
-                targetId: narrativeItems.find(function (item) { return item.targetId; })?.targetId ||
-                    mechanicalItems.find(function (item) { return item.targetId; })?.targetId || null,
+                targetId: mechanicalTargetId || narrativeTargetId || null,
                 text: textParts.join(" "),
                 data: {
                     type: "combined_intent",
                     interactionId: entry.interactionId,
+                    formalActionTargetId: mechanicalTargetId,
+                    spokenTargetId: narrativeTargetId,
+                    targetIds: Array.from(new Set([mechanicalTargetId, narrativeTargetId].filter(Boolean))),
                     observations: clone(items)
                 }
             };
@@ -99,6 +106,8 @@
             summary = target
                 ? `${actor} to ${target}: “${text}”`
                 : `${actor}: “${text}”`;
+        } else if (type === "character_moved") {
+            summary = `${actor} moved from ${locationName(data.fromLocationId, world)} to ${locationName(data.toLocationId, world)}.`;
         } else if (type === "character_entered_location") {
             summary = `${actor} entered ${locationName(data.toLocationId || data.locationId, world)}.`;
         } else if (type === "character_left_location") {
@@ -147,10 +156,52 @@
         };
     }
 
+    function initiativeContribution(observation, characterId) {
+        if (!observation) return 0;
+        const data = observation.data || {};
+        const targetId = observation.targetId || data.targetId || null;
+        if (targetId !== characterId) return 0;
+        const type = observationType(observation);
+        let score = type === "narrative_input" ? 1 : (observation.kind === "event" ? 2 : 0);
+        if (score > 0) {
+            const sourceControllerId = observation.sourceControllerId || data.sourceControllerId || null;
+            if (sourceControllerId === "human") score += 2;
+        }
+        return score;
+    }
+
+    function initiativeScore(characterId, world) {
+        const actor = world.entities[characterId];
+        const pending = actor && actor.mind && Array.isArray(actor.mind.pendingObservations)
+            ? actor.mind.pendingObservations
+            : [];
+        return pending.reduce(function (total, observation) {
+            return total + initiativeContribution(observation, characterId);
+        }, 0);
+    }
+
+    function orderedQueueEntries(excludedCharacterIds) {
+        const world = setup.Game.getWorld();
+        const excluded = excludedCharacterIds || new Set();
+        return setup.AITurnQueue.getStatus().entries.map(function (entry, index) {
+            return {
+                entry: clone(entry),
+                index: index,
+                initiativeScore: initiativeScore(entry.characterId, world)
+            };
+        }).filter(function (record) {
+            return !excluded.has(record.entry.characterId);
+        }).sort(function (left, right) {
+            if (left.initiativeScore !== right.initiativeScore) return right.initiativeScore - left.initiativeScore;
+            return left.index - right.index;
+        });
+    }
+
     function getQueueView() {
         const world = setup.Game.getWorld();
-        const status = setup.AITurnQueue.getStatus();
-        const entries = status.entries.map(function (entry, index) {
+        const ordered = orderedQueueEntries();
+        const entries = ordered.map(function (record, index) {
+            const entry = record.entry;
             const actor = world.entities[entry.characterId];
             const originalObservations = actor && actor.mind && Array.isArray(actor.mind.pendingObservations)
                 ? actor.mind.pendingObservations.slice(0, 50)
@@ -170,6 +221,7 @@
                 locationId: actor && actor.locationId || null,
                 locationName: actor ? locationName(actor.locationId, world) : "Unknown",
                 reason: entry.reason || "observation",
+                initiativeScore: record.initiativeScore,
                 pendingObservationCount: actor && actor.mind && actor.mind.pendingObservations
                     ? actor.mind.pendingObservations.length
                     : 0,
@@ -208,14 +260,16 @@
     }
 
     async function processNext(client) {
-        return setup.AIController.takeNextTurn(client || setup.OpenRouterClient);
+        const next = orderedQueueEntries()[0];
+        if (!next) return { ok: false, error: { code: "AI_QUEUE_EMPTY", message: "No pending AI turns." } };
+        return setup.AIController.takeQueuedTurn(next.entry.characterId, client || setup.OpenRouterClient);
     }
 
     async function processWave(client) {
         if (waveInFlight || setup.AIController.isInFlight()) {
             return { ok: false, error: { code: "AI_WAVE_IN_FLIGHT", message: "An AI reaction wave is already in progress." } };
         }
-        if (setup.AITurnQueue.getStatus().entries.length === 0) {
+        if (orderedQueueEntries().length === 0) {
             return { ok: true, processedCount: 0, reactedCharacterIds: [], results: [], remainingQueue: getQueueView() };
         }
         if (setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
@@ -225,13 +279,13 @@
         waveInFlight = true;
         const reacted = new Set();
         const results = [];
+        const emergencyLimit = 64;
         try {
-            for (let guard = 0; guard < 100; guard++) {
-                const queue = setup.AITurnQueue.getStatus().entries;
-                const next = queue.find(function (entry) { return !reacted.has(entry.characterId); });
+            for (let count = 0; count < emergencyLimit; count++) {
+                const next = orderedQueueEntries(reacted)[0];
                 if (!next) break;
 
-                const result = await setup.AIController.takeQueuedTurn(next.characterId, client || setup.OpenRouterClient);
+                const result = await setup.AIController.takeQueuedTurn(next.entry.characterId, client || setup.OpenRouterClient);
                 results.push(clone(result));
                 if (!result.ok) {
                     return {
@@ -243,8 +297,22 @@
                         remainingQueue: getQueueView()
                     };
                 }
-                reacted.add(next.characterId);
+                reacted.add(next.entry.characterId);
             }
+
+            const unreacted = orderedQueueEntries(reacted);
+            if (unreacted.length > 0 && reacted.size >= emergencyLimit) {
+                return {
+                    ok: true,
+                    truncated: true,
+                    warning: `AI world tick stopped at the emergency limit of ${emergencyLimit} model decisions; remaining observations stay pending.`,
+                    processedCount: reacted.size,
+                    reactedCharacterIds: Array.from(reacted),
+                    results: results,
+                    remainingQueue: getQueueView()
+                };
+            }
+
             return {
                 ok: true,
                 processedCount: reacted.size,
@@ -282,6 +350,9 @@
         },
         describeObservation: function (observation) {
             return clone(describeObservation(observation, setup.Game.getWorld()));
+        },
+        getInitiativeScore: function (characterId) {
+            return initiativeScore(characterId, setup.Game.getWorld());
         },
         isAutoProcessingPaused: readAutoProcessingPaused,
         setAutoProcessingPaused: setAutoProcessingPaused,

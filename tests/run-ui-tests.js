@@ -142,6 +142,10 @@ assert(uiSource.includes("!aiQueue.head || !aiSettings.hasKey || aiBusy"),
 assert(uiSource.includes('id="stop-auto-ai-processing"') &&
     uiSource.includes("setup.AITurnScheduler.setAutoProcessingPaused"),
     "sidebar should expose a persistent switch that pauses automatic AI processing after Submit");
+assert(uiSource.includes('id="show-invisible-events"') && uiSource.includes("Show invisible events") &&
+    uiSource.includes("[DEBUG — NOT VISIBLE TO PLAYER]") && uiSource.includes("framework-invisible-debug-entry") &&
+    gameUIModel.getInvisibleEventDebugState().show === false,
+    "sidebar should expose a default-off presentation-only toggle for the current turn's suppressed invisible events");
 assert(uiSource.includes('id="action-submit"') && uiSource.includes('id="action-pass"') &&
     uiSource.includes('name="formal-action"') && uiSource.includes('value=""') &&
     uiSource.includes("setup.TurnFlow.submitHumanIntent") && uiSource.includes("setup.TurnFlow.pass") &&
@@ -221,5 +225,7 @@ assert(!escapedQueue.includes("<img") && escapedQueue.includes("&lt;img") &&
     escapedQueue.includes("NEXT REQUEST") && escapedQueue.includes("Recipient") &&
     escapedQueue.includes("&lt;unsafe observation&gt;"),
     "prompt-lab queue cards should identify the next recipient/event and escape authored or model-adjacent text");
+assert(uiSource.includes("<dt>Initiative</dt>") && uiSource.includes("Initiative: ${escapeHtml(aiQueue.head.initiativeScore || 0)}"),
+    "debug queue UIs should expose the derived initiative score used for next-reaction ordering");
 
 console.log("All ability UI tests passed.");

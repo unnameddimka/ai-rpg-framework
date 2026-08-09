@@ -2,6 +2,8 @@
     "use strict";
 
     let aiSettingsInitialized = false;
+    let showInvisibleEvents = false;
+    let currentTurnHiddenNarrative = [];
 
     function optionMarkup(items, emptyLabel) {
         if (!items || items.length === 0) {
@@ -507,6 +509,7 @@
                         <dt>Recipient</dt><dd>${escapeHtml(entry.recipientName)} <code>${escapeHtml(entry.characterId)}</code></dd>
                         <dt>Location</dt><dd>${escapeHtml(entry.locationName)}</dd>
                         <dt>Queued because</dt><dd>${escapeHtml(entry.reason)}</dd>
+                        <dt>Initiative</dt><dd>${escapeHtml(entry.initiativeScore || 0)}</dd>
                         <dt>Request</dt><dd>Decision stage; ${escapeHtml(entry.requestObservationCount)} observation(s); ${escapeHtml(entry.availableActionCount)} formal action type(s)</dd>
                     </dl>
                     <div class="prompt-lab-observation-list">
@@ -776,13 +779,23 @@
         status.id = "location-status";
         uiState.locationStatus = "";
 
-        if (uiState.turnNarrative.length > 0) {
+        if (uiState.turnNarrative.length > 0 || (showInvisibleEvents && currentTurnHiddenNarrative.length > 0)) {
             const narrative = document.createElement("section");
             narrative.className = "framework-turn-narrative";
             appendTextElement(narrative, "h3", "Latest turn");
             uiState.turnNarrative.forEach(function (fragment) {
                 appendTextElement(narrative, "p", fragment);
             });
+            if (showInvisibleEvents) {
+                currentTurnHiddenNarrative.forEach(function (entry) {
+                    const row = document.createElement("div");
+                    row.className = "framework-invisible-debug-entry";
+                    const context = [entry.actorName, entry.locationName].filter(Boolean).join(", ");
+                    appendTextElement(row, "strong", `[DEBUG — NOT VISIBLE TO PLAYER]${context ? ` ${context}` : ""}`);
+                    appendTextElement(row, "p", entry.text || "");
+                    narrative.appendChild(row);
+                });
+            }
             root.appendChild(narrative);
         }
 
@@ -871,6 +884,7 @@
         }).join("");
         const queueText = aiQueue.head
             ? `Next recipient: ${escapeHtml(aiQueue.head.recipientName)}<br>` +
+                `Initiative: ${escapeHtml(aiQueue.head.initiativeScore || 0)}<br>` +
                 `Event: ${escapeHtml(aiQueue.head.primaryObservation && aiQueue.head.primaryObservation.summary || aiQueue.head.reason)}<br>` +
                 `Pending character turns: ${aiQueue.count}`
             : "No pending AI turns";
@@ -917,6 +931,7 @@
             <div class="framework-sidebar-block" id="ai-turn-panel">
                 <strong>AI turn scheduler</strong><br>
                 <label class="framework-auto-ai-toggle"><input id="stop-auto-ai-processing" type="checkbox"${autoProcessingPaused ? " checked" : ""}${aiBusy ? " disabled" : ""}> Stop automatic AI request processing</label><br>
+                <label class="framework-auto-ai-toggle"><input id="show-invisible-events" type="checkbox"${showInvisibleEvents ? " checked" : ""}> Show invisible events</label><br>
                 <span id="ai-queue-status">${queueText}</span><br>
                 <button id="take-next-ai-turn"${(!aiQueue.head || !aiSettings.hasKey || aiBusy) ? " disabled" : ""}>Process next AI event</button>
                 <div id="ai-turn-status" class="framework-status">${escapeHtml(setup.AITransientDebug.lastSafeError || "")}</div>
@@ -990,6 +1005,11 @@
                 : "Automatic processing after Submit is enabled.");
         });
 
+        $("#show-invisible-events").on("change", function () {
+            showInvisibleEvents = $(this).prop("checked");
+            renderLocationView();
+        });
+
         $("#take-next-ai-turn").on("click", async function () {
             const uiState = getUIState();
             if (getBusyState().busy) return;
@@ -1053,10 +1073,13 @@
         }
         uiState.selectedAction = null;
         uiState.turnNarrative = result.narrativeFragments || [];
+        currentTurnHiddenNarrative = cloneUIValue(result.hiddenNarrativeEntries || []);
         if (result.waveResult && result.waveResult.paused) {
             uiState.locationStatus = `Intent submitted. Automatic AI processing is paused; ${result.waveResult.remainingQueue.count} turn(s) remain queued.`;
         } else if (result.waveResult && !result.waveResult.ok) {
             uiState.locationStatus = `Intent submitted, but AI processing stopped: ${result.waveResult.error.message}`;
+        } else if (result.waveResult && result.waveResult.truncated) {
+            uiState.locationStatus = result.waveResult.warning || "Turn complete, but the AI world tick hit its emergency limit.";
         } else {
             const count = result.waveResult ? result.waveResult.processedCount : 0;
             uiState.locationStatus = `Turn complete. ${count} AI character(s) reacted.`;
@@ -1075,6 +1098,7 @@
         if (getBusyState().busy) {
             return { ok: false, error: { code: "TURN_IN_FLIGHT", message: "A turn is already being processed." } };
         }
+        currentTurnHiddenNarrative = [];
         uiState.turnBusy = true;
         uiState.locationStatus = "Processing queued AI reactions...";
         renderSidebar();
@@ -1093,8 +1117,11 @@
         }
         uiState.selectedAction = null;
         uiState.turnNarrative = result && result.narrativeFragments || [];
+        currentTurnHiddenNarrative = cloneUIValue(result && result.hiddenNarrativeEntries || []);
         uiState.locationStatus = result && result.ok
-            ? `Pass complete. ${result.waveResult.processedCount} AI character(s) reacted.`
+            ? (result.waveResult && result.waveResult.truncated
+                ? (result.waveResult.warning || "Pass completed, but the AI world tick hit its emergency limit.")
+                : `Pass complete. ${result.waveResult.processedCount} AI character(s) reacted.`)
             : `AI processing stopped: ${result && result.error ? result.error.message : "Unknown error."}`;
         refreshCurrentPassage();
         return result;
@@ -1206,7 +1233,7 @@
 
             <div class="framework-turn-controls">
                 <button id="action-submit"${busy ? " disabled" : ""}>Submit turn</button>
-                <button id="action-pass"${(busy || (queue.head && !aiSettings.hasKey)) ? " disabled" : ""}>Pass</button>
+                <button id="action-pass"${busy ? " disabled" : ""}>Pass</button>
             </div>
 
         `;
@@ -1317,7 +1344,10 @@
         actionLabel: actionLabel,
         reconcileConversationState: reconcileConversationState,
         resizeNarrativeTextarea: resizeNarrativeTextarea,
-        busyState: getBusyState
+        busyState: getBusyState,
+        getInvisibleEventDebugState: function () {
+            return { show: showInvisibleEvents, entries: cloneUIValue(currentTurnHiddenNarrative) };
+        }
     };
 
     setup.GameUI = {

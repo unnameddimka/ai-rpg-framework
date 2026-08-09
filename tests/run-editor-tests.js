@@ -52,14 +52,23 @@ assert((html.match(/<!doctype html>/gi) || []).length === 1 && !/<script[^>]+src
     "editor should remain one self-contained offline HTML file");
 assert(html.includes("Characters") && html.includes("Abilities") && html.includes("Item types") &&
     html.includes("Items") && html.includes("Consumable") && html.includes("Fillable") &&
+    html.includes("Location inventory") && html.includes("Items in this container") && html.includes("renderEmbeddedInventory") &&
     html.includes("localStorage.setItem"),
-    "editor should expose character, ability, item-type, item-instance, and checkbox workflows");
+    "editor should expose character, ability, item-type, global item-instance, and embedded inventory workflows");
 assert(!/[А-Яа-яЁё]/.test(html), "visible editor source introduced by this task should remain English-only");
 assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura"), "editor should embed schema 2 and known actions");
 assert(core.validateWorldDocument(validDocument()).length === 0, "valid schema 2 document should validate");
 assert(core.createEmptyWorld().characters && core.createEmptyWorld().abilities &&
     core.createEmptyWorld().itemDefinitions && core.createEmptyWorld().items,
     "new document should include character, ability, item-definition, and item catalogs");
+const inventoryHelpers = validDocument();
+assert(core.itemsInInventory(inventoryHelpers, "inventory_hero").map(function (item) { return item.id; }).join(",") === "mug1",
+    "embedded inventory views should read the same flat item instances used by the global Items catalog");
+inventoryHelpers.items.emptyMug_1 = { id: "emptyMug_1", definitionId: "emptyMug", inventoryId: "inventory_room" };
+assert(core.generateItemInstanceId(inventoryHelpers, "emptyMug") === "emptyMug_2",
+    "adding through an embedded inventory should generate a unique flat item-instance ID");
+assert(core.inventoryRemovalReferences(inventoryHelpers, "inventory_room").some(function (x) { return x.includes("emptyMug_1"); }),
+    "nonempty inventories should report blocking item references before their container is removed");
 
 const edited = validDocument();
 edited.characters.hero.playerDescription = "Edited public description.";
@@ -112,5 +121,16 @@ referenced.characters.other = clone(referenced.characters.hero); referenced.char
 referenced.characters.other.inventoryId = "inventory_other"; referenced.characters.other.initialControllerId = "dummy";
 referenced.characters.other.initialMind.relationships = [{ targetCharacterId: "hero", summary: "Knows hero." }];
 assert(core.characterDeletionReferences(referenced, "hero").some(function (x) { return x.includes("other"); }), "relationship target deletion should be blocked");
+assert(core.characterDeletionReferences(referenced, "hero").some(function (x) { return x.includes("mug1"); }),
+    "deleting a character with item instances in its inventory should be blocked");
+const locationItems = validDocument();
+locationItems.items.mug1.inventoryId = "inventory_room";
+assert(core.locationDeletionReferences(locationItems, "room").some(function (x) { return x.includes("mug1"); }),
+    "deleting a location with item instances in its inventory should be blocked");
+const sublocationItems = validDocument();
+sublocationItems.locations.room.sublocations.roomFloor.inventoryId = "inventory_floor";
+sublocationItems.items.mug1.inventoryId = "inventory_floor";
+assert(core.sublocationDeletionReferences(sublocationItems.locations.room, "roomFloor", sublocationItems).some(function (x) { return x.includes("mug1"); }),
+    "deleting a position with a nonempty optional inventory should be blocked");
 
 console.log("All world editor tests passed.");

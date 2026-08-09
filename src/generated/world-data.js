@@ -274,7 +274,7 @@
       "name": "Hooded woman",
       "playerDescription": "A hooded woman watches the room from beneath the edge of her hood.",
       "interactionLabel": "Speak with the hooded woman",
-      "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.",
+      "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.\nYou know a lot about alchemy and medicine, but our magic abilities are limited and you never had the academic education. \nYou are quite beautiful, so people often think you are cooperating with demons, but it is not the case. ",
       "locationId": "commonRoom",
       "sublocationId": "commonRoomTableOne",
       "inventoryId": "inventory_hoodedWoman",
@@ -290,12 +290,7 @@
       "initialMind": {
         "knownFacts": [],
         "beliefs": [],
-        "relationships": [
-          {
-            "targetCharacterId": "player",
-            "summary": "You do not know this traveller yet."
-          }
-        ],
+        "relationships": [],
         "recentMemories": [],
         "longTermMemories": []
       }
@@ -305,7 +300,7 @@
       "name": "Innkeeper",
       "playerDescription": "The innkeeper wipes a wooden mug with a worn cloth.",
       "interactionLabel": "Speak with the innkeeper",
-      "aiDescription": "You are the practical innkeeper of this roadside tavern.",
+      "aiDescription": "You are the male practical innkeeper of this roadside tavern.\nYou stand at the bar and serve drinks. A drink costs one gold. Don't serve drinks unless you are payed and don't leave your working place behind the bar unless you have a good reason to.",
       "locationId": "bar",
       "sublocationId": "barBehindCounter",
       "inventoryId": "inventory_innkeeper",

@@ -134,19 +134,19 @@ Narrative and a formal action may be submitted together in one intent envelope. 
 
 ## AI turn queue and controller integration
 
-- Human `Submit` and explicit `Pass / Next turn` are the only normal triggers for an AI reaction wave. There is still no timer or background loop.
+- Human `Submit` that consumes a turn and explicit `Pass / Next turn` are the only normal triggers for a global AI world tick (implemented as the reaction-wave scheduler). There is still no timer or background loop.
 - The sidebar checkbox `Stop automatic AI request processing` pauses the wave that normally follows `Submit`; `Pass`, the sidebar step, and the sphere remain explicit manual controls.
 - Objective events and feedback may enqueue eligible characters whose current controller assignment is `ai`.
 - The queue must be deterministic, JSON-serializable, saveable with SugarCube, and deduplicated by character ID.
-- Direct addressees and formal-action targets have priority over other perceiving AI characters. Remaining order is stable and deterministic.
+- Reaction order is derived from pending targeted observations: addressed speech contributes +1, targeted formal-action events contribute +2, and an observation originating from the current HumanController contributes an additional +2. Contributions accumulate while observations remain pending; ties use stable saved queue order.
 - A queued entry is eligible only while that character is currently assigned `ai` and has pending observations. Skip or remove stale entries.
 - When HumanController leaves a character and that character returns to `defaultControllerId: "ai"`, enqueue it if it already has pending observations.
 - Do not enqueue a human-controlled or dummy-controlled character.
-- One reaction wave may process many queued characters, but each character may react at most once in that wave and may choose at most one formal action. New observations for an already-reacted character remain queued for the next wave.
+- One world tick may process many queued characters, but each character may react at most once in that tick and may choose at most one formal action. New observations for an already-reacted character remain queued for a later Human-triggered world tick.
 - Later characters in the same wave must see confirmed events produced by earlier reactions.
 - `setup.AITurnScheduler` owns queue projection, exact request construction, single-head manual processing, and full-wave processing.
 - `setup.AIRequestExecutor` is the only path for game, repair, and prompt-lab model requests. It serializes calls, leaves at least one second between live transports, and honors `Retry-After` without automatically retrying a 429.
-- A failed API call, invalid model response, or failed transaction must preserve the affected queue entry and all unconsumed observations for retry.
+- A failed API call, invalid model response, or failed transaction must preserve the affected queue entry and all unconsumed observations for retry. During a full reaction wave, such a failure stops that world tick immediately while preserving earlier successfully committed reactions.
 
 ## OpenRouter and API-key rules
 
@@ -167,7 +167,7 @@ Narrative and a formal action may be submitted together in one intent envelope. 
 - Parse and locally validate model JSON. Do not depend on native provider strict-schema support.
 - Permit at most one repair request for malformed or schema-invalid JSON. No general automatic retries.
 - One AI request returns optional narrative, optional speech, bounded memory updates, and no more than one available formal action.
-- There is no immediate result-stage model call. Execute the formal action locally, record its normalized grounded result as a new observation for the actor, and let the actor interpret that result during a later reaction wave.
+- There is no immediate result-stage model call. Execute the formal action locally, record its normalized grounded result as a new observation for the actor, and let the actor interpret that result during a later Human-triggered world tick.
 - Do not let model narrative claim that an unexecuted formal action succeeded. Objective consequences come only from `CharacterAPI.perform()`.
 - Commit the validated response atomically against a pre-turn snapshot. A request or commit failure must not consume observations or partially mutate the turn.
 - Apply combined narrative/action through `setup.CharacterAPI.submitIntent()`; lower-level public narrative still flows through `narrate()` internally.
@@ -226,7 +226,7 @@ Implement and preserve:
 - authorable characters, initial minds, and individual abilities;
 - one sample grounded individual ability, `read_aura`;
 - direct browser OpenRouter integration with a validated two-model catalog and authored default;
-- one deterministic saved AI turn queue, user-triggered reaction waves, manual scheduler stepping, and an auto-processing pause checkbox;
+- one deterministic saved AI turn queue, Human-triggered global AI world ticks, manual scheduler stepping, and an auto-processing pause checkbox;
 - validated single-request AI turns with combined narrative/action and bounded memory updates;
 - 24-hour optional local API-key persistence outside SugarCube.
 

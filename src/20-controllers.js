@@ -113,18 +113,42 @@
 
     function commitDecision(actorId, decision, consumedIds) {
         const narrativeText = combineNarrative(decision);
-        let intentResult = { ok: true, action: decision.action, actionResult: null, narrativeResult: null };
-        if (decision.action || narrativeText) {
+        let intentResult = { ok: true, action: decision.action, actionResult: null, narrativeResult: null, narrativeSuppressed: false };
+        let actionFailed = false;
+
+        if (decision.action) {
+            const currentValidation = setup.CharacterAPI.validateActionRequest(actorId, decision.action);
+            if (!currentValidation.ok) {
+                const groundedFailure = setup.CharacterAPI.recordGroundedActionFailure(actorId, decision.action, {
+                    code: "ACTION_NO_LONGER_AVAILABLE",
+                    message: currentValidation.error.message
+                });
+                intentResult = {
+                    ok: true,
+                    action: clone(decision.action),
+                    actionResult: clone(groundedFailure),
+                    narrativeResult: null,
+                    narrativeSuppressed: Boolean(narrativeText)
+                };
+                actionFailed = true;
+            }
+        }
+
+        if (!actionFailed && (decision.action || narrativeText)) {
             intentResult = setup.CharacterAPI.submitIntent(actorId, {
                 text: narrativeText,
+                target_id: decision.spokenTargetId || "",
                 noticeability: "noticeable",
                 action: decision.action
             });
             if (!intentResult.ok) throw intentResult.error;
+            actionFailed = Boolean(decision.action && intentResult.actionResult && !intentResult.actionResult.ok);
         }
 
-        const memoryResult = setup.AIMemory.applyUpdates(actorId, decision.memoryUpdates);
-        if (!memoryResult.ok) throw memoryResult.error;
+        if (!actionFailed) {
+            const memoryResult = setup.AIMemory.applyUpdates(actorId, decision.memoryUpdates);
+            if (!memoryResult.ok) throw memoryResult.error;
+        }
 
         const consumeResult = setup.AIMemory.consumeObservations(actorId, consumedIds);
         if (!consumeResult.ok) throw consumeResult.error;
@@ -137,8 +161,11 @@
 
         const validation = setup.Game.validateWorld();
         if (!validation.ok) throw validation.error;
+        const narrativeCommitted = Boolean(intentResult.narrativeResult);
         return {
-            narrativeText: narrativeText,
+            narrativeText: narrativeCommitted ? narrativeText : "",
+            narrativeSuppressed: Boolean(narrativeText && !narrativeCommitted),
+            memorySuppressed: actionFailed,
             intentResult: clone(intentResult),
             actionResult: intentResult.actionResult ? clone(intentResult.actionResult) : null
         };
@@ -185,6 +212,8 @@
                 actionResult: committed.actionResult,
                 intentResult: committed.intentResult,
                 narrativeText: committed.narrativeText,
+                narrativeSuppressed: committed.narrativeSuppressed,
+                memorySuppressed: committed.memorySuppressed,
                 usage: decisionResult.usage || null
             };
         } catch (error) {
@@ -197,8 +226,11 @@
 
     setup.AIController = {
         takeNextTurn: function (client) {
-            const head = setup.AITurnQueue.peek();
-            return takeQueuedTurn(head && head.characterId, client || setup.OpenRouterClient);
+            const schedulerHead = setup.AITurnScheduler && setup.AITurnScheduler.getQueueView
+                ? setup.AITurnScheduler.getQueueView().head
+                : null;
+            const fallbackHead = schedulerHead || setup.AITurnQueue.peek();
+            return takeQueuedTurn(fallbackHead && fallbackHead.characterId, client || setup.OpenRouterClient);
         },
         takeQueuedTurn: function (characterId, client) {
             return takeQueuedTurn(characterId, client || setup.OpenRouterClient);

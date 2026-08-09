@@ -65,7 +65,7 @@ printf 'Generating world data...\n'
 mkdir -p dist
 
 printf 'Running JavaScript tests...\n'
-./test.sh
+bash ./test.sh
 
 printf 'Building dist/game.html...\n'
 if [[ -n "$TWEEGO_EXE" ]]; then

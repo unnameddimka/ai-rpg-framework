@@ -12,7 +12,14 @@ function assert(value, message) { if (!value) throw new Error(message); }
 function ok(value, message) { assert(value && value.ok, `${message}: ${JSON.stringify(value)}`); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [], relationshipsToUpsert: [] }; }
-function response(value, usage) { return { ok: true, content: JSON.stringify(value), usage: usage || null }; }
+function normalizeDecisionFixture(value) {
+    if (value && typeof value === "object" && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, "action") && !Object.prototype.hasOwnProperty.call(value, "spokenTargetId")) {
+        return Object.assign({ spokenTargetId: null }, value);
+    }
+    return value;
+}
+function response(value, usage) { return { ok: true, content: JSON.stringify(normalizeDecisionFixture(value)), usage: usage || null }; }
+function decisionFixture(value) { return normalizeDecisionFixture(value); }
 function fresh() { setup.Game.resetWorld(); setup.AITurnQueue.repair(); return setup.Game.getWorld(); }
 function queueHooded() {
     const world = fresh();
@@ -62,6 +69,62 @@ async function main() {
     assert(setup.AITurnQueue.repair().count === 2, "queue repair should remove duplicate and invalid entries while preserving order");
     State.variables.world.control.assignments.innkeeper = "dummy";
     assert(setup.AITurnQueue.getStatus().head.characterId === "hoodedWoman", "stale queue head should be removed");
+
+    world = fresh();
+    world.entities.hoodedWoman.locationId = "tavernEntrance";
+    world.entities.hoodedWoman.sublocationId = "tavernEntranceFloor";
+    world.entities.innkeeper.locationId = "commonRoom";
+    world.entities.innkeeper.sublocationId = "commonRoomFloor";
+    world.entities.hoodedWoman.mind.pendingObservations = [];
+    world.entities.innkeeper.mind.pendingObservations = [];
+    world.ai.turnQueue = [];
+    const movement = setup.CharacterAPI.perform("player", { type: "move", destination_id: "commonRoom" });
+    ok(movement, "movement should succeed for source/destination perception test");
+    assert(movement.events.length === 1 && movement.events[0].type === "character_moved" &&
+        movement.events[0].fromLocationId === "tavernEntrance" && movement.events[0].toLocationId === "commonRoom" &&
+        movement.events[0].recipients.includes("hoodedWoman") && movement.events[0].recipients.includes("innkeeper") &&
+        movement.events[0].text.includes("moved from Tavern entrance to The common room"),
+        "one canonical movement event should be delivered to observers on both the source and destination sides");
+
+    world = fresh();
+    world.entities.hoodedWoman.locationId = "tavernEntrance";
+    world.entities.hoodedWoman.sublocationId = "tavernEntranceFloor";
+    world.entities.innkeeper.locationId = "tavernEntrance";
+    world.entities.innkeeper.sublocationId = "tavernEntranceFloor";
+    world.entities.hoodedWoman.mind.pendingObservations = [];
+    world.entities.innkeeper.mind.pendingObservations = [];
+    world.ai.turnQueue = [];
+    ok(setup.CharacterAPI.narrate("player", { text: "Mara, look here.", target_id: "hoodedWoman" }), "human targeted speech");
+    for (let i = 0; i < 4; i++) {
+        ok(setup.CharacterAPI.narrate("hoodedWoman", { text: `Innkeeper ping ${i + 1}.`, target_id: "innkeeper" }), "AI targeted speech accumulates initiative");
+    }
+    assert(setup.AITurnScheduler.getInitiativeScore("hoodedWoman") === 3 &&
+        setup.AITurnScheduler.getInitiativeScore("innkeeper") === 4 &&
+        setup.AITurnQueue.getStatus().entries[0].characterId === "hoodedWoman" &&
+        setup.AITurnScheduler.getQueueView().head.characterId === "innkeeper",
+        "initiative should be derived additively from pending targeted observations and may reorder the stable saved queue");
+
+    world = fresh();
+    let automaticTickCalls = 0;
+    const originalProcessAfterSubmit = setup.AITurnScheduler.processAfterSubmit;
+    setup.AITurnScheduler.processAfterSubmit = async function () {
+        automaticTickCalls++;
+        return { ok: true, processedCount: 0, reactedCharacterIds: [], results: [], remainingQueue: setup.AITurnScheduler.getQueueView() };
+    };
+    const invalidHumanAttempt = await setup.TurnFlow.submitHumanIntent({ action: { type: "move", destination_id: "villageTemple" } });
+    assert(!invalidHumanAttempt.ok && invalidHumanAttempt.turnConsumed === false && automaticTickCalls === 0,
+        "a HumanController request rejected by the canonical action contract must not consume the turn or start an AI world tick");
+    const originalMoveValidate = setup.Game.ActionRegistry.move.validate;
+    setup.Game.ActionRegistry.move.validate = function () {
+        return { ok: false, error: { code: "TEST_IN_WORLD_FAILURE", message: "The attempt fails inside the game world." } };
+    };
+    const failedHumanAttempt = await setup.TurnFlow.submitHumanIntent({ action: { type: "move", destination_id: "commonRoom" } });
+    setup.Game.ActionRegistry.move.validate = originalMoveValidate;
+    setup.AITurnScheduler.processAfterSubmit = originalProcessAfterSubmit;
+    assert(failedHumanAttempt.ok && failedHumanAttempt.turnConsumed === true &&
+        failedHumanAttempt.intentResult.actionResult && failedHumanAttempt.intentResult.actionResult.ok === false &&
+        failedHumanAttempt.intentResult.actionResult.error.code === "TEST_IN_WORLD_FAILURE" && automaticTickCalls === 1,
+        "a valid HumanController action attempt that resolves as an in-world failure must still consume the turn and start the AI world tick");
 
     const storageData = {};
     const storage = { getItem: function (k) { return storageData[k] || null; }, setItem: function (k, v) { storageData[k] = v; }, removeItem: function (k) { delete storageData[k]; } };
@@ -212,11 +275,11 @@ async function main() {
         tracedProviderFailure.error.providerResponse.rawBody === sanitizedRawProviderError &&
         tracedProviderFailure.trace.attempts[0].providerResponse.parsedBody.error.metadata.error_type === "rate_limit_exceeded",
         "AI protocol traces should preserve provider HTTP diagnostics instead of collapsing them to code and message");
-    assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available).ok,
+    assert(setup.AIProtocol.validateDecision(decisionFixture({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "valid no-action decision should pass");
-    assert(setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available).ok,
+    assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "valid single action decision should pass");
-    const unavailableMove = setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "street" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available);
+    const unavailableMove = setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "street" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available);
     assert(!unavailableMove.ok && unavailableMove.errors.some(function (error) { return error.includes("selected unavailable option") && error.includes("street"); }),
         "action protocol should reject structurally valid values outside current view options");
 
@@ -230,7 +293,7 @@ async function main() {
         consume: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["ale"] } }
     };
     function optionDecision(action) {
-        return setup.AIProtocol.validateDecision({ action: action, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, optionCatalog);
+        return setup.AIProtocol.validateDecision(decisionFixture({ action: action, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), optionCatalog);
     }
     assert(!optionDecision({ type: "take_item", item_id: "missing" }).ok &&
         !optionDecision({ type: "drop_item", item_id: "missing" }).ok &&
@@ -243,23 +306,27 @@ async function main() {
         !optionDecision({ type: "consume", item_id: "missing" }).ok &&
         optionDecision({ type: "give_item", target_id: "player", item_id: "mug" }).ok,
         "current action options should constrain item, target, destination, inventory, and amount parameters");
-    assert(!setup.AIProtocol.validateDecision({ action: [{ type: "move" }], publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }, available).ok,
+    assert(!setup.AIProtocol.validateDecision(decisionFixture({ action: [{ type: "move" }], publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "multiple actions should be rejected");
-    assert(setup.AIProtocol.validateDecision({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
-        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I decided to leave.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }, available).ok,
+    assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
+        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I decided to leave.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }), available).ok,
         "one response may combine narrative, one formal action, and memory updates");
-    const detailedValidation = setup.AIProtocol.validateDecision({
+    assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Mara?", spokenTargetId: "hoodedWoman", memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
+        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Who are you?", spokenTargetId: "missing", memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
+        !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, spokenTargetId: "hoodedWoman", memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok,
+        "structured spokenTargetId should identify a visible speech addressee without being inferred from free-form dialogue");
+    const detailedValidation = setup.AIProtocol.validateDecision(decisionFixture({
         action: null,
         publicNarrative: null,
         spokenText: null,
         memoryUpdates: { recentMemoriesToAdd: [{ text: "wrong field", importance: 3 }] }
-    }, available);
+    }), available);
     assert(!detailedValidation.ok &&
         detailedValidation.errors.some(function (error) { return error.includes("beliefsToUpsert is required"); }) &&
         detailedValidation.errors.some(function (error) { return error.includes("summary is required"); }) &&
         detailedValidation.errors.some(function (error) { return error.includes("importance must be a finite number from 0 to 1"); }),
         "protocol validation should expose concrete JSON paths and record errors");
-    assert(!setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates(), chainOfThought: "secret" }, available).ok,
+    assert(!setup.AIProtocol.validateDecision(decisionFixture({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates(), chainOfThought: "secret" }), available).ok,
         "chain-of-thought or arbitrary protocol fields should be rejected");
     let repairCalls = 0;
     let repairMessages = null;
@@ -329,8 +396,9 @@ async function main() {
     });
     ok(combinedIntent, "combined human intent should be accepted");
     assert(combinedIntent.actionResult.ok && combinedIntent.actionResult.events[0].interactionId === combinedIntent.interactionId &&
-        combinedIntent.narrativeResult.event.interactionId === combinedIntent.interactionId,
-        "formal and narrative parts should share one interaction ID");
+        combinedIntent.narrativeResult.event.interactionId === combinedIntent.interactionId &&
+        combinedIntent.narrativeResult.event.id < combinedIntent.actionResult.events[0].id,
+        "attempt-phase narrative/speech should be recorded before the grounded formal-action event while both share one interaction ID");
     const combinedRequest = setup.AITurnScheduler.buildDecisionRequest("innkeeper");
     assert(combinedRequest.ok && combinedRequest.observations.length === 1 &&
         combinedRequest.observations[0].kind === "intent" &&
@@ -365,6 +433,83 @@ async function main() {
         waveCalls[1].content.includes("The innkeeper answers first") &&
         setup.AITurnQueue.getStatus().entries.some(function (entry) { return entry.characterId === "innkeeper"; }),
         "one reaction wave should process each observer once in priority order, expose earlier reactions to later observers, and defer repeat reactions");
+
+    world = fresh();
+    world.entities.hoodedWoman.locationId = "tavernEntrance";
+    world.entities.hoodedWoman.sublocationId = "tavernEntranceFloor";
+    world.entities.innkeeper.locationId = "tavernEntrance";
+    world.entities.innkeeper.sublocationId = "tavernEntranceFloor";
+    world.entities.hoodedWoman.mind.pendingObservations = [];
+    world.entities.innkeeper.mind.pendingObservations = [];
+    world.ai.turnQueue = [];
+    ok(setup.CharacterAPI.narrate("player", { text: "Both of you, pay attention." }), "queue two AI characters for provider-failure wave");
+    const failureWaveActors = [];
+    const failureWave = await setup.AITurnScheduler.processWave({ chat: async function (messages) {
+        const actorId = JSON.parse(messages[1].content).context.view.self.id;
+        failureWaveActors.push(actorId);
+        if (failureWaveActors.length === 1) {
+            return response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
+        }
+        return { ok: false, error: { code: "PROVIDER_UNAVAILABLE", message: "Model unavailable during wave." } };
+    } });
+    assert(!failureWave.ok && failureWave.processedCount === 1 && failureWaveActors.length === 2 &&
+        failureWave.reactedCharacterIds.length === 1 &&
+        world.entities[failureWaveActors[0]].mind.pendingObservations.length === 0 &&
+        world.entities[failureWaveActors[1]].mind.pendingObservations.length === 1 &&
+        setup.AITurnQueue.getStatus().entries.some(function (entry) { return entry.characterId === failureWaveActors[1]; }),
+        "provider failure should stop the current world tick after preserving earlier committed AI reactions and the failed character's pending observations");
+    world = setup.Game.getWorld();
+    const failedActorId = failureWaveActors[1];
+    ok(setup.CharacterAPI.narrate("player", { text: "This also happened while the model was unavailable.", target_id: failedActorId, noticeability: "hidden" }),
+        "new observations should continue accumulating after a provider failure");
+    assert(world.entities[failedActorId].mind.pendingObservations.length === 2,
+        "the failed character should retain the old observation and accumulate later observations");
+    let resumedFailedActorRequest = "";
+    const resumedWave = await setup.AITurnScheduler.processWave({ chat: async function (messages) {
+        const payload = JSON.parse(messages[1].content);
+        if (payload.context.view.self.id === failedActorId) resumedFailedActorRequest = messages[1].content;
+        return response({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() });
+    } });
+    assert(resumedWave.ok && resumedFailedActorRequest.includes("Both of you, pay attention.") &&
+        resumedFailedActorRequest.includes("This also happened while the model was unavailable."),
+        "a later world tick should give the recovered model the accumulated pending observation batch");
+
+    world = fresh();
+    world.ai.turnQueue = [];
+    world.entities.hoodedWoman.mind.pendingObservations = [];
+    world.entities.innkeeper.mind.pendingObservations = [];
+    const guardIds = [];
+    for (let i = 0; i < 65; i++) {
+        const id = `guardAI${i + 1}`;
+        const inventoryId = `inventory_${id}`;
+        const character = clone(world.entities.hoodedWoman);
+        character.id = id;
+        character.name = `Guard AI ${i + 1}`;
+        character.inventoryId = inventoryId;
+        character.mind = clone(world.entities.hoodedWoman.mind);
+        character.mind.pendingObservations = [{
+            id: world.nextObservationId++, kind: "event", actorId: "player", targetId: null,
+            sourceControllerId: "human", text: "Emergency guard fixture.", data: { type: "narrative_input" }
+        }];
+        world.entities[id] = character;
+        world.inventories[inventoryId] = { id: inventoryId, type: "inventory", ownerId: id, itemIds: [] };
+        world.control.assignments[id] = "ai";
+        world.ai.turnQueue.push({ characterId: id, reason: "guard_test" });
+        guardIds.push(id);
+    }
+    const originalTakeQueuedTurn = setup.AIController.takeQueuedTurn;
+    setup.AIController.takeQueuedTurn = async function (characterId) {
+        const activeWorld = setup.Game.getWorld();
+        activeWorld.entities[characterId].mind.pendingObservations = [];
+        setup.AITurnQueue.remove(characterId);
+        return { ok: true, actorId: characterId, actionResult: null, intentResult: { narrativeResult: null }, narrativeText: "" };
+    };
+    const guardedWave = await setup.AITurnScheduler.processWave({});
+    setup.AIController.takeQueuedTurn = originalTakeQueuedTurn;
+    assert(guardedWave.ok && guardedWave.truncated && guardedWave.processedCount === 64 &&
+        guardedWave.remainingQueue.count === 1 && guardedWave.warning.includes("64") &&
+        setup.Game.getWorld().entities[guardIds[64]].mind.pendingObservations.length === 1,
+        "the emergency guard should stop after 64 AI decisions, preserve committed work, and leave remaining observations pending");
 
     const executionOrder = [];
     const executorSpec = function (name, delay) {
@@ -446,9 +591,27 @@ async function main() {
         });
     } };
     const failedActionTurn = await setup.AIController.takeNextTurn(failedActionClient);
-    assert(failedActionTurn.ok && failedActionTurn.actionResult.error.code === "ALREADY_AT_SUBLOCATION" && stage === 1 &&
+    assert(failedActionTurn.ok && failedActionTurn.actionResult.error.code === "ACTION_NO_LONGER_AVAILABLE" && failedActionTurn.narrativeSuppressed && failedActionTurn.memorySuppressed && stage === 1 &&
         setup.AITurnQueue.peek().characterId === "hoodedWoman",
-        "an action that was available in the request but becomes stale before execution should still fail at the engine boundary and remain as a grounded observation");
+        "an action that was available in the request but becomes stale before execution should become grounded failure feedback without committing success-dependent narrative or memory");
+
+    world = queueHooded();
+    const originalMoveWithinValidate = setup.Game.ActionRegistry.move_within_location.validate;
+    setup.Game.ActionRegistry.move_within_location.validate = function () {
+        return { ok: false, error: { code: "TEST_GROUNDED_FAILURE", message: "The attempted movement is blocked in-world." } };
+    };
+    const attemptedFailureTurn = await setup.AIController.takeNextTurn({ chat: async function () { return response({
+        action: { type: "move_within_location", destination_id: "commonRoomFloor" },
+        publicNarrative: "She starts to rise and tests her footing.",
+        spokenText: "One moment.",
+        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I successfully crossed the room.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] }
+    }); } });
+    setup.Game.ActionRegistry.move_within_location.validate = originalMoveWithinValidate;
+    assert(attemptedFailureTurn.ok && attemptedFailureTurn.actionResult.error.code === "TEST_GROUNDED_FAILURE" &&
+        attemptedFailureTurn.narrativeText.includes("tests her footing") && attemptedFailureTurn.intentResult.narrativeResult &&
+        attemptedFailureTurn.memorySuppressed && !world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.summary === "I successfully crossed the room."; }) &&
+        world.entities.hoodedWoman.mind.pendingObservations.some(function (item) { return item.code === "TEST_GROUNDED_FAILURE"; }),
+        "a valid in-world failed action should keep attempt-phase speech/narrative while suppressing success-dependent memory and preserving grounded failure feedback");
 
     world = queueHooded();
     const beforeRollback = JSON.stringify(world);

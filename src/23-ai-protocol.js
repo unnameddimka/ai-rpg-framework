@@ -2,7 +2,7 @@
     "use strict";
 
     const EMPTY_UPDATES = { recentMemoriesToAdd: [], beliefsToUpsert: [], relationshipsToUpsert: [] };
-    const DECISION_KEYS = ["action", "publicNarrative", "spokenText", "memoryUpdates"];
+    const DECISION_KEYS = ["action", "publicNarrative", "spokenText", "spokenTargetId", "memoryUpdates"];
     const RESULT_KEYS = ["publicNarrative", "spokenText", "memoryUpdates"];
     const UPDATE_KEYS = ["recentMemoriesToAdd", "beliefsToUpsert", "relationshipsToUpsert"];
 
@@ -152,11 +152,20 @@
             : { ok: false, message: errors[0], errors: errors };
     }
 
-    function validateDecision(value, actionCatalog) {
+    function validateDecision(value, actionCatalog, spokenTargetIds) {
         const errors = exactKeyErrors(value, DECISION_KEYS, "response");
         if (!isPlainObject(value)) return finishValidation(value, errors);
         errors.push.apply(errors, nullableTextErrors(value.publicNarrative, "response.publicNarrative"));
         errors.push.apply(errors, nullableTextErrors(value.spokenText, "response.spokenText"));
+        if (value.spokenTargetId !== null && typeof value.spokenTargetId !== "string") {
+            errors.push("response.spokenTargetId must be a visible character ID string or null.");
+        }
+        if (value.spokenTargetId !== null && value.spokenText === null) {
+            errors.push("response.spokenTargetId must be null when spokenText is null.");
+        }
+        if (value.spokenTargetId !== null && Array.isArray(spokenTargetIds) && !spokenTargetIds.includes(value.spokenTargetId)) {
+            errors.push(`response.spokenTargetId selected unavailable character ${JSON.stringify(value.spokenTargetId)}.`);
+        }
         errors.push.apply(errors, validateUpdatesDetailed(value.memoryUpdates, "response.memoryUpdates"));
 
         if (value.action !== null) {
@@ -185,10 +194,11 @@
 
     function baseSystem(stage) {
         const stageRule = stage === "decision"
-            ? "Return exactly the keys action, publicNarrative, spokenText, and memoryUpdates. action is null or one available formal action and may accompany speech or narrative behavior. Choose an action only when it serves the character's current goals or answers the situation, but do not merely promise future work when a practical first step is available now. When a goal requires multiple formal actions, choose only the first currently available step. After a grounded result arrives in a later observation, reevaluate the current view, view.available_actions, and new observations, then continue with the next available step when appropriate. Use a minimal recent memory update only when needed to retain the brief current goal and meaningful progress between reaction waves; do not write a detailed predetermined plan. Stop when the goal is complete, impossible, abandoned, or requires a new decision or action from another character. After failure, use the grounded feedback and do not blindly repeat the same action. The engine executes the selected action after this response. Do not claim through narrative or speech that a physical result succeeded before the engine confirms it; its grounded result will arrive later as an ordinary observation."
+            ? "Return exactly the keys action, publicNarrative, spokenText, spokenTargetId, and memoryUpdates. spokenTargetId is null or the id of one character currently listed in context.view.location.characters whom the spokenText directly addresses; use null for general speech or when spokenText is null. The speech target and formal-action target may be different characters. action is null or one available formal action and may accompany speech or narrative behavior. Choose an action only when it serves the character's current goals or answers the situation, but do not merely promise future work when a practical first step is available now. When a goal requires multiple formal actions, choose only the first currently available step. After a grounded result arrives in a later observation, reevaluate the current view, view.available_actions, and new observations, then continue with the next available step when appropriate. Use a minimal recent memory update only when needed to retain the brief current goal and meaningful progress between reaction waves; do not write a detailed predetermined plan. Stop when the goal is complete, impossible, abandoned, or requires a new decision or action from another character. After failure, use the grounded feedback and do not blindly repeat the same action. The engine executes the selected action after this response. Do not claim through narrative or speech that a physical result succeeded before the engine confirms it; its grounded result will arrive later as an ordinary observation."
             : "Return exactly the keys publicNarrative, spokenText, and memoryUpdates. Do not choose another action; react only to the supplied grounded action result.";
-        const styleRule = "Treat each response as a moment in an ongoing role-playing scene, not merely as action selection or protocol completion. When natural, use publicNarrative for brief visible behavior such as expression, posture, gesture, hesitation, attention, or other atmospheric detail, and use spokenText for natural dialogue in this particular character's own voice. Let the supplied character description, memories, beliefs, relationships, and current situation shape that voice. Prefer concrete, characterful phrasing over generic assistant-like or functional NPC replies. Keep it concise by default: one or two short narrative sentences plus dialogue is usually enough when both are useful. Do not force narration or speech into every response; silence, null fields, or an action-only response remain valid when natural. Do not repeat information just to make the response longer. A formal action selected in this response is only a request and is still unconfirmed until the engine returns a later grounded result. When selecting a formal action, narrative or speech may describe accompanying non-state-changing behavior, preparation, expression, intent, or anticipation, but must not claim that the formal action successfully changed the world before the engine confirms it. Memory updates in the same response must also avoid recording the requested formal action as completed: do not add a recent memory, belief, or relationship summary that asserts unconfirmed success. A brief pending goal or preparation state is allowed when useful for multi-step continuity. Only after a grounded engine result arrives in a later observation may narration, speech, memories, beliefs, or relationships treat that result as confirmed.";
-        return `You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else: no markdown fence, prose, chain-of-thought, hidden reasoning, patches, or extra fields. ${stageRule} ${styleRule} memoryUpdates must always contain exactly recentMemoriesToAdd, beliefsToUpsert, and relationshipsToUpsert, even when all are empty arrays. A recent memory record is {"summary":"...","importance":0.0}; use summary, never text, and importance must be from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. A relationship record is {"targetCharacterId":"character_id","summary":"..."}.`;
+        const presentStateRule = "context.view is authoritative for what is publicly and operationally true now. Memories, beliefs, relationships, and pending observations are historical/private context and must not override the current view. A character absent from context.view.location.characters is not currently visible here: do not look at, gesture toward, address as locally present, or otherwise narrate direct perception of that character merely because they appear in memory or an old observation. context.view.self.position_text is authoritative for your current position/posture, and each visible character's position_text is authoritative over stale memories of sitting, standing, location, or proximity. Old observations may explain how the current situation arose, but they are not proof that the old spatial state is still current.";
+        const styleRule = "Treat each response as a moment in an ongoing role-playing scene, not merely as action selection or protocol completion. When natural, use publicNarrative for brief visible behavior such as expression, posture, gesture, hesitation, attention, or other atmospheric detail, and use spokenText for natural dialogue in this particular character's own voice. Let the supplied character description, memories, beliefs, relationships, and current situation shape that voice. Prefer concrete, characterful phrasing over generic assistant-like or functional NPC replies. Keep it concise by default: one or two short narrative sentences plus dialogue is usually enough when both are useful. Do not force narration or speech into every response; silence, null fields, or an action-only response remain valid when natural. Do not repeat information just to make the response longer. A formal action selected in this response is only a request and is still unconfirmed until the engine returns a later grounded result. Narrative and speech belong to the action-attempt phase: they may naturally occur while the character starts or performs the attempted action, but before the engine-confirmed completion becomes a finished fact. When selecting a formal action, narrative or speech may describe accompanying non-state-changing behavior, preparation, expression, intent, effort, or anticipation, but must not claim that the formal action successfully changed the world before the engine confirms it. Memory updates in the same response must also avoid recording the requested formal action as completed. A brief pending goal or preparation state is allowed when useful for multi-step continuity. Only after a grounded engine result arrives in a later observation may narration, speech, memories, beliefs, or relationships treat that result as confirmed. Do not add a recent memory merely to restate an already represented event with slightly different wording. Prefer memories that materially affect future choices: unresolved goals, constraints, promises, refusals, resource availability, meaningful progress, or meaningful relationship changes. Routine politeness and repeated offers normally do not need another memory unless something materially changed.";
+        return `You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else: no markdown fence, prose, chain-of-thought, hidden reasoning, patches, or extra fields. ${stageRule} ${presentStateRule} ${styleRule} memoryUpdates must always contain exactly recentMemoriesToAdd, beliefsToUpsert, and relationshipsToUpsert, even when all are empty arrays. A recent memory record is {"summary":"...","importance":0.0}; use summary, never text, and importance must be from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. A relationship record is {"targetCharacterId":"character_id","summary":"..."}.`;
     }
 
     function requestPayloadFromMessages(messages) {
@@ -215,11 +225,18 @@
         return {};
     }
 
+    function spokenTargetIdsFromMessages(messages) {
+        const payload = requestPayloadFromMessages(messages);
+        const context = payload && payload.context;
+        const characters = context && context.view && context.view.location && context.view.location.characters;
+        return Array.isArray(characters) ? characters.map(function (character) { return character.id; }).filter(Boolean) : [];
+    }
+
     function decisionMessages(context) {
         return [{ role: "system", content: baseSystem("decision") }, { role: "user", content: JSON.stringify({
             stage: "decision",
             context: clone(context || {}),
-            requiredResponseShape: { action: null, publicNarrative: null, spokenText: null, memoryUpdates: EMPTY_UPDATES }
+            requiredResponseShape: { action: null, publicNarrative: null, spokenText: null, spokenTargetId: null, memoryUpdates: EMPTY_UPDATES }
         }) }];
     }
 
@@ -244,6 +261,7 @@
 
     async function requestValidated(messages, stage, client) {
         const actionCatalog = actionCatalogFromMessages(messages);
+        const spokenTargetIds = spokenTargetIdsFromMessages(messages);
         const trace = {
             stage: stage,
             originalMessages: clone(messages),
@@ -276,7 +294,7 @@
             try {
                 value = extractObject(response.content);
                 attemptTrace.parsedValue = clone(value);
-                validation = stage === "decision" ? validateDecision(value, actionCatalog) : validateResult(value);
+                validation = stage === "decision" ? validateDecision(value, actionCatalog, spokenTargetIds) : validateResult(value);
             } catch (error) {
                 validation = { ok: false, message: error.message, errors: [error.message] };
             }
@@ -315,6 +333,7 @@
         validateDecision: validateDecision,
         validateResult: validateResult,
         actionCatalogFromMessages: actionCatalogFromMessages,
+        spokenTargetIdsFromMessages: spokenTargetIdsFromMessages,
         decisionMessages: decisionMessages,
         resultMessages: resultMessages,
         buildRepairMessages: buildRepairMessages,

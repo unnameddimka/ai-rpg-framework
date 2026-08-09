@@ -13,7 +13,7 @@ The current integration milestone adds a user-triggered OpenRouter reaction loop
 - per-character saved mind state;
 - restricted controller context;
 - a saved deterministic AI-turn queue;
-- one user-triggered reaction wave at a time, with each queued AI character reacting at most once per wave;
+- one Human-triggered global AI world tick at a time, with each eligible queued AI character reacting at most once per tick;
 - browser-side OpenRouter access with a transient user-supplied key.
 
 The engine remains the authority over objective reality.
@@ -680,13 +680,21 @@ Queue eligibility requires:
 
 Stale entries are removed. Human and dummy characters are never executed by the queue.
 
-### 21.1 Priority
+### 21.1 Initiative from pending observations
 
-Direct addressees and formal-action targets have priority over ordinary observers. Within the same priority level, ordering is stable and deterministic. Re-prioritization inspects pending observations, so a character directly addressed by a new player intent can move ahead of previously deferred ordinary observers.
+The saved queue remains a stable deterministic deduplicated list, but the next character is selected by an initiative score derived from that character's currently pending targeted observations:
+
+- explicitly addressed speech: `+1`;
+- targeted formal-action event: `+2`;
+- observation originating from the current HumanController: additional `+2`.
+
+Scores accumulate across pending observations and are recomputed before every next selection in the world tick. Only unreacted eligible AI characters participate. Once observations are consumed, their contribution disappears automatically. Ties fall back to the stable saved queue order. No separate persistent initiative stat is stored.
+
+The observation/event stores the source controller at creation time, so later controller switching cannot rewrite whether the HumanController caused that stimulus.
 
 ### 21.2 Reaction-wave rule
 
-A wave repeatedly processes the highest-priority queued character that has not yet reacted in that wave.
+A HumanController Submit that consumes the turn, or explicit Pass / Next turn, advances one global AI world tick. A world tick repeatedly processes the highest-initiative queued character that has not yet reacted in that tick.
 
 - each character reacts at most once per wave;
 - each reaction may contain at most one formal action;
@@ -694,11 +702,13 @@ A wave repeatedly processes the highest-priority queued character that has not y
 - later characters in the same wave see those earlier events;
 - events delivered to a character that already reacted remain queued for the next wave.
 
-This prevents infinite same-turn dialogue loops while preserving causal propagation through the scene.
+This prevents infinite same-tick dialogue loops while preserving causal propagation through the world, including off-screen pending observations. An AI character with no pending observations is never invoked merely because a world tick occurred.
 
 ### 21.3 Combined interaction observations
 
-`CharacterAPI.submitIntent()` assigns one `interactionId` to the narrative and formal-action parts of the same intent. The engine still stores objective action events and narrative events separately, but the scheduler groups matching observations before building an AI request. A recipient therefore sees a coherent observation such as “The player gave 2 gold and said: ‘Pour me an ale’” rather than two unrelated records.
+`CharacterAPI.submitIntent()` assigns one `interactionId` to the narrative and formal-action parts of the same intent. The engine still stores objective action events and narrative events separately, but the scheduler groups matching observations before building an AI request while retaining every original observation ID for exact consumption. Attempt-phase speech is presented before the grounded mechanical result inside the combined observation, for example: “The player said: ‘Pour me an ale.’ The player gave 2 gold.”
+
+Speech has its own structured `spokenTargetId`, validated against characters visible in the canonical request view. A speech target and formal-action target may differ, and both raw pending observations contribute independently to initiative.
 
 ### 21.4 Control switching and saves
 
@@ -786,7 +796,7 @@ If the formal action succeeds, the engine records a grounded `action_result` obs
 observation -> intention -> deterministic world result -> later observation
 ```
 
-A provider, parser, validation, or commit failure restores the pre-turn snapshot and preserves the queue entry and unconsumed observations.
+A provider, parser, validation, or commit failure restores the failed character's pre-reaction snapshot and preserves its queue entry and unconsumed observations. During a full world tick the scheduler then stops immediately; reactions already committed earlier in that tick remain committed, and later/unprocessed characters remain pending for a later HumanController tick.
 
 ## 24. Model JSON protocol
 
@@ -803,6 +813,7 @@ Conceptual response:
   },
   "publicNarrative": "The traveller places two coins on the counter.",
   "spokenText": "Pour me an ale.",
+  "spokenTargetId": "innkeeper",
   "memoryUpdates": {
     "recentMemoriesToAdd": [],
     "beliefsToUpsert": [],
@@ -829,9 +840,11 @@ Applying updates must use an engine-owned function and must be part of the turn 
 
 ## 26. Combined intent commit and turn display
 
-Human and AI controllers submit the same conceptual envelope: optional narrative plus at most one formal action. `CharacterAPI.submitIntent()` assigns an `interactionId`, executes the formal action through the registry, and emits narrative through the lower-level `narrate()` path.
+Human and AI controllers submit the same conceptual envelope: optional attempt-phase narrative plus at most one formal action. `CharacterAPI.submitIntent()` assigns an `interactionId`; only deterministic registry execution establishes the completed objective action result.
 
-The browser collects player text, grounded action-event text, AI narrative, and grounded AI action-event text in causal order and shows them in a **Latest turn** block above the current location description. Model-authored prose remains distinct from objective engine events, and all displayed content is HTML-escaped.
+A successful major-location transition emits one `character_moved` event containing `fromLocationId` and `toLocationId`. Its recipients are the union of observers in the source and destination locations, so both sides receive the same full movement fact.
+
+The browser composes **Latest turn** from canonical event recipients. Visibility is evaluated per emitted event rather than by snapshotting whether the reacting actor was visible at the start of the AI reaction. Off-screen reactions still mutate the world and reach AI recipients. A default-off **Show invisible events** checkbox may reveal current-turn suppressed presentation entries with an explicit debug-only marker; it never changes perception or simulation state.
 
 ## 27. Failure and rollback
 
@@ -840,11 +853,14 @@ On API error, missing key, malformed response after one repair, local schema rej
 - do not consume the affected observations;
 - do not remove the affected queue entry;
 - do not apply model memory changes;
-- do not commit model narrative or action;
-- restore the pre-turn world snapshot;
+- do not fabricate model narrative or action;
+- restore the failed reaction's pre-turn snapshot;
+- stop the current full AI world tick;
 - show a concise safe error and retain a retry path.
 
-A human intent is committed before its optional automatic reaction wave. If a later AI request fails, the human action remains valid, successfully completed earlier AI reactions remain committed, and the failed/current queue entry is retained. The UI reports that the turn was submitted but AI processing stopped.
+A human intent is committed before its automatic world tick. If a later AI request fails, the human action remains valid and successfully completed earlier AI reactions remain committed. Pending observations continue to accumulate across later HumanController turns and are available when AI processing resumes.
+
+A high emergency guard stops a tick after 64 model decisions, preserves committed state, leaves unprocessed work pending, and reports a debug warning. It is corruption protection rather than gameplay pacing.
 
 ## 28. Debug and usage UI
 
@@ -854,6 +870,7 @@ The AI panel should show:
 - fixed provider plus the current validated model selection and raw model ID;
 - next scheduler recipient, first-event preview, and queue length;
 - `Stop automatic AI request processing`;
+- default-off `Show invisible events` for current-turn suppressed presentation entries;
 - `Process next AI event`;
 - shared executor busy/cooldown information where useful;
 - last safe error;

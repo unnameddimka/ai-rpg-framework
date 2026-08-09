@@ -571,3 +571,21 @@
         flex-direction: column;
     }
 }
+
+.framework-invisible-debug-entry {
+    margin: 0.65rem 0;
+    padding: 0.65rem 0.75rem;
+    border: 1px dashed #a56a00;
+    background: rgba(165, 106, 0, 0.12);
+}
+
+.framework-invisible-debug-entry strong {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-size: 0.86em;
+    letter-spacing: 0.02em;
+}
+
+.framework-invisible-debug-entry p {
+    margin: 0.2rem 0 0;
+}
