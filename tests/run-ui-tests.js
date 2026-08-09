@@ -5,6 +5,7 @@ const path = require("path");
 const vm = require("vm");
 const root = path.resolve(__dirname, "..");
 const uiSource = fs.readFileSync(path.join(root, "src/30-game-ui.js"), "utf8");
+const stylesSource = fs.readFileSync(path.join(root, "src/styles.css"), "utf8");
 const context = {
     setup: {},
     State: { variables: {} },
@@ -175,6 +176,9 @@ assert(uiSource.includes('id="open-character-window"') && uiSource.includes('ove
     uiSource.includes("setup.Game.updateCharacterProfile") && uiSource.includes("Save and close") &&
     uiSource.includes("Close without saving") && !uiSource.includes("framework-character-ai-description"),
     "sidebar Character window should edit Name/playerDescription, show read-only inventory, and never expose aiDescription");
+assert(stylesSource.includes(".framework-character-window") && stylesSource.includes("background: #24211d;") &&
+    stylesSource.includes("background: #151310;") && stylesSource.includes("color: #f3eee7;"),
+    "Character window and editable fields should use an explicit dark, high-contrast palette");
 
 assert(uiSource.includes('view.location.id !== "villageTemple"') &&
     uiSource.includes("Scheduler queue") &&

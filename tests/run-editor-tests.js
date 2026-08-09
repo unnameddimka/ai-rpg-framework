@@ -53,11 +53,25 @@ assert((html.match(/<!doctype html>/gi) || []).length === 1 && !/<script[^>]+src
 assert(html.includes("Characters") && html.includes("Abilities") && html.includes("Item types") &&
     html.includes("Items") && html.includes("Consumable") && html.includes("Fillable") &&
     html.includes("Location inventory") && html.includes("Items in this container") && html.includes("renderEmbeddedInventory") &&
-    html.includes("localStorage.setItem"),
+    html.includes("Blocked") && html.includes("Failure text") && html.includes("localStorage.setItem"),
     "editor should expose character, ability, item-type, global item-instance, and embedded inventory workflows");
 assert(!/[А-Яа-яЁё]/.test(html), "visible editor source introduced by this task should remain English-only");
 assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura"), "editor should embed schema 2 and known actions");
 assert(core.validateWorldDocument(validDocument()).length === 0, "valid schema 2 document should validate");
+const blockedExitDocument = validDocument();
+blockedExitDocument.locations.other = clone(blockedExitDocument.locations.room);
+blockedExitDocument.locations.other.id = "other";
+blockedExitDocument.locations.other.name = "Other";
+blockedExitDocument.locations.other.passage = "Other";
+blockedExitDocument.locations.other.inventoryId = "inventory_other";
+blockedExitDocument.locations.other.defaultSublocationId = "otherFloor";
+blockedExitDocument.locations.other.exits = { room: "room" };
+blockedExitDocument.locations.other.sublocations = { otherFloor: Object.assign(clone(blockedExitDocument.locations.room.sublocations.roomFloor), { id: "otherFloor", locationId: "other", reachableSublocationIds: ["otherFloor"] }) };
+blockedExitDocument.locations.room.exits = { other: { destinationId: "other", blocked: true, blockedReason: "The door is locked." } };
+assert(core.validateWorldDocument(blockedExitDocument).length === 0 &&
+    core.exitTarget(blockedExitDocument.locations.room.exits.other) === "other" &&
+    core.exitRecord(blockedExitDocument.locations.room.exits.other).blocked === true,
+    "editor should validate and preserve blocked transition records alongside legacy string exits");
 assert(core.createEmptyWorld().characters && core.createEmptyWorld().abilities &&
     core.createEmptyWorld().itemDefinitions && core.createEmptyWorld().items,
     "new document should include character, ability, item-definition, and item catalogs");
@@ -95,6 +109,10 @@ const duplicateInventory = validDocument(); duplicateInventory.characters.hero.i
 assert(hasError(duplicateInventory, "Inventory ID"), "inventory collisions should block export");
 const badStart = validDocument(); badStart.startLocationId = "missing";
 assert(hasError(badStart, "startLocationId"), "invalid start location should block export");
+const badBlockedExit = clone(blockedExitDocument); badBlockedExit.locations.room.exits.other.blocked = "yes";
+assert(hasError(badBlockedExit, "blocked must be checked or unchecked"), "blocked transition state must be Boolean");
+const badBlockedTarget = clone(blockedExitDocument); badBlockedTarget.locations.room.exits.other.destinationId = "missing";
+assert(hasError(badBlockedTarget, "missing location"), "blocked transitions must still reference a real destination");
 const badPosition = validDocument(); badPosition.characters.hero.sublocationId = "missing";
 assert(hasError(badPosition, "missing position"), "invalid character position should block export");
 const zeroHuman = validDocument(); zeroHuman.characters.hero.initialControllerId = "dummy";

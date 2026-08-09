@@ -42,6 +42,12 @@ function entries(object) {
     return isObject(object) ? Object.entries(object) : [];
 }
 
+function exitTarget(exitValue) {
+    if (typeof exitValue === "string") return exitValue;
+    if (isObject(exitValue) && typeof exitValue.destinationId === "string") return exitValue.destinationId;
+    return "";
+}
+
 function registerInventory(owners, id, owner) {
     requireCondition(nonBlank(id), `${owner} must define an inventory ID.`);
     if (owners.has(id)) {
@@ -114,6 +120,27 @@ function validateWorld(document) {
         }
         passageOwners.set(passage, id);
         registerInventory(inventoryOwners, String(location.inventoryId || ""), `location ${id}`);
+
+        requireCondition(isObject(location.exits), `Location ${id} exits must be an object.`);
+        const exitTargets = new Set();
+        for (const [exitKey, exitValue] of entries(location.exits)) {
+            const destinationId = exitTarget(exitValue);
+            requireCondition(nonBlank(destinationId) && own(document.locations, destinationId),
+                `Location ${id} exit '${exitKey}' references missing location '${destinationId || String(exitValue)}'.`);
+            requireCondition(destinationId !== id, `Location ${id} cannot exit to itself.`);
+            requireCondition(!exitTargets.has(destinationId), `Location ${id} contains duplicate exit to '${destinationId}'.`);
+            exitTargets.add(destinationId);
+            if (isObject(exitValue)) {
+                if (own(exitValue, "blocked")) {
+                    requireCondition(typeof exitValue.blocked === "boolean",
+                        `Location ${id} exit '${exitKey}' blocked must be Boolean.`);
+                }
+                if (own(exitValue, "blockedReason")) {
+                    requireCondition(typeof exitValue.blockedReason === "string",
+                        `Location ${id} exit '${exitKey}' blockedReason must be text.`);
+                }
+            }
+        }
 
         requireCondition(isObject(location.sublocations) && own(location.sublocations, String(location.defaultSublocationId || "")),
             `Location ${id} has an invalid default sublocation.`);

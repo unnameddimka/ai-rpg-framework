@@ -117,13 +117,15 @@
       "passage": "The Common Room",
       "description": [
         "Several travellers sit near the fire while two merchants argue quietly over a map.",
-        "Smoke gathers beneath the rafters above scarred tables and mismatched chairs."
+        "Smoke gathers beneath the rafters above scarred tables and mismatched chairs.",
+        "A narrow wooden staircase climbs to a dim landing above the common room; a cramped nook has been curtained off beneath it."
       ],
       "defaultSublocationId": "commonRoomFloor",
       "inventoryId": "inventory_commonRoom",
       "exits": {
         "tavernEntrance": "tavernEntrance",
-        "bar": "bar"
+        "bar": "bar",
+        "upstairsCorridor": "upstairsCorridor"
       },
       "sublocations": {
         "commonRoomFloor": {
@@ -138,7 +140,8 @@
           "reachableSublocationIds": [
             "commonRoomFloor",
             "commonRoomTableOne",
-            "commonRoomTableTwo"
+            "commonRoomTableTwo",
+            "underStairsNook"
           ]
         },
         "commonRoomTableOne": {
@@ -176,6 +179,21 @@
           "inventoryId": "inventory_commonRoomTableTwo",
           "reachableSublocationIds": [
             "commonRoomTableTwo",
+            "commonRoomFloor"
+          ]
+        },
+        "underStairsNook": {
+          "id": "underStairsNook",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Nook beneath the stairs",
+          "publicText": "A curtain beneath the staircase hides a tiny sleeping nook with a narrow cot, a folded blanket, and almost no room for possessions.",
+          "enterLabel": "Step into the nook beneath the stairs",
+          "selfText": "You are in the cramped sleeping nook beneath the stairs.",
+          "occupantTemplate": "{name} is in the little sleeping nook beneath the stairs.",
+          "capacity": 1,
+          "reachableSublocationIds": [
+            "underStairsNook",
             "commonRoomFloor"
           ]
         }
@@ -242,6 +260,206 @@
           ]
         }
       }
+    },
+    "upstairsCorridor": {
+      "id": "upstairsCorridor",
+      "type": "location",
+      "name": "Upstairs corridor",
+      "passage": "The Upstairs Corridor",
+      "description": [
+        "The staircase opens onto a narrow timber landing above the common room.",
+        "Five closed doors line the corridor: the innkeeper’s private room and four modest guest rooms."
+      ],
+      "defaultSublocationId": "upstairsLanding",
+      "inventoryId": "inventory_upstairsCorridor",
+      "exits": {
+        "commonRoom": "commonRoom",
+        "innkeeperRoom": {
+          "destinationId": "innkeeperRoom",
+          "blocked": true,
+          "blockedReason": "The door is locked."
+        },
+        "guestRoom1": {
+          "destinationId": "guestRoom1",
+          "blocked": true,
+          "blockedReason": "The door is locked."
+        },
+        "guestRoom2": {
+          "destinationId": "guestRoom2",
+          "blocked": true,
+          "blockedReason": "The door is locked."
+        },
+        "guestRoom3": {
+          "destinationId": "guestRoom3",
+          "blocked": true,
+          "blockedReason": "The door is locked."
+        },
+        "guestRoom4": {
+          "destinationId": "guestRoom4",
+          "blocked": true,
+          "blockedReason": "The door is locked."
+        }
+      },
+      "sublocations": {
+        "upstairsLanding": {
+          "id": "upstairsLanding",
+          "type": "sublocation",
+          "locationId": "upstairsCorridor",
+          "name": "Upstairs landing",
+          "enterLabel": "Stand on the upstairs landing",
+          "selfText": "You are standing on the narrow upstairs landing.",
+          "occupantTemplate": "{name} stands on the upstairs landing.",
+          "capacity": 12,
+          "reachableSublocationIds": [
+            "upstairsLanding"
+          ]
+        }
+      }
+    },
+    "innkeeperRoom": {
+      "id": "innkeeperRoom",
+      "type": "location",
+      "name": "Innkeeper's room",
+      "passage": "The Innkeeper's Room",
+      "description": [
+        "A plain private room with a sturdy bed, a washstand, and a small chest. It is more practical than comfortable."
+      ],
+      "defaultSublocationId": "innkeeperRoomFloor",
+      "inventoryId": "inventory_innkeeperRoom",
+      "exits": {
+        "upstairsCorridor": "upstairsCorridor"
+      },
+      "sublocations": {
+        "innkeeperRoomFloor": {
+          "id": "innkeeperRoomFloor",
+          "type": "sublocation",
+          "locationId": "innkeeperRoom",
+          "name": "Innkeeper's room",
+          "enterLabel": "Stand in innkeeper's room",
+          "selfText": "You are standing in the innkeeper's private room.",
+          "occupantTemplate": "{name} stands in the innkeeper's private room.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "innkeeperRoomFloor"
+          ]
+        }
+      }
+    },
+    "guestRoom1": {
+      "id": "guestRoom1",
+      "type": "location",
+      "name": "Guest room 1",
+      "passage": "Guest Room 1",
+      "description": [
+        "A small guest room with a narrow bed, a peg for a coat, and a simple wooden stool."
+      ],
+      "defaultSublocationId": "guestRoom1Floor",
+      "inventoryId": "inventory_guestRoom1",
+      "exits": {
+        "upstairsCorridor": "upstairsCorridor"
+      },
+      "sublocations": {
+        "guestRoom1Floor": {
+          "id": "guestRoom1Floor",
+          "type": "sublocation",
+          "locationId": "guestRoom1",
+          "name": "Guest room 1",
+          "enterLabel": "Stand in guest room 1",
+          "selfText": "You are standing in guest room 1.",
+          "occupantTemplate": "{name} stands in guest room 1.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "guestRoom1Floor"
+          ]
+        }
+      }
+    },
+    "guestRoom2": {
+      "id": "guestRoom2",
+      "type": "location",
+      "name": "Guest room 2",
+      "passage": "Guest Room 2",
+      "description": [
+        "A small guest room with a narrow bed, a peg for a coat, and a simple wooden stool."
+      ],
+      "defaultSublocationId": "guestRoom2Floor",
+      "inventoryId": "inventory_guestRoom2",
+      "exits": {
+        "upstairsCorridor": "upstairsCorridor"
+      },
+      "sublocations": {
+        "guestRoom2Floor": {
+          "id": "guestRoom2Floor",
+          "type": "sublocation",
+          "locationId": "guestRoom2",
+          "name": "Guest room 2",
+          "enterLabel": "Stand in guest room 2",
+          "selfText": "You are standing in guest room 2.",
+          "occupantTemplate": "{name} stands in guest room 2.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "guestRoom2Floor"
+          ]
+        }
+      }
+    },
+    "guestRoom3": {
+      "id": "guestRoom3",
+      "type": "location",
+      "name": "Guest room 3",
+      "passage": "Guest Room 3",
+      "description": [
+        "A small guest room with a narrow bed, a peg for a coat, and a simple wooden stool."
+      ],
+      "defaultSublocationId": "guestRoom3Floor",
+      "inventoryId": "inventory_guestRoom3",
+      "exits": {
+        "upstairsCorridor": "upstairsCorridor"
+      },
+      "sublocations": {
+        "guestRoom3Floor": {
+          "id": "guestRoom3Floor",
+          "type": "sublocation",
+          "locationId": "guestRoom3",
+          "name": "Guest room 3",
+          "enterLabel": "Stand in guest room 3",
+          "selfText": "You are standing in guest room 3.",
+          "occupantTemplate": "{name} stands in guest room 3.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "guestRoom3Floor"
+          ]
+        }
+      }
+    },
+    "guestRoom4": {
+      "id": "guestRoom4",
+      "type": "location",
+      "name": "Guest room 4",
+      "passage": "Guest Room 4",
+      "description": [
+        "A small guest room with a narrow bed, a peg for a coat, and a simple wooden stool."
+      ],
+      "defaultSublocationId": "guestRoom4Floor",
+      "inventoryId": "inventory_guestRoom4",
+      "exits": {
+        "upstairsCorridor": "upstairsCorridor"
+      },
+      "sublocations": {
+        "guestRoom4Floor": {
+          "id": "guestRoom4Floor",
+          "type": "sublocation",
+          "locationId": "guestRoom4",
+          "name": "Guest room 4",
+          "enterLabel": "Stand in guest room 4",
+          "selfText": "You are standing in guest room 4.",
+          "occupantTemplate": "{name} stands in guest room 4.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "guestRoom4Floor"
+          ]
+        }
+      }
     }
   },
   "characters": {
@@ -305,6 +523,50 @@
       "sublocationId": "barBehindCounter",
       "inventoryId": "inventory_innkeeper",
       "wallet": 25,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {},
+      "initialMind": {
+        "knownFacts": [],
+        "beliefs": [],
+        "relationships": [],
+        "recentMemories": [],
+        "longTermMemories": []
+      }
+    },
+    "captainPrice": {
+      "id": "captainPrice",
+      "name": "Captain John Price",
+      "playerDescription": "Captain John Price sits with the easy stillness of a veteran soldier on leave: weathered face, unmistakable moustache and beard, boonie hat, and modern tactical clothing and gear that look entirely out of place in the tavern. He holds a mug of ale and watches the room without seeming to try.",
+      "interactionLabel": "Speak with Captain Price",
+      "aiDescription": "You are Captain John Price from Call of Duty, exactly as yourself rather than a fantasy adaptation. You are a seasoned British soldier and commander: calm under pressure, observant, pragmatic, decisive, dryly funny, direct, and capable of rough but genuine friendliness. You habitually assess people and situations without making a show of it. Right now you are off duty, resting after your own adventures and drinking ale. You are not looking for a mission, a fight, an errand, or some task to busy yourself with. Unless something genuinely demands action, you are content to sit, drink, talk, listen, and enjoy the rare quiet. Do not invent an explanation for why you are in this fantasy world; treat your presence here as ordinary fact.",
+      "locationId": "commonRoom",
+      "sublocationId": "commonRoomTableTwo",
+      "inventoryId": "inventory_captainPrice",
+      "wallet": 12,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {},
+      "initialMind": {
+        "knownFacts": [],
+        "beliefs": [],
+        "relationships": [],
+        "recentMemories": [],
+        "longTermMemories": []
+      }
+    },
+    "nell": {
+      "id": "nell",
+      "name": "Nell",
+      "playerDescription": "A young tavern waitress of about eighteen stands ready to work. Her dress and apron are cheap and repeatedly mended, but everything is clean, neat, and carefully kept. She has an open, cheerful face, though she watches unfamiliar patrons with a trace of caution.",
+      "interactionLabel": "Speak with Nell",
+      "aiDescription": "You are Nell, an eighteen-year-old waitress at this roadside tavern. A few years ago bandits raided your nearby village, killed your parents, and burned your family home. You eventually reached this tavern with almost nothing. The innkeeper took pity on you and let you stay; you now work for food, shelter, and safety, sleeping in the cramped nook beneath the stairs. You are cheerful, friendly, helpful, and good-natured without being pushy. You understand your low social position and are somewhat nervous around customers, especially armed, wealthy, drunk, angry, or threatening strangers, but you try to remain polite. Your past matters when relevant, but you do not make every conversation about tragedy. Your ordinary work is to move around the tavern, collect empty mugs, carry them back toward the bar, keep an eye on the room, and sometimes politely ask guests whether they want anything else. When a patron clearly gives you money to buy ale for them, you normally take the payment to the innkeeper, obtain the ale from him, and bring the drink back to the patron. You do not demand attention when nothing needs doing.",
+      "locationId": "commonRoom",
+      "sublocationId": "commonRoomFloor",
+      "inventoryId": "inventory_nell",
+      "wallet": 0,
       "initialControllerId": "ai",
       "defaultControllerId": "ai",
       "abilityIds": [],
@@ -434,6 +696,26 @@
       "id": "emptyMug_10",
       "definitionId": "emptyMug",
       "inventoryId": "inventory_barMugCabinet"
+    },
+    "priceAle_1": {
+      "id": "priceAle_1",
+      "definitionId": "mugOfAle",
+      "inventoryId": "inventory_captainPrice"
+    },
+    "priceAle_2": {
+      "id": "priceAle_2",
+      "definitionId": "mugOfAle",
+      "inventoryId": "inventory_commonRoomTableTwo"
+    },
+    "priceAle_3": {
+      "id": "priceAle_3",
+      "definitionId": "mugOfAle",
+      "inventoryId": "inventory_commonRoomTableTwo"
+    },
+    "priceAle_4": {
+      "id": "priceAle_4",
+      "definitionId": "mugOfAle",
+      "inventoryId": "inventory_commonRoomTableTwo"
     }
   }
 };

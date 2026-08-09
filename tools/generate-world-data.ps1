@@ -22,6 +22,11 @@ function Register-TechnicalId([hashtable]$owners, [string]$id, [string]$owner) {
     if ($owners.ContainsKey($id)) { throw "Duplicate technical ID '$id' is used by both $($owners[$id]) and $owner." }
     $owners[$id] = $owner
 }
+function Get-ExitTarget($value) {
+    if ($value -is [string]) { return [string]$value }
+    if ($null -ne $value -and $null -ne $value.PSObject.Properties["destinationId"]) { return [string]$value.destinationId }
+    return ""
+}
 function Validate-Mind($mind, [string]$characterId) {
     Require ($null -ne $mind) "Character $characterId must define initialMind."
     foreach ($listName in @("knownFacts","beliefs","relationships","recentMemories","longTermMemories")) {
@@ -61,6 +66,19 @@ foreach ($lp in $document.locations.PSObject.Properties) {
     Require (-not [string]::IsNullOrWhiteSpace($passage) -and $passage -notmatch '[\r\n\[\]]') "Location $id has an invalid Twine passage name."
     if ($passageOwners.ContainsKey($passage)) { throw "Duplicate passage name '$passage' is used by both $($passageOwners[$passage]) and $id." }
     $passageOwners[$passage] = $id; Register-Inventory $inventoryOwners ([string]$location.inventoryId) "location $id"
+    Require ($null -ne $location.exits) "Location $id exits must be an object."
+    $exitTargets = @{}
+    foreach ($ep in $location.exits.PSObject.Properties) {
+        $exitKey = $ep.Name; $exitValue = $ep.Value; $destinationId = Get-ExitTarget $exitValue
+        Require (-not [string]::IsNullOrWhiteSpace($destinationId) -and $null -ne $document.locations.($destinationId)) "Location $id exit '$exitKey' references missing location '$destinationId'."
+        Require ($destinationId -ne $id) "Location $id cannot exit to itself."
+        Require (-not $exitTargets.ContainsKey($destinationId)) "Location $id contains duplicate exit to '$destinationId'."
+        $exitTargets[$destinationId] = $true
+        if ($exitValue -isnot [string]) {
+            if ($null -ne $exitValue.PSObject.Properties["blocked"]) { Require ($exitValue.blocked -is [bool]) "Location $id exit '$exitKey' blocked must be Boolean." }
+            if ($null -ne $exitValue.PSObject.Properties["blockedReason"]) { Require ($exitValue.blockedReason -is [string]) "Location $id exit '$exitKey' blockedReason must be text." }
+        }
+    }
     Require ($null -ne $location.sublocations.([string]$location.defaultSublocationId)) "Location $id has an invalid default sublocation."
     foreach ($sp in $location.sublocations.PSObject.Properties) {
         $sid=$sp.Name; $sub=$sp.Value; $sublocationOwners[$sid]=$id

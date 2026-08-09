@@ -49,6 +49,41 @@ assert(world.entities.player.name === "Traveler", "player display name should be
 assert(world.entities.player.sublocationId === "tavernEntranceFloor", "player should start on entrance floor");
 assert(world.entities.innkeeper.sublocationId === "barBehindCounter", "innkeeper should start behind bar");
 assert(world.entities.hoodedWoman.sublocationId === "commonRoomTableOne", "hooded woman should start at table one");
+assert(world.entities.captainPrice && world.entities.captainPrice.locationId === "commonRoom" &&
+    world.entities.captainPrice.sublocationId === "commonRoomTableTwo" && world.control.assignments.captainPrice === "ai",
+    "Captain Price should start AI-controlled at the second common-room table");
+assert(world.entities.nell && world.entities.nell.locationId === "commonRoom" &&
+    world.entities.nell.sublocationId === "commonRoomFloor" && world.control.assignments.nell === "ai",
+    "Nell should start AI-controlled on the common-room floor");
+assert(world.inventories.inventory_captainPrice.itemIds.length === 1 &&
+    world.entities[world.inventories.inventory_captainPrice.itemIds[0]].definitionId === "mugOfAle",
+    "Price should start with one concrete mug of ale in his inventory");
+assert(["priceAle_2", "priceAle_3", "priceAle_4"].every(function (id) {
+    return world.inventories.inventory_commonRoomTableTwo.itemIds.includes(id) && world.entities[id].definitionId === "mugOfAle";
+}), "three concrete mugs of ale should start on Price's table");
+assert(world.entities.underStairsNook && world.entities.underStairsNook.locationId === "commonRoom",
+    "Nell's sleeping nook should be authored beneath the common-room stairs");
+assert(world.entities.upstairsCorridor && ["innkeeperRoom", "guestRoom1", "guestRoom2", "guestRoom3", "guestRoom4"].every(function (id) {
+    return world.entities[id] && world.entities[id].type === "location";
+}), "the upstairs corridor and five rooms should exist as authored locations");
+
+perform("player", { type: "move", destination_id: "commonRoom" }, "blocked-transition fixture enters common room");
+perform("player", { type: "move", destination_id: "upstairsCorridor" }, "blocked-transition fixture climbs upstairs");
+let upstairsView = setup.CharacterAPI.getView("player");
+assert(upstairsView.available_actions.move.options.destination_ids.includes("guestRoom1") &&
+    upstairsView.location.exits.some(function (exit) { return exit.id === "guestRoom1"; }),
+    "blocked room transitions should remain visible and selectable through the canonical action contract");
+const blockedEventCount = world.events.length;
+const blockedMove = setup.CharacterAPI.perform("player", { type: "move", destination_id: "guestRoom1" });
+assertFails(blockedMove, "TRANSITION_BLOCKED", "locked guest-room entry should resolve as an in-world movement failure");
+assert(world.entities.player.locationId === "upstairsCorridor" && world.events.length === blockedEventCount &&
+    !blockedMove.events.length, "blocked movement must not change location or emit character_moved");
+perform("captainPrice", { type: "move", destination_id: "upstairsCorridor" }, "AI blocked-transition fixture climbs upstairs");
+const priceUpstairsView = setup.CharacterAPI.getView("captainPrice");
+assert(priceUpstairsView.available_actions.move.options.destination_ids.includes("guestRoom1"),
+    "AIController should receive the same blocked destination as an available movement option");
+setup.Game.resetWorld();
+world = setup.Game.getWorld();
 for (const characterId of ["player", "innkeeper", "hoodedWoman"]) {
     const character = world.entities[characterId];
     assert(world.entities[character.sublocationId].locationId === character.locationId,
@@ -290,6 +325,8 @@ perform("innkeeper", { type: "move", destination_id: "commonRoom" },
     "innkeeper should enter the aura actor's perceivable major location");
 const playerInboxBeforeAura = world.entities.player.mind.pendingObservations.length;
 const innkeeperInboxBeforeAura = world.entities.innkeeper.mind.pendingObservations.length;
+const expectedAuraTargetIds = setup.CharacterAPI.getView("hoodedWoman").location.characters
+    .map(function (character) { return character.id; }).sort();
 const eventCountBeforeAura = world.events.length;
 const positionsBeforeAura = [world.entities.player.locationId, world.entities.hoodedWoman.locationId, world.entities.innkeeper.locationId];
 const aura = perform("hoodedWoman", { type: "read_aura" }, "hooded woman should scan all perceivable auras");
@@ -298,7 +335,8 @@ assert(aura.events.length === 0 && aura.feedback.length === 1 && aura.error === 
 const auraResults = aura.feedback[0].data.results;
 assert(aura.feedback[0].recipientId === "hoodedWoman" && aura.feedback[0].code === "AURA_SCAN_RESULT",
     "aura result should be structured private feedback addressed to the acting character");
-assert(auraResults.length === 2 && auraResults.some(function (item) { return item.characterId === "player"; }) &&
+assert(JSON.stringify(auraResults.map(function (item) { return item.characterId; }).sort()) === JSON.stringify(expectedAuraTargetIds) &&
+    auraResults.some(function (item) { return item.characterId === "player"; }) &&
     auraResults.some(function (item) { return item.characterId === "innkeeper"; }) &&
     !auraResults.some(function (item) { return item.characterId === "hoodedWoman"; }),
     "scan targets should come from current perception, include all visible others, and exclude self");
@@ -311,7 +349,7 @@ assert(world.events.length === eventCountBeforeAura &&
     "aura scan should not mutate physical state or create a public event");
 assert(world.entities.hoodedWoman.mind.pendingObservations.some(function (item) {
     return item.kind === "action_feedback" && item.actionType === "read_aura" &&
-        Array.isArray(item.data.results) && item.data.results.length === 2;
+        Array.isArray(item.data.results) && item.data.results.length === expectedAuraTargetIds.length;
 }), "aura feedback should enter only the actor's observation inbox");
 assert(world.entities.player.mind.pendingObservations.length === playerInboxBeforeAura,
     "aura feedback must not enter the target inbox");
@@ -324,6 +362,10 @@ assert(!secondAura.feedback[0].data.results.some(function (item) { return item.c
     "characters outside the actor's major location should be excluded from the scan");
 perform("player", { type: "move", destination_id: "tavernEntrance" },
     "player should leave for empty aura scan test");
+perform("captainPrice", { type: "move", destination_id: "tavernEntrance" },
+    "Price should leave for empty aura scan test");
+perform("nell", { type: "move", destination_id: "tavernEntrance" },
+    "Nell should leave for empty aura scan test");
 const emptyAura = perform("hoodedWoman", { type: "read_aura" }, "aura scan with no perceivable characters should succeed");
 assert(emptyAura.feedback[0].data.results.length === 0 && emptyAura.feedback[0].text === "You sense no other auras nearby.",
     "empty aura scan should return a grounded private no-target observation");

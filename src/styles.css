@@ -615,8 +615,8 @@
     padding: 1.2rem;
     border: 1px solid #777;
     border-radius: 0.35rem;
-    background: #f4f0e8;
-    color: #211d18;
+    background: #24211d;
+    color: #eee8df;
     box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
 }
 
@@ -636,6 +636,9 @@
     width: 100%;
     margin-top: 0.35rem;
     box-sizing: border-box;
+    border: 1px solid #6f675d;
+    background: #151310;
+    color: #f3eee7;
 }
 
 .framework-character-window textarea {
@@ -645,7 +648,7 @@
 .framework-character-inventory {
     margin-top: 1rem;
     padding-top: 0.8rem;
-    border-top: 1px solid #aaa;
+    border-top: 1px solid #665f56;
 }
 
 .framework-character-actions {
@@ -653,4 +656,10 @@
     flex-wrap: wrap;
     gap: 0.65rem;
     margin-top: 1rem;
+}
+
+.framework-character-actions button {
+    border: 1px solid #756c61;
+    background: #38322b;
+    color: #f3eee7;
 }

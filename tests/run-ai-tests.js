@@ -26,6 +26,8 @@ function decisionFixture(value) { return normalizeDecisionFixture(value); }
 function fresh() { setup.Game.resetWorld(); setup.AITurnQueue.repair(); return setup.Game.getWorld(); }
 function queueHooded() {
     const world = fresh();
+    ok(setup.Game.assignNonHumanController("captainPrice", "dummy"), "isolated queue fixture disables Price AI");
+    ok(setup.Game.assignNonHumanController("nell", "dummy"), "isolated queue fixture disables Nell AI");
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "commonRoom" }), "player enters common room");
     ok(setup.CharacterAPI.narrate("player", { text: "Hello there.", target_id: "hoodedWoman" }), "narrative queues hooded woman");
     assert(setup.AITurnQueue.peek().characterId === "hoodedWoman", "hooded woman should be queue head");
@@ -117,17 +119,16 @@ async function main() {
     const invalidHumanAttempt = await setup.TurnFlow.submitHumanIntent({ action: { type: "move", destination_id: "villageTemple" } });
     assert(!invalidHumanAttempt.ok && invalidHumanAttempt.turnConsumed === false && automaticTickCalls === 0,
         "a HumanController request rejected by the canonical action contract must not consume the turn or start an AI world tick");
-    const originalMoveValidate = setup.Game.ActionRegistry.move.validate;
-    setup.Game.ActionRegistry.move.validate = function () {
-        return { ok: false, error: { code: "TEST_IN_WORLD_FAILURE", message: "The attempt fails inside the game world." } };
-    };
-    const failedHumanAttempt = await setup.TurnFlow.submitHumanIntent({ action: { type: "move", destination_id: "commonRoom" } });
-    setup.Game.ActionRegistry.move.validate = originalMoveValidate;
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "commonRoom" }), "blocked-turn fixture enters common room");
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "upstairsCorridor" }), "blocked-turn fixture climbs upstairs");
+    const failedHumanAttempt = await setup.TurnFlow.submitHumanIntent({ action: { type: "move", destination_id: "guestRoom1" } });
     setup.AITurnScheduler.processAfterSubmit = originalProcessAfterSubmit;
     assert(failedHumanAttempt.ok && failedHumanAttempt.turnConsumed === true &&
         failedHumanAttempt.intentResult.actionResult && failedHumanAttempt.intentResult.actionResult.ok === false &&
-        failedHumanAttempt.intentResult.actionResult.error.code === "TEST_IN_WORLD_FAILURE" && automaticTickCalls === 1,
-        "a valid HumanController action attempt that resolves as an in-world failure must still consume the turn and start the AI world tick");
+        failedHumanAttempt.intentResult.actionResult.error.code === "TRANSITION_BLOCKED" &&
+        failedHumanAttempt.intentResult.actionResult.error.message === "The door is locked." && automaticTickCalls === 1 &&
+        setup.Game.getWorld().entities.player.locationId === "upstairsCorridor",
+        "an authored blocked transition must consume the HumanController turn, preserve location, and start the AI world tick");
 
     const storageData = {};
     const storage = { getItem: function (k) { return storageData[k] || null; }, setItem: function (k, v) { storageData[k] = v; }, removeItem: function (k) { delete storageData[k]; } };

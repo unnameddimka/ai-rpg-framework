@@ -223,6 +223,31 @@
         return entity && entity.type === "location" ? entity : null;
     }
 
+    function locationExitEntries(location) {
+        return Object.entries(location && location.exits || {}).map(function (entry) {
+            const key = entry[0];
+            const raw = entry[1];
+            if (typeof raw === "string") {
+                return { key: key, destinationId: raw, blocked: false, blockedReason: "" };
+            }
+            if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+                return {
+                    key: key,
+                    destinationId: typeof raw.destinationId === "string" ? raw.destinationId : "",
+                    blocked: raw.blocked === true,
+                    blockedReason: typeof raw.blockedReason === "string" ? raw.blockedReason : ""
+                };
+            }
+            return { key: key, destinationId: "", blocked: false, blockedReason: "" };
+        });
+    }
+
+    function findLocationExit(location, destinationId) {
+        return locationExitEntries(location).find(function (entry) {
+            return entry.destinationId === destinationId;
+        }) || null;
+    }
+
     function getSublocation(sublocationId, world) {
         const entity = world.entities[sublocationId];
         return entity && entity.type === "sublocation" ? entity : null;
@@ -485,6 +510,31 @@
             if (!world.inventories[location.inventoryId] ||
                     world.inventories[location.inventoryId].ownerId !== location.id) {
                 return fail("LOCATION_INVENTORY_INVALID", `Location ${location.id} has an invalid inventory.`);
+            }
+            if (!location.exits || typeof location.exits !== "object" || Array.isArray(location.exits)) {
+                return fail("LOCATION_EXIT_INVALID", `Location ${location.id} exits must be an object.`);
+            }
+            const exitTargets = new Set();
+            for (const [exitKey, rawExit] of Object.entries(location.exits)) {
+                const exit = locationExitEntries({ exits: { [exitKey]: rawExit } })[0];
+                if (!exit.destinationId || !getLocation(exit.destinationId, world)) {
+                    return fail("LOCATION_EXIT_INVALID", `Location ${location.id} has an invalid exit ${exitKey}.`);
+                }
+                if (exit.destinationId === location.id) {
+                    return fail("LOCATION_EXIT_INVALID", `Location ${location.id} cannot exit to itself.`);
+                }
+                if (exitTargets.has(exit.destinationId)) {
+                    return fail("LOCATION_EXIT_INVALID", `Location ${location.id} contains a duplicate exit to ${exit.destinationId}.`);
+                }
+                exitTargets.add(exit.destinationId);
+                if (rawExit && typeof rawExit === "object" && !Array.isArray(rawExit)) {
+                    if (rawExit.blocked !== undefined && typeof rawExit.blocked !== "boolean") {
+                        return fail("LOCATION_EXIT_INVALID", `Location ${location.id} exit ${exitKey} blocked must be Boolean.`);
+                    }
+                    if (rawExit.blockedReason !== undefined && typeof rawExit.blockedReason !== "string") {
+                        return fail("LOCATION_EXIT_INVALID", `Location ${location.id} exit ${exitKey} blockedReason must be text.`);
+                    }
+                }
             }
         }
 
@@ -921,7 +971,9 @@
             getOptions: function (actor, world) {
                 const location = getLocation(actor.locationId, world);
                 return {
-                    destination_ids: Object.values(location.exits || {})
+                    destination_ids: locationExitEntries(location).map(function (entry) {
+                        return entry.destinationId;
+                    }).filter(Boolean)
                 };
             },
             validate: function (actor, action, world) {
@@ -932,11 +984,16 @@
                     return fail("DESTINATION_NOT_FOUND", "Destination does not exist.");
                 }
 
-                if (!Object.values(location.exits || {}).includes(destination.id)) {
+                const transition = findLocationExit(location, destination.id);
+                if (!transition) {
                     return fail(
                         "DESTINATION_NOT_REACHABLE",
                         "Destination is not connected to the current location."
                     );
+                }
+
+                if (transition.blocked) {
+                    return fail("TRANSITION_BLOCKED", transition.blockedReason.trim() || "The way is blocked.");
                 }
 
                 const defaultPosition = getSublocation(destination.defaultSublocationId, world);
@@ -1602,8 +1659,8 @@
                     };
                 }),
                 items: inventoryItems(location.inventoryId, world),
-                exits: Object.values(location.exits || {}).map(function (locationId) {
-                    const destination = getLocation(locationId, world);
+                exits: locationExitEntries(location).map(function (transition) {
+                    const destination = getLocation(transition.destinationId, world);
                     return { id: destination.id, name: destination.name };
                 })
             },

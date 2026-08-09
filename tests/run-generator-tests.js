@@ -26,6 +26,8 @@ function rejects(mutator, expected) {
 }
 rejects(function (doc) { doc.startLocationId = "missing"; }, "startLocationId");
 rejects(function (doc) { doc.locations.bar.passage = doc.locations.tavernEntrance.passage; }, "Duplicate passage");
+rejects(function (doc) { doc.locations.upstairsCorridor.exits.guestRoom1.blocked = "yes"; }, "blocked must be Boolean");
+rejects(function (doc) { doc.locations.upstairsCorridor.exits.guestRoom1.destinationId = "missing"; }, "references missing location");
 rejects(function (doc) { doc.characters.player.inventoryId = doc.locations.bar.inventoryId; }, "Duplicate inventory");
 rejects(function (doc) { doc.characters.player.initialControllerId = "dummy"; }, "Exactly one");
 rejects(function (doc) { doc.abilities.readAura.actionType = "execute_code"; }, "unknown action");
