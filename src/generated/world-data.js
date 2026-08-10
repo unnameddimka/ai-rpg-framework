@@ -116,7 +116,6 @@
       "name": "The common room",
       "passage": "The Common Room",
       "description": [
-        "Several travellers sit near the fire while two merchants argue quietly over a map.",
         "Smoke gathers beneath the rafters above scarred tables and mismatched chairs.",
         "A narrow wooden staircase climbs to a dim landing above the common room; a cramped nook has been curtained off beneath it."
       ],
@@ -141,6 +140,7 @@
             "commonRoomFloor",
             "commonRoomTableOne",
             "commonRoomTableTwo",
+            "commonRoomTableThree",
             "underStairsNook"
           ]
         },
@@ -194,6 +194,25 @@
           "capacity": 1,
           "reachableSublocationIds": [
             "underStairsNook",
+            "commonRoomFloor"
+          ]
+        },
+        "commonRoomTableThree": {
+          "id": "commonRoomTableThree",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Third table",
+          "publicText": "The third table stands a little apart from the others near the staircase.",
+          "enterLabel": "Sit at the third table",
+          "selfText": "You are sitting at the third table.",
+          "occupantTemplate": "{name} sits at the third table.",
+          "capacity": 4,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_commonRoomTableThree",
+          "reachableSublocationIds": [
+            "commonRoomTableThree",
             "commonRoomFloor"
           ]
         }
@@ -276,28 +295,33 @@
         "commonRoom": "commonRoom",
         "innkeeperRoom": {
           "destinationId": "innkeeperRoom",
-          "blocked": true,
-          "blockedReason": "The door is locked."
+          "lockId": "lock_innkeeper_room",
+          "locked": true,
+          "lockedReason": "The door is locked."
         },
         "guestRoom1": {
           "destinationId": "guestRoom1",
-          "blocked": true,
-          "blockedReason": "The door is locked."
+          "lockId": "lock_guest_room_1",
+          "locked": true,
+          "lockedReason": "The door is locked."
         },
         "guestRoom2": {
           "destinationId": "guestRoom2",
-          "blocked": true,
-          "blockedReason": "The door is locked."
+          "lockId": "lock_guest_room_2",
+          "locked": true,
+          "lockedReason": "The door is locked."
         },
         "guestRoom3": {
           "destinationId": "guestRoom3",
-          "blocked": true,
-          "blockedReason": "The door is locked."
+          "lockId": "lock_guest_room_3",
+          "locked": true,
+          "lockedReason": "The door is locked."
         },
         "guestRoom4": {
           "destinationId": "guestRoom4",
-          "blocked": true,
-          "blockedReason": "The door is locked."
+          "lockId": "lock_guest_room_4",
+          "locked": true,
+          "lockedReason": "The door is locked."
         }
       },
       "sublocations": {
@@ -327,7 +351,12 @@
       "defaultSublocationId": "innkeeperRoomFloor",
       "inventoryId": "inventory_innkeeperRoom",
       "exits": {
-        "upstairsCorridor": "upstairsCorridor"
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_innkeeper_room",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
       },
       "sublocations": {
         "innkeeperRoomFloor": {
@@ -340,6 +369,22 @@
           "occupantTemplate": "{name} stands in the innkeeper's private room.",
           "capacity": 2,
           "reachableSublocationIds": [
+            "innkeeperRoomFloor",
+            "innkeeperRoomBed"
+          ]
+        },
+        "innkeeperRoomBed": {
+          "id": "innkeeperRoomBed",
+          "type": "sublocation",
+          "locationId": "innkeeperRoom",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "innkeeperRoomBed",
             "innkeeperRoomFloor"
           ]
         }
@@ -356,7 +401,12 @@
       "defaultSublocationId": "guestRoom1Floor",
       "inventoryId": "inventory_guestRoom1",
       "exits": {
-        "upstairsCorridor": "upstairsCorridor"
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_guest_room_1",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
       },
       "sublocations": {
         "guestRoom1Floor": {
@@ -369,6 +419,22 @@
           "occupantTemplate": "{name} stands in guest room 1.",
           "capacity": 2,
           "reachableSublocationIds": [
+            "guestRoom1Floor",
+            "guestRoom1Bed"
+          ]
+        },
+        "guestRoom1Bed": {
+          "id": "guestRoom1Bed",
+          "type": "sublocation",
+          "locationId": "guestRoom1",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "guestRoom1Bed",
             "guestRoom1Floor"
           ]
         }
@@ -385,7 +451,12 @@
       "defaultSublocationId": "guestRoom2Floor",
       "inventoryId": "inventory_guestRoom2",
       "exits": {
-        "upstairsCorridor": "upstairsCorridor"
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_guest_room_2",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
       },
       "sublocations": {
         "guestRoom2Floor": {
@@ -398,6 +469,22 @@
           "occupantTemplate": "{name} stands in guest room 2.",
           "capacity": 2,
           "reachableSublocationIds": [
+            "guestRoom2Floor",
+            "guestRoom2Bed"
+          ]
+        },
+        "guestRoom2Bed": {
+          "id": "guestRoom2Bed",
+          "type": "sublocation",
+          "locationId": "guestRoom2",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "guestRoom2Bed",
             "guestRoom2Floor"
           ]
         }
@@ -414,7 +501,12 @@
       "defaultSublocationId": "guestRoom3Floor",
       "inventoryId": "inventory_guestRoom3",
       "exits": {
-        "upstairsCorridor": "upstairsCorridor"
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_guest_room_3",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
       },
       "sublocations": {
         "guestRoom3Floor": {
@@ -427,6 +519,22 @@
           "occupantTemplate": "{name} stands in guest room 3.",
           "capacity": 2,
           "reachableSublocationIds": [
+            "guestRoom3Floor",
+            "guestRoom3Bed"
+          ]
+        },
+        "guestRoom3Bed": {
+          "id": "guestRoom3Bed",
+          "type": "sublocation",
+          "locationId": "guestRoom3",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "guestRoom3Bed",
             "guestRoom3Floor"
           ]
         }
@@ -443,7 +551,12 @@
       "defaultSublocationId": "guestRoom4Floor",
       "inventoryId": "inventory_guestRoom4",
       "exits": {
-        "upstairsCorridor": "upstairsCorridor"
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_guest_room_4",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
       },
       "sublocations": {
         "guestRoom4Floor": {
@@ -456,6 +569,22 @@
           "occupantTemplate": "{name} stands in guest room 4.",
           "capacity": 2,
           "reachableSublocationIds": [
+            "guestRoom4Floor",
+            "guestRoom4Bed"
+          ]
+        },
+        "guestRoom4Bed": {
+          "id": "guestRoom4Bed",
+          "type": "sublocation",
+          "locationId": "guestRoom4",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "guestRoom4Bed",
             "guestRoom4Floor"
           ]
         }
@@ -699,6 +828,66 @@
         "resultDefinitionId": "emptyMug",
         "feedbackText": "You drink the ale. The mug is now empty."
       }
+    },
+    "innkeeperRoomKeyType": {
+      "id": "innkeeperRoomKeyType",
+      "name": "Key to the innkeeper's room",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_innkeeper_room"
+    },
+    "guestRoom1KeyType": {
+      "id": "guestRoom1KeyType",
+      "name": "Key to Guest Room 1",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_guest_room_1"
+    },
+    "guestRoom2KeyType": {
+      "id": "guestRoom2KeyType",
+      "name": "Key to Guest Room 2",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_guest_room_2"
+    },
+    "guestRoom3KeyType": {
+      "id": "guestRoom3KeyType",
+      "name": "Key to Guest Room 3",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_guest_room_3"
+    },
+    "guestRoom4KeyType": {
+      "id": "guestRoom4KeyType",
+      "name": "Key to Guest Room 4",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_guest_room_4"
     }
   },
   "items": {
@@ -776,6 +965,31 @@
       "id": "priceAle_4",
       "definitionId": "mugOfAle",
       "inventoryId": "inventory_commonRoomTableTwo"
+    },
+    "innkeeperRoomKey": {
+      "id": "innkeeperRoomKey",
+      "definitionId": "innkeeperRoomKeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "guestRoom1Key": {
+      "id": "guestRoom1Key",
+      "definitionId": "guestRoom1KeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "guestRoom2Key": {
+      "id": "guestRoom2Key",
+      "definitionId": "guestRoom2KeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "guestRoom3Key": {
+      "id": "guestRoom3Key",
+      "definitionId": "guestRoom3KeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "guestRoom4Key": {
+      "id": "guestRoom4Key",
+      "definitionId": "guestRoom4KeyType",
+      "inventoryId": "inventory_innkeeper"
     }
   }
 };

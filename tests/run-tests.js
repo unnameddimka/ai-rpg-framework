@@ -82,6 +82,36 @@ perform("captainPrice", { type: "move", destination_id: "upstairsCorridor" }, "A
 const priceUpstairsView = setup.CharacterAPI.getView("captainPrice");
 assert(priceUpstairsView.available_actions.move.options.destination_ids.includes("guestRoom1"),
     "AIController should receive the same blocked destination as an available movement option");
+
+const innkeeperKeyItems = world.inventories.inventory_innkeeper.itemIds.map(function (id) { return world.entities[id]; })
+    .filter(function (item) { const definition = world.itemDefinitions[item.definitionId]; return definition && definition.keyLockId; });
+assert(innkeeperKeyItems.length === 5 && innkeeperKeyItems.every(function (item) {
+    const definition = world.itemDefinitions[item.definitionId];
+    return !definition.consumeAction && !definition.fillAction;
+}), "Garrick should start with five ordinary non-consumable room keys");
+perform("innkeeper", { type: "move", destination_id: "commonRoom" }, "innkeeper walks from bar to common room");
+perform("innkeeper", { type: "move", destination_id: "upstairsCorridor" }, "innkeeper climbs upstairs with keys");
+let innkeeperUpstairsView = setup.CharacterAPI.getView("innkeeper");
+assert(innkeeperUpstairsView.available_actions.unlock &&
+    innkeeperUpstairsView.available_actions.unlock.options.destination_ids.includes("guestRoom1") &&
+    !innkeeperUpstairsView.available_actions.lock,
+    "a matching key should directly grant unlock for a locked adjacent passage");
+perform("innkeeper", { type: "unlock", destination_id: "guestRoom1" }, "innkeeper unlocks guest room one");
+assert(world.entities.upstairsCorridor.exits.guestRoom1.locked === false &&
+    world.entities.guestRoom1.exits.upstairsCorridor.locked === false,
+    "unlock should synchronize only the two sides of the operated passage");
+assert(world.entities.upstairsCorridor.exits.guestRoom2.locked === true,
+    "unlocking one passage must not unlock another passage");
+perform("innkeeper", { type: "move", destination_id: "guestRoom1" }, "innkeeper enters unlocked guest room one");
+let innkeeperInsideView = setup.CharacterAPI.getView("innkeeper");
+assert(innkeeperInsideView.available_actions.lock &&
+    innkeeperInsideView.available_actions.lock.options.destination_ids.includes("upstairsCorridor"),
+    "the matching key should grant lock from the room side");
+perform("innkeeper", { type: "lock", destination_id: "upstairsCorridor" }, "innkeeper locks the room from inside");
+assertFails(setup.CharacterAPI.perform("innkeeper", { type: "move", destination_id: "upstairsCorridor" }),
+    "TRANSITION_BLOCKED", "locked movement should still be a grounded in-world failure from inside the room");
+perform("innkeeper", { type: "unlock", destination_id: "upstairsCorridor" }, "innkeeper unlocks the room from inside");
+perform("innkeeper", { type: "move", destination_id: "upstairsCorridor" }, "innkeeper leaves after unlocking");
 setup.Game.resetWorld();
 world = setup.Game.getWorld();
 for (const characterId of ["player", "innkeeper", "hoodedWoman"]) {

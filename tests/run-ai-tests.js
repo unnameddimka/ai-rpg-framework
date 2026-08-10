@@ -169,6 +169,20 @@ async function main() {
         setup.Game.getWorld().entities.player.locationId === "upstairsCorridor",
         "an authored blocked transition must consume the HumanController turn, preserve location, and start the AI world tick");
 
+    world = fresh();
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "commonRoom" }), "AI presentation attribution fixture enters common room");
+    const attributedNarrative = setup.TurnFlow.describeAIResult({
+        ok: true,
+        actorId: "captainPrice",
+        narrativeText: "*Takes a slow sip of ale, eyes tracking the newcomer.*",
+        intentResult: { narrativeResult: null },
+        actionResult: null
+    }, "player");
+    assert(attributedNarrative.visible.length === 1 &&
+        attributedNarrative.visible[0] === "Captain John Price: *Takes a slow sip of ale, eyes tracking the newcomer.*" &&
+        attributedNarrative.entries[0].actorName === "Captain John Price",
+        "player-facing AI narrative should explicitly identify the acting character while preserving actor metadata");
+
     const storageData = {};
     const storage = { getItem: function (k) { return storageData[k] || null; }, setItem: function (k, v) { storageData[k] = v; }, removeItem: function (k) { delete storageData[k]; } };
     const sentinel = "sk-or-SENTINEL-DO-NOT-SAVE";
@@ -221,7 +235,9 @@ async function main() {
     const clientOk = await setup.OpenRouterClient.chat([{ role: "user", content: "test" }], fetchOk);
     const requestBody = JSON.parse(captured.options.body);
     assert(clientOk.ok && captured.url === setup.OpenRouterClient.ENDPOINT && captured.options.headers.Authorization === `Bearer ${sentinel}` &&
-        requestBody.model === euryaleId && setup.OpenRouterClient.MODEL === euryaleId && requestBody.stream === false, "client should use the selected model from model_list.json, Bearer key, and non-streaming request");
+        requestBody.model === euryaleId && setup.OpenRouterClient.MODEL === euryaleId && requestBody.stream === false &&
+        requestBody.max_tokens === 3000 && requestBody.reasoning && requestBody.reasoning.max_tokens === 1500,
+        "client should use the selected model, Bearer key, non-streaming transport, and explicit completion/reasoning headroom");
     async function statusFetch(status) { return { ok: false, status: status, json: async function () { return {}; } }; }
     for (const pair of [[401,"AUTHENTICATION_FAILED"],[402,"INSUFFICIENT_CREDITS"],[429,"RATE_LIMITED"],[503,"PROVIDER_UNAVAILABLE"]]) {
         const result = await setup.OpenRouterClient.chat([], function () { return statusFetch(pair[0]); });
@@ -280,6 +296,14 @@ async function main() {
     assert(network.error.code === "NETWORK_ERROR" && !JSON.stringify(network).includes(sentinel), "network errors must not leak key or raw exception");
     const malformed = await setup.OpenRouterClient.chat([], async function () { return { ok: true, status: 200, json: async function () { return {}; } }; });
     assert(malformed.error.code === "MALFORMED_PROVIDER_RESPONSE", "malformed provider body should normalize");
+    const truncated = await setup.OpenRouterClient.chat([], async function () {
+        return { ok: true, status: 200, json: async function () {
+            return { choices: [{ finish_reason: "length", message: { content: null } }], usage: { completion_tokens: 3000, reasoning_tokens: 1500 } };
+        } };
+    });
+    assert(truncated.error.code === "MODEL_OUTPUT_TRUNCATED" &&
+        truncated.error.message.includes("completion token limit"),
+        "finish_reason length must be classified as model output truncation rather than malformed provider content");
 
     assert(setup.AIProtocol.extractObject("```json\n{\"action\":null}\n```").action === null, "protocol should extract fenced JSON");
     const available = { move: {

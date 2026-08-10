@@ -14,7 +14,7 @@ const defaults = {
 
 const knownActions = new Set([
     "move", "move_within_location", "take_item", "drop_item", "give_item",
-    "give_money", "place_item", "fill", "consume", "read_aura"
+    "give_money", "place_item", "fill", "consume", "lock", "unlock", "read_aura"
 ]);
 const knownEnvironmentCapabilities = new Set(["ale_source"]);
 const controllers = new Set(["human", "dummy", "ai"]);
@@ -42,10 +42,25 @@ function entries(object) {
     return isObject(object) ? Object.entries(object) : [];
 }
 
+function exitRecord(exitValue) {
+    if (typeof exitValue === "string") {
+        return { destinationId: exitValue, blocked: false, blockedReason: "", lockId: "", locked: false, lockedReason: "" };
+    }
+    if (isObject(exitValue)) {
+        return {
+            destinationId: typeof exitValue.destinationId === "string" ? exitValue.destinationId : "",
+            blocked: exitValue.blocked === true,
+            blockedReason: typeof exitValue.blockedReason === "string" ? exitValue.blockedReason : "",
+            lockId: typeof exitValue.lockId === "string" ? exitValue.lockId : "",
+            locked: exitValue.locked === true,
+            lockedReason: typeof exitValue.lockedReason === "string" ? exitValue.lockedReason : ""
+        };
+    }
+    return { destinationId: "", blocked: false, blockedReason: "", lockId: "", locked: false, lockedReason: "" };
+}
+
 function exitTarget(exitValue) {
-    if (typeof exitValue === "string") return exitValue;
-    if (isObject(exitValue) && typeof exitValue.destinationId === "string") return exitValue.destinationId;
-    return "";
+    return exitRecord(exitValue).destinationId;
 }
 
 function registerInventory(owners, id, owner) {
@@ -108,6 +123,7 @@ function validateWorld(document) {
     const passageOwners = new Map();
     const inventoryOwners = new Map();
     const technicalIdOwners = new Map();
+    const lockIds = new Set();
 
     for (const [id, location] of entries(document.locations)) {
         requireCondition(isObject(location) && location.id === id, `Location key ${id} must match its id.`);
@@ -124,7 +140,8 @@ function validateWorld(document) {
         requireCondition(isObject(location.exits), `Location ${id} exits must be an object.`);
         const exitTargets = new Set();
         for (const [exitKey, exitValue] of entries(location.exits)) {
-            const destinationId = exitTarget(exitValue);
+            const exit = exitRecord(exitValue);
+            const destinationId = exit.destinationId;
             requireCondition(nonBlank(destinationId) && own(document.locations, destinationId),
                 `Location ${id} exit '${exitKey}' references missing location '${destinationId || String(exitValue)}'.`);
             requireCondition(destinationId !== id, `Location ${id} cannot exit to itself.`);
@@ -139,6 +156,29 @@ function validateWorld(document) {
                     requireCondition(typeof exitValue.blockedReason === "string",
                         `Location ${id} exit '${exitKey}' blockedReason must be text.`);
                 }
+                if (own(exitValue, "lockId")) {
+                    requireCondition(/^[A-Za-z][A-Za-z0-9_-]*$/.test(String(exitValue.lockId || "")),
+                        `Location ${id} exit '${exitKey}' lockId is invalid.`);
+                }
+                if (own(exitValue, "locked")) {
+                    requireCondition(typeof exitValue.locked === "boolean",
+                        `Location ${id} exit '${exitKey}' locked must be Boolean.`);
+                }
+                if (own(exitValue, "lockedReason")) {
+                    requireCondition(typeof exitValue.lockedReason === "string",
+                        `Location ${id} exit '${exitKey}' lockedReason must be text.`);
+                }
+                requireCondition(Boolean(exit.lockId) || (!own(exitValue, "locked") && !own(exitValue, "lockedReason")),
+                    `Location ${id} exit '${exitKey}' cannot define lock state without lockId.`);
+            }
+            if (exit.lockId) {
+                lockIds.add(exit.lockId);
+                const destination = document.locations[destinationId];
+                const reciprocalValue = entries(destination.exits).map((pair) => pair[1])
+                    .find((value) => exitTarget(value) === id);
+                const reciprocal = exitRecord(reciprocalValue);
+                requireCondition(Boolean(reciprocalValue) && reciprocal.lockId === exit.lockId && reciprocal.locked === exit.locked,
+                    `Location ${id} exit '${exitKey}' has an inconsistent reciprocal lock.`);
             }
         }
 
@@ -169,6 +209,11 @@ function validateWorld(document) {
         requireCondition(nonBlank(definition.name) && nonBlank(definition.familyId),
             `Item definition ${id} needs a name and familyId.`);
         requireCondition(Array.isArray(definition.tags), `Item definition ${id} tags must be an array.`);
+        if (own(definition, "keyLockId")) {
+            requireCondition(/^[A-Za-z][A-Za-z0-9_-]*$/.test(String(definition.keyLockId || "")) &&
+                lockIds.has(definition.keyLockId),
+            `Item definition ${id} references invalid keyLockId '${definition.keyLockId}'.`);
+        }
         for (const flag of ["consumable", "equippable", "fillable"]) {
             requireCondition(typeof definition[flag] === "boolean",
                 `Item definition ${id} ${flag} must be Boolean.`);

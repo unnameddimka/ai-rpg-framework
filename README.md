@@ -1,263 +1,74 @@
-# AI RPG Framework POC
+# AI RPG patch for `6afbfdd`
 
-This repository is the framework-first rewrite of the original Twine tavern proof of concept.
+This patch targets exactly:
 
-The current version provides a deterministic world plus a narrow, user-triggered AI
-reaction-wave integration. It supports authored characters and abilities, saved per-character minds,
-grounded observations, restricted context bundles, inventories, movement, transfers,
-confirmed events, and debug takeover of any character.
+`6afbfdd71d4156fb8d3d81568d344ec9a2ac2ee9` (`ai chain consistency grounded progress`)
 
-Assigned zero-input abilities are also usable from the normal player-facing location view.
-The controls are derived from the character currently under HumanController and from that
-character's live action grants; they do not depend on a particular character ID. The sample
-`readAura` ability performs a targetless scan of all other characters currently perceivable
-to the actor and immediately displays its structured private results. Switching control
-keeps each character's displayed private result isolated from the others.
+It implements the agreed engine/editor/world changes:
 
-## Project layout
+- player-facing chronological History with visible/invisible filtering and a 100-entry save mirror;
+- lockable reciprocal passages, ordinary matching key items, grounded `lock` / `unlock` actions, and editor support;
+- 3000 completion / 1500 reasoning OpenRouter request budgets and `MODEL_OUTPUT_TRUNCATED` diagnostics;
+- beds in all upstairs rooms using the existing multi-occupancy sublocation mechanics;
+- a third common-room table;
+- removal of the static travellers/merchants ghost-NPC prose;
+- deterministic coverage for the new behavior;
+- engine/world implementation specs under `docs/engine/` and `docs/world/`.
 
-```text
-src/story.twee          Twine passages and prose
-src/00-model-list.js    Generated embedded model catalog
-src/10-game-api.js      World, ActionRegistry, CharacterAPI, invariants
-src/20-controllers.js   Human, Dummy, and single-request AI reaction orchestration
-src/21-ai-settings.js   Transient key plus selected-model runtime settings
-src/22-openrouter-client.js Browser-side OpenRouter client
-src/23-ai-protocol.js   JSON-only prompt protocol, parsing, validation, repair
-src/24-ai-request-executor.js Shared serialized request transport and cooldown policy
-src/24-ai-turn-scheduler.js Reaction-wave scheduler and queue/request projections
-src/24-prompt-lab.js    Transient scheduler/prompt debugger
-src/25-turn-flow.js     Unified human Submit/Pass and AI reaction-wave flow
-src/30-game-ui.js       Browser controls, scheduler queue, sphere lab, and takeover UI
-src/styles.css          Framework UI styles
-data/world.json         Authoritative locations, characters, minds, and abilities
-data/model_list.json    Authoritative OpenRouter model list and default
-editor/world-editor.html Standalone offline world editor
-tools/generate-world-data.js Cross-platform world validator/embedder
-tools/generate-model-list.js Cross-platform model-list validator/embedder
-docs/architecture.md    Current architecture
-docs/status.md          Current implementation status
-docs/engine/            Technical implementation task specifications
-docs/world/             World/character authoring task specifications
-AGENTS.md                Instructions for Codex and other coding agents
-tests/run-tests.js       Node test harness
-build.bat / build.sh     Windows and Bash builds
+## Apply on Windows
+
+From a **clean checkout at the exact commit above**, unpack this archive anywhere and run from the repository root:
+
+```bat
+py -3 C:\path\to\patch\apply_ai_rpg_patch.py
 ```
 
-The numeric JavaScript prefixes make the dependency order explicit when Tweego reads the source directory.
+If `py` is unavailable but `python` is on PATH:
 
-## World authoring workflow
+```bat
+python C:\path\to\patch\apply_ai_rpg_patch.py
+```
 
-`data/world.json` (schema version 2) is the single authoritative source for the start
-location, major locations, sublocations, characters, initial minds, controller defaults,
-hidden engine facts, individual ability grants, item definitions, and initial item instances.
-The editor exposes separate Locations, Characters, Abilities, Item types, and Items sections
-and blocks structurally invalid downloads.
+You can also run `apply_patch.bat` from this folder after setting the repository as the current directory.
 
-The tavern item loop uses persistent instances rather than spawning filled mugs. Ten
-`emptyMug_*` instances begin in the behind-bar **Mug cabinet**. An actor must take one, then
-use `fill` at the `ale_source` behind the bar. The same item changes definition to `mugOfAle`.
-Using `consume` changes that instance back to `emptyMug`, making it refillable again.
+## Apply on Linux / WSL
 
-The authored tavern cast includes Captain John Price, Nell, and Garrick the Innkeeper. Garrick
-and Nell begin with mutual `knownFacts` and `relationships` in their authored `initialMind`, so
-their established history is private character context from the start rather than something the
-model must infer from a first encounter. World/character task specs live under `docs/world/`;
-engine, controller, UI, and protocol task specs live under `docs/engine/`.
+From the repository root:
 
-`src/generated/world-data.js`, `src/generated/world-passages.twee`,
-`src/generated/world-storydata.twee`, and `src/00-model-list.js` are derived build files and
-must not be edited directly.
+```bash
+python3 /path/to/patch/apply_ai_rpg_patch.py
+```
 
-`data/model_list.json` separately defines the selectable OpenRouter models and
-`defaultModelId`. The build validates it, then embeds it into the standalone HTML so the game
-can still run from a single `file://` document without fetching sibling JSON files.
+or use `apply_patch.sh` while the repository is the current directory.
 
-Administrator steps:
+## Safety / verification
 
-1. Send `editor/world-editor.html` and the current `data/world.json` to the author.
-2. Receive the edited downloaded `world.json`.
-3. Review the JSON diff.
-4. Replace `data/world.json` in the repository.
-5. Run `test.bat` and `build.bat` on Windows, or `./test.sh` and `./build.sh` under Bash.
+The installer:
 
-The build invokes both cross-platform Node validation/generation steps before tests and story
-compilation. The resulting `dist/game.html` embeds the world and model catalog and remains
-self-contained; it does not fetch `world.json` or `model_list.json` at runtime.
+1. refuses to run unless `HEAD` is exactly `6afbfdd71d4156fb8d3d81568d344ec9a2ac2ee9`;
+2. refuses to overwrite a dirty working tree;
+3. backs up every file it can modify in memory;
+4. applies the deterministic patch directly to the checkout;
+5. regenerates world/model data and runs all five Node test suites;
+6. restores the original files automatically if patching or tests fail.
 
-## Build on Windows
+Git is used only for the two read-only base/cleanliness checks. The installer does **not** create a worktree, commit, push, create a branch/PR, or modify GitHub remotely.
 
-1. Install Tweego and make sure `tweego.exe` is on `PATH`.
-2. Make sure Tweego can find the SugarCube story format.
-3. Run:
+After applying, inspect:
+
+```bash
+git diff --stat
+git diff
+```
+
+Then build the standalone game normally:
 
 ```bat
 build.bat
 ```
 
-The output is:
-
-```text
-dist/game.html
-```
-
-Open that HTML file in a browser.
-
-## Build under Bash/Linux
-
-1. Make sure Node.js is on `PATH`.
-2. Prefer installing Tweego and its SugarCube story format, then run:
+or:
 
 ```bash
 ./build.sh
 ```
-
-`build.sh` searches `PATH`, `.tools/tweego/tweego`, `~/.local/bin/tweego`, and
-`~/.local/share/tweego/tweego`. `TWEEGO_EXE` and `TWEEGO_PATH` may be supplied explicitly.
-When Tweego is unavailable, the script can still rebuild the project by reusing the SugarCube
-runtime already embedded in the tracked `dist/game.html`. A clean build with no existing
-`dist/game.html` still requires Tweego.
-
-## OpenRouter reaction waves
-
-The built game calls OpenRouter directly from the browser. The provider remains fixed to
-OpenRouter, while the model is chosen from the validated catalog in `data/model_list.json`.
-The same file names the default model. The catalog contains:
-
-- `thedrummer/cydonia-24b-v4.1` — **Cydonia 24B V4.1** and the current default;
-- `sao10k/l3.3-euryale-70b` — **Llama 3.3 Euryale 70B**;
-- `sao10k/l3.1-euryale-70b:nitro` — **Llama 3.1 Euryale 70B**, routed for speed;
-- `mistralai/mistral-small-3.2-24b-instruct` — **Mistral Small 3.2 24B**;
-- `deepseek/deepseek-v4-pro` — **DeepSeek V4 Pro** (current primary manual action-chain benchmark).
-
-1. Open the AI Settings panel in the sidebar and choose a model.
-2. Enter an OpenRouter API key. The password field is cleared after saving.
-3. Optionally enable **Remember for 24 hours**. Otherwise the key remains in memory only
-   until the page closes.
-4. Build a human intent in the debug panel: optional narrative/speech plus at most one
-   formal action selected by radio button.
-5. Press **Submit**. The human intent commits first, then the scheduler automatically drains
-   one reaction wave unless **Stop automatic AI request processing** is checked.
-6. Press **Pass / Next turn** to run a reaction wave without submitting a human action. Pass
-   remains explicit and works even while automatic processing after Submit is paused.
-
-Within one reaction wave, each queued AI character may react at most once. Direct addressees
-and formal-action targets are processed before ordinary observers. Later characters see
-confirmed events produced by earlier reactions. New observations delivered to a character
-that already reacted remain queued for the next wave. The normal sidebar keeps read-only queue
-diagnostics but no longer provides a manual processing button. The crystal sphere still allows
-one-entry live processing for explicit debug work. There is no timer or background loop.
-
-Human and AI intents use the same canonical narrative/action commit path: optional narrative or
-speech plus at most one formal action. AI speech chooses a structured per-utterance
-`spokenTargetId` and `spokenLoudness`; loudness reuses the same `noticeable` / `hidden` delivery
-semantics as the HumanController control, while prose such as `*whispers*` remains style only.
-Matching narrative and action events share an `interactionId`; the scheduler groups them into one
-coherent observation before prompting an AI character. An AI reaction uses one model request only.
-The engine executes the selected formal action locally, and its grounded success or failure is queued
-as an ordinary later observation for that actor. There is no immediate `game-result` request.
-
-The restricted character `view` is the common canonical input for both the browser interface
-and the AI controller. The model receives the same view unchanged, including the one
-`view.available_actions` catalog used to construct human controls. `ContextBuilder` adds only
-private character instructions, projected mind records, prepared observations, and the AI's
-private nullable `continuation` working intention. Continuation is stored outside durable mind;
-the framework returns it later without interpreting it. It does not repeat view fields under
-alternate names, and the protocol validator reads action rules from the view already embedded
-in the request.
-
-The main location view shows a **Latest turn** narrative assembled deterministically from the
-human intent, AI narrative fragments, and grounded action events in causal order. It is not
-a separate narrator-model request. Scene text uses the shared RP convention that ordinary text
-is speech and paired `*...*` spans are visible narration; the UI renders those spans as dimmed
-italics without treating them as canonical state changes. For a movement Submit, the automatic
-reaction wave is resolved before the destination passage is rendered, so departure reactions
-can appear in the turn narrative before the new location view.
-
-The left sidebar also exposes a **Character** window for the current Human-controlled character.
-It edits only runtime Name and `playerDescription`, shows inventory read-only, never exposes
-`aiDescription`, and saves/discards without advancing the world tick.
-
-The key is never stored in SugarCube state, saves, world data, generated artifacts,
-controller logs, copied AI context, or visible errors. Optional persistence uses a
-namespaced `localStorage` record with an explicit 24-hour expiry. **Forget saved key**
-clears both persisted and in-memory key copies but intentionally leaves the harmless model
-preference alone. An invalid or removed saved model falls back to `defaultModelId`. Browser
-storage can fail for `file://` pages; in that case the game displays a warning and safely
-keeps the key and model selection in memory only.
-
-OpenRouter requests require browser network/CORS access and account credit. Authentication,
-credit, rate-limit, provider, and network failures are shown as short safe messages. All game,
-repair, and sphere requests pass through one serialized `AIRequestExecutor`. It leaves at
-least one second between live transport calls and honors OpenRouter `Retry-After`; it does not
-automatically retry a 429. Failed requests retain the current queue entry and unconsumed
-observations for retry. Human actions already committed before a later wave failure are not
-rolled back.
-
-OpenRouter HTTP failures retain a sanitized `providerResponse` for diagnosis. It includes the
-status, readable response headers, `Retry-After`, raw and parsed response bodies, and provider
-metadata such as `provider_name` and `limit_source`. Credentials, authorization material,
-OpenRouter `user_id` values, and `user_...` identifier strings are replaced before they reach
-UI state, protocol traces, executor history, or exported AI exchange logs.
-
-## Crystal-sphere prompt lab
-
-From the street, enter the temporary **Village temple** and approach the crystal sphere.
-This room is a development-only prompt laboratory wired to the same context builder,
-OpenRouter client, JSON parser, schema validator, and one-repair protocol as real AI turns.
-
-The sphere shows the complete scheduler queue as ordered cards. Each card identifies the
-recipient, location, queue reason, request size, and a preview of the observations that will
-be sent. The first card is marked as the next live request. Any queued request may be
-inspected or dry-run; only the queue head exposes **Process live**, which invokes the scheduler's explicit single-head
-debug path and advances the real world on success. The normal gameplay sidebar has no equivalent
-manual processing control. A scrollable
-**Narrative history** window above the queue accumulates the public narrative and confirmed
-formal-action event text from each successful live sphere turn. Its **Clear** button resets
-only this transient history.
-
-The loaded request panel still supports exact and edited-system-prompt dry runs and displays
-every initial/repair attempt, raw assistant content, parsed JSON, concrete validation errors,
-messages, and provider usage. Dry runs never execute actions, write narrative, update memory,
-consume observations, or advance the queue. The room is intentionally hard-coded and can be
-removed from the final build later.
-
-## Test without Tweego
-
-```bat
-test.bat
-```
-
-or under Bash:
-
-```bash
-./test.sh
-```
-
-The individual suites may also be run directly:
-
-```bash
-node tests/run-tests.js
-node tests/run-ui-tests.js
-node tests/run-editor-tests.js
-node tests/run-ai-tests.js
-node tests/run-generator-tests.js
-```
-
-The tests verify the HumanController invariant, action grants, persistent item-instance
-transformations, mug-cabinet accessibility, fill/consume controls, generic ability discovery,
-targetless aura scans, escaped and actor-isolated private result display, normalized feedback,
-observation privacy, restricted views and context, mind save round trips, movement, inventory
-and money transfer, editor validation, world/model-list generator rejection, model default/selection persistence,
-queue ordering and repair, mocked OpenRouter responses, key expiry/leak prevention, detailed protocol diagnostics,
-scheduler request projection, executor serialization and timing, prompt-lab dry-run isolation,
-live sphere scheduling, combined human intents, reaction-wave ordering, once-per-wave
-execution, single-request AI actions, protocol repair, atomic AI transactions, rollback
-safety, and controller switching. Automated tests never contact the
-live OpenRouter API.
-
-## Development workflow
-
-Edit the source files in VS Code. Treat generated `dist/game.html` as build output rather than the source of truth.
-
-Codex should read `AGENTS.md` before modifying the project. The most important rule is that exactly one character is human-controlled, and switching control is performed only by `setup.Game.takeHumanControl()`.

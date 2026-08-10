@@ -2,7 +2,8 @@
     "use strict";
 
     const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-    const MAX_TOKENS = 1200;
+    const MAX_TOKENS = 3000;
+    const REASONING_MAX_TOKENS = 1500;
     const TEMPERATURE = 0.4;
 
     function clone(value) {
@@ -179,7 +180,14 @@
             response = await fetchFunction(ENDPOINT, {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ model: modelId, stream: false, max_tokens: MAX_TOKENS, temperature: TEMPERATURE, messages: messages })
+                body: JSON.stringify({
+                    model: modelId,
+                    stream: false,
+                    max_tokens: MAX_TOKENS,
+                    reasoning: { max_tokens: REASONING_MAX_TOKENS },
+                    temperature: TEMPERATURE,
+                    messages: messages
+                })
             });
         } catch (error) {
             return safeFailure("NETWORK_ERROR", "OpenRouter could not be reached. Check browser network or CORS access.", 0, {
@@ -224,7 +232,17 @@
         if (!parsed || typeof parsed !== "object") {
             return safeFailure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned an unreadable response.", response.status, { providerResponse: diagnostics });
         }
-        const content = parsed && parsed.choices && parsed.choices[0] && parsed.choices[0].message && parsed.choices[0].message.content;
+        const choice = parsed && parsed.choices && parsed.choices[0];
+        const finishReason = choice && typeof choice.finish_reason === "string" ? choice.finish_reason : "";
+        const content = choice && choice.message && choice.message.content;
+        if (finishReason === "length") {
+            return safeFailure(
+                "MODEL_OUTPUT_TRUNCATED",
+                "OpenRouter stopped generation at the completion token limit before a complete assistant response was available.",
+                response.status,
+                { providerResponse: diagnostics }
+            );
+        }
         if (typeof content !== "string") {
             return safeFailure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned no assistant content.", response.status, { providerResponse: diagnostics });
         }
@@ -240,7 +258,7 @@
         };
     }
 
-    const client = { ENDPOINT: ENDPOINT, getModelId: selectedModelId, chat: chat };
+    const client = { ENDPOINT: ENDPOINT, MAX_TOKENS: MAX_TOKENS, REASONING_MAX_TOKENS: REASONING_MAX_TOKENS, getModelId: selectedModelId, chat: chat };
     Object.defineProperty(client, "MODEL", { enumerable: true, get: selectedModelId });
     setup.OpenRouterClient = client;
 }());

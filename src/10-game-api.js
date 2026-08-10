@@ -5,6 +5,7 @@
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
     const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden"]);
+    const LOCK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value));
@@ -229,17 +230,36 @@
             const key = entry[0];
             const raw = entry[1];
             if (typeof raw === "string") {
-                return { key: key, destinationId: raw, blocked: false, blockedReason: "" };
+                return {
+                    key: key,
+                    destinationId: raw,
+                    blocked: false,
+                    blockedReason: "",
+                    lockId: "",
+                    locked: false,
+                    lockedReason: ""
+                };
             }
             if (raw && typeof raw === "object" && !Array.isArray(raw)) {
                 return {
                     key: key,
                     destinationId: typeof raw.destinationId === "string" ? raw.destinationId : "",
                     blocked: raw.blocked === true,
-                    blockedReason: typeof raw.blockedReason === "string" ? raw.blockedReason : ""
+                    blockedReason: typeof raw.blockedReason === "string" ? raw.blockedReason : "",
+                    lockId: typeof raw.lockId === "string" ? raw.lockId : "",
+                    locked: raw.locked === true,
+                    lockedReason: typeof raw.lockedReason === "string" ? raw.lockedReason : ""
                 };
             }
-            return { key: key, destinationId: "", blocked: false, blockedReason: "" };
+            return {
+                key: key,
+                destinationId: "",
+                blocked: false,
+                blockedReason: "",
+                lockId: "",
+                locked: false,
+                lockedReason: ""
+            };
         });
     }
 
@@ -247,6 +267,94 @@
         return locationExitEntries(location).find(function (entry) {
             return entry.destinationId === destinationId;
         }) || null;
+    }
+
+    function matchingKeyItems(actor, lockId, world) {
+        const inventory = actor && world.inventories[actor.inventoryId];
+        if (!inventory || !lockId) return [];
+        return inventory.itemIds.map(function (itemId) {
+            return world.entities[itemId];
+        }).filter(function (item) {
+            const definition = getItemDefinition(item, world);
+            return Boolean(definition && definition.keyLockId === lockId);
+        });
+    }
+
+    function reciprocalTransition(sourceLocationId, transition, world) {
+        const destination = transition && getLocation(transition.destinationId, world);
+        return destination ? findLocationExit(destination, sourceLocationId) : null;
+    }
+
+    function lockActionOptions(actor, world, expectedLockedState) {
+        const location = getLocation(actor.locationId, world);
+        const passages = locationExitEntries(location).map(function (transition) {
+            if (!transition.lockId || transition.locked !== expectedLockedState) return null;
+            const keys = matchingKeyItems(actor, transition.lockId, world);
+            if (keys.length === 0) return null;
+            const destination = getLocation(transition.destinationId, world);
+            return {
+                id: transition.destinationId,
+                name: destination ? destination.name : transition.destinationId,
+                lock_id: transition.lockId,
+                key_item_ids: keys.map(function (item) { return item.id; })
+            };
+        }).filter(Boolean);
+        return {
+            destination_ids: passages.map(function (passage) { return passage.id; }),
+            passages: passages
+        };
+    }
+
+    function validateLockAction(actor, action, world, expectedLockedState) {
+        const location = getLocation(actor.locationId, world);
+        const destination = getLocation(action.destination_id, world);
+        if (!destination) return fail("DESTINATION_NOT_FOUND", "Destination does not exist.");
+        const transition = findLocationExit(location, destination.id);
+        if (!transition) return fail("DESTINATION_NOT_REACHABLE", "Destination is not connected to the current location.");
+        if (!transition.lockId) return fail("PASSAGE_NOT_LOCKABLE", "This passage has no lock.");
+        if (transition.locked !== expectedLockedState) {
+            return fail(
+                expectedLockedState ? "PASSAGE_ALREADY_UNLOCKED" : "PASSAGE_ALREADY_LOCKED",
+                expectedLockedState ? "This passage is already unlocked." : "This passage is already locked."
+            );
+        }
+        if (matchingKeyItems(actor, transition.lockId, world).length === 0) {
+            return fail("MATCHING_KEY_REQUIRED", "Actor does not possess a key for this lock.");
+        }
+        const reciprocal = reciprocalTransition(location.id, transition, world);
+        if (!reciprocal || reciprocal.lockId !== transition.lockId || reciprocal.locked !== transition.locked) {
+            return fail("PASSAGE_LOCK_STATE_INVALID", "The reciprocal side of this lock is inconsistent.");
+        }
+        return ok({ transition: transition });
+    }
+
+    function setPassageLocked(sourceLocationId, destinationId, locked, world) {
+        const source = getLocation(sourceLocationId, world);
+        const transition = findLocationExit(source, destinationId);
+        const destination = transition && getLocation(transition.destinationId, world);
+        const reciprocal = transition && reciprocalTransition(sourceLocationId, transition, world);
+        if (!source || !transition || !destination || !reciprocal || !transition.lockId ||
+                reciprocal.lockId !== transition.lockId) {
+            throw new Error("Cannot update an inconsistent passage lock.");
+        }
+
+        function update(location, entry) {
+            const raw = location.exits[entry.key];
+            const record = raw && typeof raw === "object" && !Array.isArray(raw)
+                ? raw
+                : { destinationId: entry.destinationId };
+            record.destinationId = entry.destinationId;
+            record.lockId = entry.lockId;
+            record.locked = Boolean(locked);
+            if (!Object.prototype.hasOwnProperty.call(record, "lockedReason")) {
+                record.lockedReason = entry.lockedReason || "The door is locked.";
+            }
+            location.exits[entry.key] = record;
+        }
+
+        update(source, transition);
+        update(destination, reciprocal);
+        return transition;
     }
 
     function getSublocation(sublocationId, world) {
@@ -416,9 +524,23 @@
     function validateItemInvariants(world) {
         const itemMembership = {};
 
+        const lockIds = new Set();
+        Object.values(world.entities).forEach(function (entity) {
+            if (entity && entity.type === "location") {
+                locationExitEntries(entity).forEach(function (transition) {
+                    if (transition.lockId) lockIds.add(transition.lockId);
+                });
+            }
+        });
+
         for (const [definitionId, definition] of Object.entries(world.itemDefinitions || {})) {
             if (!definition || definition.id !== definitionId || typeof definition.name !== "string" || !definition.name.trim()) {
                 return fail("ITEM_DEFINITION_INVALID", `Item definition ${definitionId} is invalid.`);
+            }
+            if (definition.keyLockId !== undefined) {
+                if (typeof definition.keyLockId !== "string" || !LOCK_ID_PATTERN.test(definition.keyLockId) || !lockIds.has(definition.keyLockId)) {
+                    return fail("ITEM_KEY_LOCK_INVALID", `Item definition ${definitionId} references invalid lock ID ${String(definition.keyLockId)}.`);
+                }
             }
             for (const actionField of ["fillAction", "consumeAction"]) {
                 const action = definition[actionField];
@@ -534,6 +656,24 @@
                     }
                     if (rawExit.blockedReason !== undefined && typeof rawExit.blockedReason !== "string") {
                         return fail("LOCATION_EXIT_INVALID", `Location ${location.id} exit ${exitKey} blockedReason must be text.`);
+                    }
+                    if (rawExit.lockId !== undefined && (typeof rawExit.lockId !== "string" || !LOCK_ID_PATTERN.test(rawExit.lockId))) {
+                        return fail("LOCATION_EXIT_INVALID", `Location ${location.id} exit ${exitKey} lockId is invalid.`);
+                    }
+                    if (rawExit.locked !== undefined && typeof rawExit.locked !== "boolean") {
+                        return fail("LOCATION_EXIT_INVALID", `Location ${location.id} exit ${exitKey} locked must be Boolean.`);
+                    }
+                    if (rawExit.lockedReason !== undefined && typeof rawExit.lockedReason !== "string") {
+                        return fail("LOCATION_EXIT_INVALID", `Location ${location.id} exit ${exitKey} lockedReason must be text.`);
+                    }
+                    if (!exit.lockId && (rawExit.locked !== undefined || rawExit.lockedReason !== undefined)) {
+                        return fail("LOCATION_EXIT_INVALID", `Location ${location.id} exit ${exitKey} cannot define lock state without lockId.`);
+                    }
+                }
+                if (exit.lockId) {
+                    const reciprocal = reciprocalTransition(location.id, exit, world);
+                    if (!reciprocal || reciprocal.lockId !== exit.lockId || reciprocal.locked !== exit.locked) {
+                        return fail("LOCATION_EXIT_LOCK_MISMATCH", `Location ${location.id} exit ${exitKey} has an inconsistent reciprocal lock.`);
                     }
                 }
             }
@@ -996,6 +1136,9 @@
                 if (transition.blocked) {
                     return fail("TRANSITION_BLOCKED", transition.blockedReason.trim() || "The way is blocked.");
                 }
+                if (transition.lockId && transition.locked) {
+                    return fail("TRANSITION_BLOCKED", transition.lockedReason.trim() || "The door is locked.");
+                }
 
                 const defaultPosition = getSublocation(destination.defaultSublocationId, world);
                 if (!defaultPosition) {
@@ -1022,6 +1165,66 @@
                     fromSublocationId: fromSublocationId,
                     toSublocationId: actor.sublocationId,
                     text: `${actor.name} moved from ${getLocation(fromLocationId, world).name} to ${destination.name}.`
+                }];
+            }
+        },
+
+        unlock: {
+            description: "Unlock a directly connected lockable passage using a matching key.",
+            schema: {
+                type: "object",
+                properties: {
+                    type: { const: "unlock" },
+                    destination_id: { type: "string" }
+                },
+                required: ["type", "destination_id"]
+            },
+            getOptions: function (actor, world) {
+                return lockActionOptions(actor, world, true);
+            },
+            validate: function (actor, action, world) {
+                return validateLockAction(actor, action, world, true);
+            },
+            execute: function (actor, action, world) {
+                const destination = getLocation(action.destination_id, world);
+                const transition = setPassageLocked(actor.locationId, action.destination_id, false, world);
+                return [{
+                    type: "passage_unlocked",
+                    actorId: actor.id,
+                    locationId: actor.locationId,
+                    destinationId: action.destination_id,
+                    lockId: transition.lockId,
+                    text: `${actor.name} unlocked the door to ${destination.name}.`
+                }];
+            }
+        },
+
+        lock: {
+            description: "Lock a directly connected lockable passage using a matching key.",
+            schema: {
+                type: "object",
+                properties: {
+                    type: { const: "lock" },
+                    destination_id: { type: "string" }
+                },
+                required: ["type", "destination_id"]
+            },
+            getOptions: function (actor, world) {
+                return lockActionOptions(actor, world, false);
+            },
+            validate: function (actor, action, world) {
+                return validateLockAction(actor, action, world, false);
+            },
+            execute: function (actor, action, world) {
+                const destination = getLocation(action.destination_id, world);
+                const transition = setPassageLocked(actor.locationId, action.destination_id, true, world);
+                return [{
+                    type: "passage_locked",
+                    actorId: actor.id,
+                    locationId: actor.locationId,
+                    destinationId: action.destination_id,
+                    lockId: transition.lockId,
+                    text: `${actor.name} locked the door to ${destination.name}.`
                 }];
             }
         },
@@ -1570,6 +1773,23 @@
                 });
             }
         }
+
+        const location = getLocation(actor.locationId, world);
+        locationExitEntries(location).forEach(function (transition) {
+            if (!transition.lockId) return;
+            matchingKeyItems(actor, transition.lockId, world).forEach(function (keyItem) {
+                const definition = getItemDefinition(keyItem, world);
+                grant(transition.locked ? "unlock" : "lock", {
+                    kind: "item_key",
+                    id: keyItem.id,
+                    definitionId: definition && definition.id || keyItem.definitionId,
+                    name: definition && definition.name || keyItem.name,
+                    lockId: transition.lockId,
+                    destinationId: transition.destinationId
+                });
+            });
+        });
+
         for (const abilityId of (actor.abilityIds || [])) {
             const ability = world.abilities[abilityId];
             if (ability) grant(ability.actionType, { kind: "character_ability", id: ability.id, name: ability.name });

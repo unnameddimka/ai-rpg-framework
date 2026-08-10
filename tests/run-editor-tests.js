@@ -53,10 +53,11 @@ assert((html.match(/<!doctype html>/gi) || []).length === 1 && !/<script[^>]+src
 assert(html.includes("Characters") && html.includes("Abilities") && html.includes("Item types") &&
     html.includes("Items") && html.includes("Consumable") && html.includes("Fillable") &&
     html.includes("Location inventory") && html.includes("Items in this container") && html.includes("renderEmbeddedInventory") &&
-    html.includes("Blocked") && html.includes("Failure text") && html.includes("localStorage.setItem"),
+    html.includes("Generic blocked transition") && html.includes("Lock ID") && html.includes("Key lock ID") &&
+    html.includes("Locked failure text") && html.includes("localStorage.setItem"),
     "editor should expose character, ability, item-type, global item-instance, and embedded inventory workflows");
 assert(!/[А-Яа-яЁё]/.test(html), "visible editor source introduced by this task should remain English-only");
-assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura"), "editor should embed schema 2 and known actions");
+assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura") && core.KNOWN_ACTIONS.includes("lock") && core.KNOWN_ACTIONS.includes("unlock"), "editor should embed schema 2 and known actions");
 assert(core.validateWorldDocument(validDocument()).length === 0, "valid schema 2 document should validate");
 const blockedExitDocument = validDocument();
 blockedExitDocument.locations.other = clone(blockedExitDocument.locations.room);
@@ -72,6 +73,19 @@ assert(core.validateWorldDocument(blockedExitDocument).length === 0 &&
     core.exitTarget(blockedExitDocument.locations.room.exits.other) === "other" &&
     core.exitRecord(blockedExitDocument.locations.room.exits.other).blocked === true,
     "editor should validate and preserve blocked transition records alongside legacy string exits");
+const lockDocument = clone(blockedExitDocument);
+lockDocument.locations.room.exits.other = { destinationId: "other", lockId: "room_lock", locked: true, lockedReason: "Locked." };
+lockDocument.locations.other.exits.room = { destinationId: "room", lockId: "room_lock", locked: true, lockedReason: "Locked." };
+lockDocument.itemDefinitions.roomKey = { id: "roomKey", name: "Room key", familyId: "key", tags: ["key"],
+    consumable: false, equippable: false, fillable: false, keyLockId: "room_lock" };
+assert(core.validateWorldDocument(lockDocument).length === 0 &&
+    core.exitRecord(lockDocument.locations.room.exits.other).lockId === "room_lock" &&
+    core.exitRecord(lockDocument.locations.room.exits.other).locked === true,
+    "editor should validate reciprocal passage locks and key-to-lock definitions");
+const mismatchedLock = clone(lockDocument); mismatchedLock.locations.other.exits.room.locked = false;
+assert(hasError(mismatchedLock, "inconsistent reciprocal lock"), "reciprocal passage lock states must match");
+const badKeyLock = clone(lockDocument); badKeyLock.itemDefinitions.roomKey.keyLockId = "missing_lock";
+assert(hasError(badKeyLock, "invalid key lock ID"), "keys must reference an authored passage lock ID");
 assert(core.createEmptyWorld().characters && core.createEmptyWorld().abilities &&
     core.createEmptyWorld().itemDefinitions && core.createEmptyWorld().items,
     "new document should include character, ability, item-definition, and item catalogs");

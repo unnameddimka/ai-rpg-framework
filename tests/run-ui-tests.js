@@ -6,11 +6,17 @@ const vm = require("vm");
 const root = path.resolve(__dirname, "..");
 const uiSource = fs.readFileSync(path.join(root, "src/30-game-ui.js"), "utf8");
 const stylesSource = fs.readFileSync(path.join(root, "src/styles.css"), "utf8");
+let historyOnSave = null;
+let historyOnLoad = null;
 const context = {
     setup: {},
     State: { variables: {} },
     document: {},
     Engine: {},
+    Save: {
+        onSave: { add: function (handler) { historyOnSave = handler; } },
+        onLoad: { add: function (handler) { historyOnLoad = handler; } }
+    },
     $: function () { return { on: function () {} }; }
 };
 vm.createContext(context);
@@ -155,10 +161,16 @@ assert(uiSource.includes('id="show-invisible-events"') && uiSource.includes("Sho
     uiSource.includes("[DEBUG — NOT VISIBLE TO PLAYER]") && uiSource.includes("framework-invisible-debug-entry") &&
     gameUIModel.getInvisibleEventDebugState().show === false,
     "sidebar should expose a default-off presentation-only toggle for the current turn's suppressed invisible events");
+assert(uiSource.includes("History") && uiSource.includes("framework-history") &&
+    uiSource.includes("appendHistory") && uiSource.includes("Save.onSave.add") && uiSource.includes("Save.onLoad.add"),
+    "player-facing History should be rendered directly by the core UI and keep a bounded save mirror");
+assert(uiSource.includes('id="action-unlock-destination"') && uiSource.includes('id="action-lock-destination"') &&
+    uiSource.includes("Unlock ${destination.name}") && uiSource.includes("Lock ${destination.name}"),
+    "lock and unlock controls should be derived directly from canonical available actions");
 assert(uiSource.includes('id="action-submit"') && uiSource.includes('id="action-pass"') &&
     uiSource.includes('name="formal-action"') && uiSource.includes('value=""') &&
     uiSource.includes("setup.TurnFlow.submitHumanIntent") && uiSource.includes("setup.TurnFlow.pass") &&
-    uiSource.includes("Submit turn") && uiSource.includes("Advanced formal actions") && uiSource.includes("Selected action:") &&
+    uiSource.includes("Submit turn") && uiSource.includes("Advanced actions") && uiSource.includes("Selected action:") &&
     uiSource.includes('id="action-narrative-text" rows="1"') && uiSource.includes("resizeNarrativeTextarea") &&
     uiSource.includes("narrativeNoticeability") && uiSource.includes("reconcileConversationState") &&
     uiSource.includes('actionRoot.className = "framework-turn-panel"') &&
@@ -252,5 +264,26 @@ assert(!escapedQueue.includes("<img") && escapedQueue.includes("&lt;img") &&
     "prompt-lab queue cards should identify the next recipient/event and escape authored or model-adjacent text");
 assert(uiSource.includes("<dt>Initiative</dt>") && uiSource.includes("Initiative: ${escapeHtml(aiQueue.head.initiativeScore || 0)}"),
     "debug queue UIs should expose the derived initiative score used for next-reaction ordering");
+
+assert(typeof historyOnSave === "function" && typeof historyOnLoad === "function",
+    "History should register directly with SugarCube Save events when available");
+const savedHistoryFixture = Array.from({ length: 120 }, function (_, index) {
+    return { text: "Entry " + index, visibleToHuman: index % 2 === 0, actorName: "Actor", locationName: "Room" };
+});
+historyOnLoad({ state: { index: 0, history: [{ variables: { frameworkUI: { history: savedHistoryFixture } } }] } });
+const restoredHistory = gameUIModel.getHistoryEntries();
+assert(restoredHistory.length === 100 && restoredHistory[0].text === "Entry 20" &&
+    restoredHistory.some(function (entry) { return entry.visibleToHuman === false; }),
+    "loading should restore only the most recent 100 History entries while preserving visibility metadata");
+const saveObject = { state: { index: 2, history: [
+    { variables: { frameworkUI: { history: [{ text: "old" }] } } },
+    { variables: { frameworkUI: { history: [{ text: "older" }] } } },
+    { variables: { frameworkUI: { history: [] } } }
+] } };
+historyOnSave(saveObject);
+assert(saveObject.state.history[0].variables.frameworkUI.history.length === 0 &&
+    saveObject.state.history[1].variables.frameworkUI.history.length === 0 &&
+    saveObject.state.history[2].variables.frameworkUI.history.length === 100,
+    "save serialization should keep History only in the active save moment and cap it at 100 entries total");
 
 console.log("All ability UI tests passed.");

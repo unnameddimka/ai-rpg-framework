@@ -4,6 +4,8 @@
     let aiSettingsInitialized = false;
     let showInvisibleEvents = false;
     let currentTurnHiddenNarrative = [];
+    let historyEntries = [];
+    let historyInitialized = false;
 
     function optionMarkup(items, emptyLabel) {
         if (!items || items.length === 0) {
@@ -34,6 +36,90 @@
             .replace(/'/g, "&#39;");
     }
 
+    function cloneUIValue(value) {
+        return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    }
+
+    function normalizeHistoryEntry(entry) {
+        if (!entry || typeof entry !== "object" || typeof entry.text !== "string" || !entry.text.trim()) return null;
+        return {
+            text: entry.text,
+            visibleToHuman: entry.visibleToHuman !== false,
+            actorId: entry.actorId || null,
+            actorName: entry.actorName || "",
+            locationId: entry.locationId || null,
+            locationName: entry.locationName || "",
+            kind: entry.kind || "event"
+        };
+    }
+
+    function syncHistoryMirror(uiState) {
+        if (!uiState) return;
+        uiState.history = historyEntries.slice(-100).map(normalizeHistoryEntry).filter(Boolean);
+    }
+
+    function initializeHistory(uiState) {
+        if (historyInitialized) return;
+        historyEntries = (Array.isArray(uiState.history) ? uiState.history : [])
+            .map(normalizeHistoryEntry)
+            .filter(Boolean);
+        historyInitialized = true;
+        syncHistoryMirror(uiState);
+    }
+
+    function appendHistory(entries) {
+        const uiState = getUIState();
+        (Array.isArray(entries) ? entries : []).forEach(function (entry) {
+            const normalized = normalizeHistoryEntry(entry);
+            if (normalized) historyEntries.push(normalized);
+        });
+        syncHistoryMirror(uiState);
+    }
+
+    function resetHistory() {
+        historyEntries = [];
+        historyInitialized = true;
+        if (State.variables.frameworkUI) State.variables.frameworkUI.history = [];
+    }
+
+    function savedHistoryEntries(save) {
+        const state = save && save.state;
+        if (!state || !Array.isArray(state.history) || state.history.length === 0) return [];
+        const index = Number.isInteger(state.index) ? state.index : state.history.length - 1;
+        const moment = state.history[index] || state.history[state.history.length - 1];
+        const uiState = moment && moment.variables && moment.variables.frameworkUI;
+        return (uiState && Array.isArray(uiState.history) ? uiState.history : [])
+            .map(normalizeHistoryEntry)
+            .filter(Boolean)
+            .slice(-100);
+    }
+
+    function prepareHistorySave(save) {
+        const state = save && save.state;
+        if (!state || !Array.isArray(state.history) || state.history.length === 0) return;
+        const activeIndex = Number.isInteger(state.index) ? state.index : state.history.length - 1;
+        const mirror = historyEntries.slice(-100).map(normalizeHistoryEntry).filter(Boolean);
+        state.history.forEach(function (moment, index) {
+            if (!moment || !moment.variables) return;
+            if (!moment.variables.frameworkUI) {
+                if (index !== activeIndex) return;
+                moment.variables.frameworkUI = {};
+            }
+            moment.variables.frameworkUI.history = index === activeIndex ? cloneUIValue(mirror) : [];
+        });
+    }
+
+    function restoreHistoryFromSave(save) {
+        historyEntries = savedHistoryEntries(save);
+        historyInitialized = true;
+    }
+
+    function registerSaveHistoryHooks() {
+        if (typeof Save === "undefined") return;
+        if (Save.onSave && typeof Save.onSave.add === "function") Save.onSave.add(prepareHistorySave);
+        if (Save.onLoad && typeof Save.onLoad.add === "function") Save.onLoad.add(restoreHistoryFromSave);
+    }
+
     function getUIState() {
         if (!State.variables.frameworkUI) {
             State.variables.frameworkUI = {
@@ -43,7 +129,8 @@
                 locationStatus: "",
                 turnNarrative: [],
                 turnBusy: false,
-                abilityResultsByActor: {}
+                abilityResultsByActor: {},
+                history: []
             };
         }
         if (!State.variables.frameworkUI.abilityResultsByActor) {
@@ -52,6 +139,10 @@
         if (!Array.isArray(State.variables.frameworkUI.turnNarrative)) {
             State.variables.frameworkUI.turnNarrative = [];
         }
+        if (!Array.isArray(State.variables.frameworkUI.history)) {
+            State.variables.frameworkUI.history = [];
+        }
+        initializeHistory(State.variables.frameworkUI);
         if (!State.variables.frameworkUI.selectedAction || typeof State.variables.frameworkUI.selectedAction !== "object") {
             State.variables.frameworkUI.selectedAction = null;
         }
@@ -61,10 +152,6 @@
             : "noticeable";
         State.variables.frameworkUI.turnBusy = Boolean(State.variables.frameworkUI.turnBusy);
         return State.variables.frameworkUI;
-    }
-
-    function cloneUIValue(value) {
-        return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
     }
 
     function getBusyState() {
@@ -113,6 +200,8 @@
         const position = action.destination_id && view.location.sublocations.find(function (candidate) { return candidate.id === action.destination_id; });
         const inventory = action.target_inventory_id && view.accessible_inventories.find(function (candidate) { return candidate.id === action.target_inventory_id; });
         if (action.type === "move") return `Go to ${destination ? destination.name : action.destination_id}`;
+        if (action.type === "unlock") return `Unlock ${destination ? destination.name : action.destination_id}`;
+        if (action.type === "lock") return `Lock ${destination ? destination.name : action.destination_id}`;
         if (action.type === "move_within_location") return position ? (position.enter_label || `Move to ${position.name}`) : `Move to ${action.destination_id}`;
         if (action.type === "take_item") return `Take ${item ? item.name : action.item_id}`;
         if (action.type === "drop_item") return `Drop ${item ? item.name : action.item_id}`;
@@ -133,6 +222,7 @@
         if (!action || !action.type || !view.available_actions[action.type]) return false;
         const options = view.available_actions[action.type].options || {};
         if (action.type === "move") return (options.destination_ids || []).includes(action.destination_id);
+        if (action.type === "unlock" || action.type === "lock") return (options.destination_ids || []).includes(action.destination_id);
         if (action.type === "move_within_location") return (options.destination_ids || []).includes(action.destination_id);
         if (action.type === "take_item") return (options.item_ids || []).includes(action.item_id);
         if (action.type === "drop_item") return (options.item_ids || []).includes(action.item_id);
@@ -217,6 +307,8 @@
         });
         if (!selected) return;
         if (selected.type === "move") setControlValue("action-move-destination", selected.destination_id);
+        if (selected.type === "unlock") setControlValue("action-unlock-destination", selected.destination_id);
+        if (selected.type === "lock") setControlValue("action-lock-destination", selected.destination_id);
         if (selected.type === "move_within_location") setControlValue("action-move-within-destination", selected.destination_id);
         if (selected.type === "take_item") setControlValue("action-take-item", selected.item_id);
         if (selected.type === "drop_item") setControlValue("action-drop-item", selected.item_id);
@@ -290,8 +382,20 @@
 
         const moveAction = view.available_actions.move;
         const moveIds = moveAction && moveAction.options.destination_ids || [];
+        const unlockAction = view.available_actions.unlock;
+        const unlockIds = unlockAction && unlockAction.options.destination_ids || [];
+        const lockAction = view.available_actions.lock;
+        const lockIds = lockAction && lockAction.options.destination_ids || [];
         (view.location.exits || []).forEach(function (destination) {
-            if (moveIds.includes(destination.id)) groups.travel.push({ kind: "action", label: `Go to ${destination.name}`, action: { type: "move", destination_id: destination.id } });
+            if (moveIds.includes(destination.id)) {
+                groups.travel.push({ kind: "action", label: `Go to ${destination.name}`, action: { type: "move", destination_id: destination.id } });
+            }
+            if (unlockIds.includes(destination.id)) {
+                groups.travel.push({ kind: "action", label: `Unlock ${destination.name}`, action: { type: "unlock", destination_id: destination.id } });
+            }
+            if (lockIds.includes(destination.id)) {
+                groups.travel.push({ kind: "action", label: `Lock ${destination.name}`, action: { type: "lock", destination_id: destination.id } });
+            }
         });
         return groups;
     }
@@ -787,6 +891,43 @@
         });
     }
 
+    function appendPresentationEntry(parent, entry) {
+        if (!entry || !entry.text) return;
+        if (entry.visibleToHuman) {
+            appendRPElement(parent, "p", entry.text);
+            return;
+        }
+        const row = document.createElement("div");
+        row.className = "framework-invisible-debug-entry";
+        const context = [entry.actorName, entry.locationName].filter(Boolean).join(", ");
+        appendTextElement(row, "strong", `[DEBUG — NOT VISIBLE TO PLAYER]${context ? ` ${context}` : ""}`);
+        appendRPElement(row, "p", entry.text);
+        parent.appendChild(row);
+    }
+
+    function renderHistory(root) {
+        if (historyEntries.length === 0) return;
+        const details = document.createElement("details");
+        details.className = "framework-history";
+        const summary = document.createElement("summary");
+        summary.append(document.createTextNode("History "), document.createElement("span"));
+        summary.lastChild.className = "framework-disclosure-arrow";
+        summary.lastChild.textContent = "▾";
+        details.appendChild(summary);
+
+        const visibleEntries = historyEntries.filter(function (entry) {
+            return entry.visibleToHuman || showInvisibleEvents;
+        });
+        if (visibleEntries.length === 0) {
+            appendTextElement(details, "p", "No player-visible history entries.", "framework-history-empty");
+        } else {
+            visibleEntries.forEach(function (entry) {
+                appendPresentationEntry(details, entry);
+            });
+        }
+        root.appendChild(details);
+    }
+
     function renderLocationView() {
         const root = document.getElementById("location-view");
         if (!root) return;
@@ -801,6 +942,8 @@
         const status = appendTextElement(root, "div", uiState.locationStatus, "framework-status");
         status.id = "location-status";
         uiState.locationStatus = "";
+
+        renderHistory(root);
 
         if (uiState.turnNarrative.length > 0 || (showInvisibleEvents && currentTurnHiddenNarrative.length > 0)) {
             const narrative = document.createElement("section");
@@ -1051,6 +1194,7 @@
 
             setup.Game.resetWorld();
             delete State.variables.frameworkUI;
+            resetHistory();
             Engine.play(currentPassageForHuman());
         });
 
@@ -1132,6 +1276,7 @@
             if (!actionResult.ok || hasFeedback) uiState.abilityResultsByActor[result.actorId] = cloneUIValue(actionResult);
             else delete uiState.abilityResultsByActor[result.actorId];
         }
+        appendHistory(result.historyEntries || []);
         uiState.selectedAction = null;
         uiState.turnNarrative = result.narrativeFragments || [];
         currentTurnHiddenNarrative = cloneUIValue(result.hiddenNarrativeEntries || []);
@@ -1176,6 +1321,7 @@
         } finally {
             uiState.turnBusy = false;
         }
+        appendHistory(result && result.historyEntries || []);
         uiState.selectedAction = null;
         uiState.turnNarrative = result && result.narrativeFragments || [];
         currentTurnHiddenNarrative = cloneUIValue(result && result.hiddenNarrativeEntries || []);
@@ -1227,7 +1373,11 @@
         const placementInventories = view.accessible_inventories.filter(function (inventory) { return placementInventoryIds.includes(inventory.id); });
         const fillItems = view.available_actions.fill ? view.available_actions.fill.options.items : [];
         const consumableItems = view.available_actions.consume ? view.available_actions.consume.options.items : [];
-        const knownActionTypes = new Set(["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume"]);
+        const unlockIds = view.available_actions.unlock ? view.available_actions.unlock.options.destination_ids : [];
+        const lockIds = view.available_actions.lock ? view.available_actions.lock.options.destination_ids : [];
+        const unlockDestinations = moveOptions.filter(function (destination) { return unlockIds.includes(destination.id); });
+        const lockDestinations = moveOptions.filter(function (destination) { return lockIds.includes(destination.id); });
+        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume"]);
         const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
             return !knownActionTypes.has(entry[0]) && isZeroInputAbilityAction(entry[1]);
         });
@@ -1248,6 +1398,8 @@
 
         const formalMarkup = [
             radioField("move", "Move", `<select id="action-move-destination"${disabledAttribute}>${optionMarkup(moveOptions, "No connected locations")}</select>`, moveOptions.length === 0),
+            radioField("unlock", "Unlock passage", `<select id="action-unlock-destination"${disabledAttribute}>${optionMarkup(unlockDestinations, "No lockable passage can be unlocked")}</select>`, unlockDestinations.length === 0),
+            radioField("lock", "Lock passage", `<select id="action-lock-destination"${disabledAttribute}>${optionMarkup(lockDestinations, "No lockable passage can be locked")}</select>`, lockDestinations.length === 0),
             radioField("move_within_location", "Move within location", `<select id="action-move-within-destination"${disabledAttribute}>${optionMarkup(internalDestinations, "No internal destination")}</select>`, internalDestinations.length === 0),
             radioField("take_item", "Take item", `<select id="action-take-item"${disabledAttribute}>${optionMarkup(takeOptions, "No items here")}</select>`, takeOptions.length === 0),
             radioField("drop_item", "Drop item", `<select id="action-drop-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select>`, ownedItems.length === 0),
@@ -1287,7 +1439,7 @@
             </section>
 
             <details class="framework-formal-action-section">
-                <summary>Advanced formal actions</summary>
+                <summary>Advanced actions <span class="framework-disclosure-arrow">▾</span></summary>
                 <label class="framework-no-action"><input type="radio" name="formal-action" value=""${selectedAction ? "" : " checked"}${disabledAttribute}> No formal action</label>
                 <div class="framework-action-grid">${formalMarkup}</div>
             </details>
@@ -1313,6 +1465,8 @@
             const type = $("input[name='formal-action']:checked").val();
             if (!type) return null;
             if (type === "move") return { type: type, destination_id: $("#action-move-destination").val() };
+            if (type === "unlock") return { type: type, destination_id: $("#action-unlock-destination").val() };
+            if (type === "lock") return { type: type, destination_id: $("#action-lock-destination").val() };
             if (type === "move_within_location") return { type: type, destination_id: $("#action-move-within-destination").val() };
             if (type === "take_item") return { type: type, item_id: $("#action-take-item").val() };
             if (type === "drop_item") return { type: type, item_id: $("#action-drop-item").val() };
@@ -1386,6 +1540,8 @@
         return true;
     }
 
+    registerSaveHistoryHooks();
+
     setup.PromptLabUIModel = {
         traceMarkup: promptLabTraceMarkup,
         narrativeHistoryMarkup: promptLabNarrativeHistoryMarkup,
@@ -1409,6 +1565,10 @@
         busyState: getBusyState,
         getInvisibleEventDebugState: function () {
             return { show: showInvisibleEvents, entries: cloneUIValue(currentTurnHiddenNarrative) };
+        },
+        getHistoryEntries: function () {
+            getUIState();
+            return cloneUIValue(historyEntries);
         }
     };
 
