@@ -61,6 +61,7 @@ function rejectsModelList(mutator, expected) {
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 }
 rejectsModelList(function (doc) { doc.defaultModelId = "missing/model"; }, "not present in models");
+rejectsModelList(function (doc) { doc.defaultNarratorModelId = "missing/narrator"; }, "defaultNarratorModelId");
 rejectsModelList(function (doc) { doc.models.push(clone(doc.models[0])); }, "Duplicate model ID");
 rejectsModelList(function (doc) { doc.models[0].name = ""; }, "name must be a non-empty string");
 console.log("All world and model-list generator tests passed.");

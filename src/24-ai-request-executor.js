@@ -8,6 +8,7 @@
     let queuedExecutions = 0;
     let activeExecutions = 0;
     let activeTransportCalls = 0;
+    let activePurpose = null;
     let nextTransportAt = 0;
     let lastStartedAt = 0;
     let lastFinishedAt = 0;
@@ -33,6 +34,7 @@
             value: result && result.ok ? clone(result.value) : null,
             error: result && !result.ok ? clone(result.error) : null,
             repaired: Boolean(result && result.repaired),
+            fallbackUsed: Boolean(result && result.fallbackUsed),
             modelId: result && result.modelId || null,
             usage: result && result.usage ? clone(result.usage) : null,
             rawContent: result && typeof result.rawContent === "string" ? result.rawContent : "",
@@ -102,12 +104,13 @@
         return result;
     }
 
-    function execute(specification) {
+    function enqueue(specification, operation) {
         const spec = specification || {};
         queuedExecutions++;
         const work = chain.catch(function () {}).then(async function () {
             queuedExecutions--;
             activeExecutions++;
+            activePurpose = spec.purpose || "unspecified";
             const executionStartedAt = Date.now();
             let result;
             try {
@@ -116,18 +119,33 @@
                         return chatWithPolicy(messages, spec.client || setup.OpenRouterClient);
                     }
                 };
-                result = await setup.AIProtocol.requestValidated(
-                    clone(spec.messages || []),
-                    spec.stage,
-                    policyClient
-                );
+                result = await operation(policyClient, spec);
                 if (result && typeof result === "object") {
-                    result.execution = {
+                    result.execution = Object.assign({}, result.execution || {}, {
                         purpose: spec.purpose || "unspecified",
                         actorId: spec.actorId || null,
                         modelId: result.modelId || null
-                    };
+                    });
                 }
+                return result;
+            } catch (error) {
+                result = {
+                    ok: false,
+                    value: null,
+                    error: {
+                        code: "AI_EXECUTION_EXCEPTION",
+                        message: "The model request failed unexpectedly."
+                    },
+                    modelId: null,
+                    usage: null,
+                    rawContent: "",
+                    trace: null,
+                    execution: {
+                        purpose: spec.purpose || "unspecified",
+                        actorId: spec.actorId || null,
+                        modelId: null
+                    }
+                };
                 return result;
             } finally {
                 const executionFinishedAt = Date.now();
@@ -135,10 +153,40 @@
                     recordExchange(spec, result, executionStartedAt, executionFinishedAt);
                 }
                 activeExecutions--;
+                if (activeExecutions === 0) activePurpose = null;
             }
         });
         chain = work.then(function () {}, function () {});
         return work;
+    }
+
+    function execute(specification) {
+        const spec = specification || {};
+        return enqueue(spec, function (policyClient) {
+            return setup.AIProtocol.requestValidated(
+                clone(spec.messages || []),
+                spec.stage,
+                policyClient
+            );
+        });
+    }
+
+    function executeCustom(specification) {
+        const spec = specification || {};
+        if (typeof spec.run !== "function") {
+            return Promise.resolve({
+                ok: false,
+                value: null,
+                error: { code: "AI_EXECUTOR_INVALID_SPEC", message: "Custom model execution requires a run function." },
+                modelId: null,
+                usage: null,
+                rawContent: "",
+                trace: null
+            });
+        }
+        return enqueue(spec, function (policyClient) {
+            return spec.run(policyClient);
+        });
     }
 
     function getStatus() {
@@ -148,6 +196,7 @@
             activeExecutions: activeExecutions,
             queuedExecutions: queuedExecutions,
             activeTransportCalls: activeTransportCalls,
+            activePurpose: activePurpose,
             minIntervalMs: MIN_INTERVAL_MS,
             nextTransportAt: nextTransportAt,
             cooldownRemainingMs: Math.max(0, nextTransportAt - now),
@@ -176,6 +225,7 @@
         DEFAULT_RATE_LIMIT_MS: DEFAULT_RATE_LIMIT_MS,
         MAX_EXCHANGE_HISTORY: MAX_EXCHANGE_HISTORY,
         execute: execute,
+        executeCustom: executeCustom,
         getStatus: getStatus,
         getExchangeHistory: getExchangeHistory,
         clearExchangeHistory: clearExchangeHistory

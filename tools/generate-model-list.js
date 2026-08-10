@@ -28,6 +28,10 @@ function validate(document) {
     if (typeof document.defaultModelId !== "string" || !document.defaultModelId.trim()) {
         fail("model_list.json defaultModelId must be a non-empty string.");
     }
+    if (document.defaultNarratorModelId !== undefined &&
+        (typeof document.defaultNarratorModelId !== "string" || !document.defaultNarratorModelId.trim())) {
+        fail("model_list.json defaultNarratorModelId must be a non-empty string when present.");
+    }
     if (!Array.isArray(document.models) || document.models.length === 0) {
         fail("model_list.json models must be a non-empty array.");
     }
@@ -56,10 +60,17 @@ function validate(document) {
     if (!seen.has(defaultModelId)) {
         fail(`model_list.json defaultModelId '${defaultModelId}' is not present in models.`);
     }
+    const defaultNarratorModelId = typeof document.defaultNarratorModelId === "string" && document.defaultNarratorModelId.trim()
+        ? document.defaultNarratorModelId.trim()
+        : defaultModelId;
+    if (!seen.has(defaultNarratorModelId)) {
+        fail(`model_list.json defaultNarratorModelId '${defaultNarratorModelId}' is not present in models.`);
+    }
 
     return {
         schemaVersion: 1,
         defaultModelId: defaultModelId,
+        defaultNarratorModelId: defaultNarratorModelId,
         models: models
     };
 }

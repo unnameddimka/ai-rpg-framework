@@ -6,6 +6,7 @@
     let currentTurnHiddenNarrative = [];
     let historyEntries = [];
     let historyInitialized = false;
+    let staticNarrationState = { key: "", status: "idle", fragments: [], error: null, requestSerial: 0 };
 
     function optionMarkup(items, emptyLabel) {
         if (!items || items.length === 0) {
@@ -112,6 +113,12 @@
     function restoreHistoryFromSave(save) {
         historyEntries = savedHistoryEntries(save);
         historyInitialized = true;
+        resetStaticNarration("");
+        currentTurnHiddenNarrative = [];
+        if (State.variables.frameworkUI) {
+            State.variables.frameworkUI.narratedTurnNarrative = [];
+            State.variables.frameworkUI.dynamicNarrationValid = false;
+        }
     }
 
     function registerSaveHistoryHooks() {
@@ -128,6 +135,9 @@
                 selectedAction: null,
                 locationStatus: "",
                 turnNarrative: [],
+                rawTurnNarrative: [],
+                narratedTurnNarrative: [],
+                dynamicNarrationValid: false,
                 turnBusy: false,
                 abilityResultsByActor: {},
                 history: []
@@ -139,6 +149,13 @@
         if (!Array.isArray(State.variables.frameworkUI.turnNarrative)) {
             State.variables.frameworkUI.turnNarrative = [];
         }
+        if (!Array.isArray(State.variables.frameworkUI.rawTurnNarrative)) {
+            State.variables.frameworkUI.rawTurnNarrative = cloneUIValue(State.variables.frameworkUI.turnNarrative);
+        }
+        if (!Array.isArray(State.variables.frameworkUI.narratedTurnNarrative)) {
+            State.variables.frameworkUI.narratedTurnNarrative = [];
+        }
+        State.variables.frameworkUI.dynamicNarrationValid = Boolean(State.variables.frameworkUI.dynamicNarrationValid);
         if (!Array.isArray(State.variables.frameworkUI.history)) {
             State.variables.frameworkUI.history = [];
         }
@@ -159,7 +176,7 @@
         const controllerBusy = Boolean(setup.AIController && setup.AIController.isInFlight && setup.AIController.isInFlight());
         const executorStatus = setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus
             ? setup.AIRequestExecutor.getStatus()
-            : { busy: false };
+            : { busy: false, activePurpose: null };
         const executorBusy = Boolean(executorStatus && executorStatus.busy);
         const waveBusy = Boolean(setup.AITurnScheduler && setup.AITurnScheduler.isWaveInFlight && setup.AITurnScheduler.isWaveInFlight());
         const aiBusy = controllerBusy || executorBusy || waveBusy;
@@ -170,9 +187,11 @@
                 const queue = setup.AITurnScheduler && setup.AITurnScheduler.getQueueView
                     ? setup.AITurnScheduler.getQueueView()
                     : null;
-                text = queue && queue.head && queue.head.recipientName
-                    ? `${queue.head.recipientName} is thinking…`
-                    : "AI is thinking…";
+                text = executorStatus.activePurpose === "narration"
+                    ? "Narrator is writing…"
+                    : queue && queue.head && queue.head.recipientName
+                        ? `${queue.head.recipientName} is thinking…`
+                        : "AI is thinking…";
             } else {
                 text = "Processing turn…";
             }
@@ -537,6 +556,157 @@
         if (className) element.className = className;
         parent.appendChild(element);
         return element;
+    }
+
+    function isNarratorEnabled() {
+        return Boolean(setup.NarratorService && setup.NarratorService.isEnabled && setup.NarratorService.isEnabled());
+    }
+
+    function staticNarrationKey(view) {
+        return view && view.self && view.location ? `${view.self.id}|${view.location.id}` : "";
+    }
+
+    function resetStaticNarration(key) {
+        staticNarrationState = {
+            key: key || "",
+            status: "idle",
+            fragments: [],
+            error: null,
+            requestSerial: (staticNarrationState.requestSerial || 0) + 1
+        };
+    }
+
+    function rawStaticFragments(view) {
+        const fragments = [];
+        (view && view.location && view.location.description || []).forEach(function (paragraph) {
+            if (paragraph) fragments.push(String(paragraph));
+        });
+        (view && view.location && view.location.sublocations || []).forEach(function (sublocation) {
+            if (sublocation && sublocation.public_text) fragments.push(String(sublocation.public_text));
+        });
+        return fragments;
+    }
+
+    function rawDynamicFragments(view) {
+        const fragments = [];
+        if (view && view.self && view.self.position_text) fragments.push(String(view.self.position_text));
+        (view && view.location && view.location.characters || []).forEach(function (character) {
+            const text = [character && character.presence_text, character && character.position_text].filter(Boolean).join(" ");
+            if (text) fragments.push(text);
+        });
+        return fragments;
+    }
+
+    function currentTurnPresentation(uiState) {
+        const narrationValid = isNarratorEnabled() && Boolean(uiState.dynamicNarrationValid);
+        const narrated = narrationValid && Array.isArray(uiState.narratedTurnNarrative)
+            ? uiState.narratedTurnNarrative
+            : [];
+        if (narrationValid) {
+            return { fragments: narrated, narrated: true };
+        }
+        const raw = Array.isArray(uiState.rawTurnNarrative) && uiState.rawTurnNarrative.length
+            ? uiState.rawTurnNarrative
+            : uiState.turnNarrative || [];
+        return { fragments: raw, narrated: false };
+    }
+
+    function ensureStaticNarration(view) {
+        if (!view || !view.location || !view.self || !setup.NarratorService) return;
+        const uiState = getUIState();
+        if (uiState.turnBusy) return;
+        const key = staticNarrationKey(view);
+        if (staticNarrationState.key !== key) resetStaticNarration(key);
+        if (!isNarratorEnabled() || staticNarrationState.status !== "idle") return;
+
+        const serial = staticNarrationState.requestSerial;
+        staticNarrationState.status = "pending";
+        setup.NarratorService.describeLocation(view).then(function (result) {
+            if (staticNarrationState.key !== key || staticNarrationState.requestSerial !== serial) return;
+            if (result && result.ok && result.value && Array.isArray(result.value.fragments) && result.value.fragments.length) {
+                staticNarrationState.status = "ready";
+                staticNarrationState.fragments = cloneUIValue(result.value.fragments);
+                staticNarrationState.error = null;
+            } else {
+                staticNarrationState.status = "failed";
+                staticNarrationState.fragments = [];
+                staticNarrationState.error = cloneUIValue(result && result.error || null);
+            }
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
+        }).catch(function () {
+            if (staticNarrationState.key !== key || staticNarrationState.requestSerial !== serial) return;
+            staticNarrationState.status = "failed";
+            staticNarrationState.fragments = [];
+            staticNarrationState.error = { code: "NARRATOR_REQUEST_FAILED", message: "Narrator request failed." };
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
+        });
+    }
+
+    function renderStaticScene(root, view) {
+        const key = staticNarrationKey(view);
+        ensureStaticNarration(view);
+        const narrated = isNarratorEnabled() && staticNarrationState.key === key && staticNarrationState.status === "ready"
+            ? staticNarrationState.fragments
+            : [];
+        (narrated.length ? narrated : rawStaticFragments(view)).forEach(function (fragment) {
+            appendRPElement(root, "p", fragment, narrated.length ? "framework-narrated-static" : "");
+        });
+    }
+
+    function renderRawDynamicScene(root, view) {
+        rawDynamicFragments(view).forEach(function (fragment, index) {
+            appendTextElement(root, "p", fragment, index === 0 ? "framework-position-text" : "");
+        });
+    }
+
+    function renderNarratedDynamicScene(root, fragments) {
+        const section = document.createElement("section");
+        section.className = "framework-narrated-dynamic";
+        (Array.isArray(fragments) ? fragments : []).forEach(function (fragment) {
+            appendRPElement(section, "p", fragment);
+        });
+        if (section.childNodes.length > 0) root.appendChild(section);
+    }
+
+    function renderInvisibleDebugEntries(root) {
+        if (!showInvisibleEvents || currentTurnHiddenNarrative.length === 0) return;
+        const debug = document.createElement("section");
+        debug.className = "framework-invisible-debug-list";
+        currentTurnHiddenNarrative.forEach(function (entry) {
+            const row = document.createElement("div");
+            row.className = "framework-invisible-debug-entry";
+            const context = [entry.actorName, entry.locationName].filter(Boolean).join(", ");
+            appendTextElement(row, "strong", `[DEBUG — NOT VISIBLE TO PLAYER]${context ? ` ${context}` : ""}`);
+            appendRPElement(row, "p", entry.text || "");
+            debug.appendChild(row);
+        });
+        root.appendChild(debug);
+    }
+
+    function renderLegacyLatestTurn(root, fragments) {
+        const hasVisible = Array.isArray(fragments) && fragments.length > 0;
+        if (!hasVisible && !(showInvisibleEvents && currentTurnHiddenNarrative.length > 0)) return;
+        const narrative = document.createElement("section");
+        narrative.className = "framework-turn-narrative";
+        appendTextElement(narrative, "h3", "Latest turn");
+        (fragments || []).forEach(function (fragment) {
+            appendRPElement(narrative, "p", fragment);
+        });
+        if (showInvisibleEvents) {
+            currentTurnHiddenNarrative.forEach(function (entry) {
+                const row = document.createElement("div");
+                row.className = "framework-invisible-debug-entry";
+                const context = [entry.actorName, entry.locationName].filter(Boolean).join(", ");
+                appendTextElement(row, "strong", `[DEBUG — NOT VISIBLE TO PLAYER]${context ? ` ${context}` : ""}`);
+                appendRPElement(row, "p", entry.text || "");
+                narrative.appendChild(row);
+            });
+        }
+        root.appendChild(narrative);
     }
 
     function renderInteractionView() {
@@ -945,39 +1115,18 @@
 
         renderHistory(root);
 
-        if (uiState.turnNarrative.length > 0 || (showInvisibleEvents && currentTurnHiddenNarrative.length > 0)) {
-            const narrative = document.createElement("section");
-            narrative.className = "framework-turn-narrative";
-            appendTextElement(narrative, "h3", "Latest turn");
-            uiState.turnNarrative.forEach(function (fragment) {
-                appendRPElement(narrative, "p", fragment);
-            });
-            if (showInvisibleEvents) {
-                currentTurnHiddenNarrative.forEach(function (entry) {
-                    const row = document.createElement("div");
-                    row.className = "framework-invisible-debug-entry";
-                    const context = [entry.actorName, entry.locationName].filter(Boolean).join(", ");
-                    appendTextElement(row, "strong", `[DEBUG — NOT VISIBLE TO PLAYER]${context ? ` ${context}` : ""}`);
-                    appendRPElement(row, "p", entry.text || "");
-                    narrative.appendChild(row);
-                });
-            }
-            root.appendChild(narrative);
+        const turnPresentation = currentTurnPresentation(uiState);
+
+        renderStaticScene(root, view);
+        if (turnPresentation.narrated) {
+            renderNarratedDynamicScene(root, turnPresentation.fragments);
+            renderInvisibleDebugEntries(root);
+        } else {
+            renderLegacyLatestTurn(root, turnPresentation.fragments);
+            renderRawDynamicScene(root, view);
         }
 
         renderPrivateFeedback(root, actorId, view);
-
-        view.location.description.forEach(function (paragraph) {
-            appendTextElement(root, "p", paragraph);
-        });
-        view.location.sublocations.forEach(function (sublocation) {
-            if (sublocation.public_text) appendTextElement(root, "p", sublocation.public_text, "framework-furniture-text");
-        });
-        appendTextElement(root, "p", view.self.position_text, "framework-position-text");
-        view.location.characters.forEach(function (character) {
-            appendTextElement(root, "p", `${character.presence_text} ${character.position_text}`);
-        });
-
         renderPromptLab(root, view);
 
         const groups = buildContextualActionGroups(view);
@@ -1106,6 +1255,12 @@
             const defaultLabel = model.id === aiSettings.defaultModelId ? " (default)" : "";
             return `<option value="${escapeHtml(model.id)}"${selected}>${escapeHtml(model.name + defaultLabel)}</option>`;
         }).join("");
+        const narratorModelOptions = aiSettings.models.map(function (model) {
+            const selected = model.id === aiSettings.selectedNarratorModelId ? " selected" : "";
+            const defaultLabel = model.id === aiSettings.defaultNarratorModelId ? " (narrator default)" : "";
+            return `<option value="${escapeHtml(model.id)}"${selected}>${escapeHtml(model.name + defaultLabel)}</option>`;
+        }).join("");
+        const narratorEnabled = isNarratorEnabled();
         const queueText = aiQueue.head
             ? `Next recipient: ${escapeHtml(aiQueue.head.recipientName)}<br>` +
                 `Initiative: ${escapeHtml(aiQueue.head.initiativeScore || 0)}<br>` +
@@ -1142,10 +1297,14 @@
             <div class="framework-sidebar-block" id="ai-settings-panel">
                 <strong>AI Settings</strong><br>
                 Provider: OpenRouter<br>
-                <label>Model
+                <label>Character model
                     <select id="openrouter-model-select"${aiBusy ? " disabled" : ""}>${modelOptions}</select>
                 </label><br>
-                <span class="framework-model-id">${escapeHtml(aiSettings.selectedModelId)}</span><br>
+                <span class="framework-model-id framework-character-model-id">${escapeHtml(aiSettings.selectedModelId)}</span><br>
+                <label>Narrator model
+                    <select id="openrouter-narrator-model-select"${aiBusy ? " disabled" : ""}>${narratorModelOptions}</select>
+                </label><br>
+                <span class="framework-model-id framework-narrator-model-id">${escapeHtml(aiSettings.selectedNarratorModelId)}</span><br>
                 Key status: ${aiSettings.hasKey ? "available" : "not set"}<br>
                 <label>API key <input id="openrouter-api-key" type="password" autocomplete="off"></label><br>
                 <label><input id="remember-openrouter-key" type="checkbox"> Remember for 24 hours</label><br>
@@ -1157,6 +1316,7 @@
                 <strong>AI turn scheduler</strong><br>
                 <label class="framework-auto-ai-toggle"><input id="stop-auto-ai-processing" type="checkbox"${autoProcessingPaused ? " checked" : ""}${aiBusy ? " disabled" : ""}> Stop automatic AI request processing</label><br>
                 <label class="framework-auto-ai-toggle"><input id="show-invisible-events" type="checkbox"${showInvisibleEvents ? " checked" : ""}> Show invisible events</label><br>
+                <label class="framework-auto-ai-toggle"><input id="enable-narrator" type="checkbox"${narratorEnabled ? " checked" : ""}${aiBusy ? " disabled" : ""}> Enable narrator</label><br>
                 <span id="ai-queue-status">${queueText}</span><br>
                 <div id="ai-turn-status" class="framework-status">${escapeHtml(setup.AITransientDebug.lastSafeError || "")}</div>
                 <div id="ai-usage-status" class="framework-status">${usageText}</div>
@@ -1173,7 +1333,15 @@
                 return;
             }
 
-            getUIState().interactionTargetId = "";
+            const uiState = getUIState();
+            uiState.interactionTargetId = "";
+            uiState.selectedAction = null;
+            uiState.turnNarrative = [];
+            uiState.rawTurnNarrative = [];
+            uiState.narratedTurnNarrative = [];
+            uiState.dynamicNarrationValid = false;
+            currentTurnHiddenNarrative = [];
+            resetStaticNarration("");
             const passage = currentPassageForHuman();
             Engine.play(passage);
         });
@@ -1195,6 +1363,8 @@
             setup.Game.resetWorld();
             delete State.variables.frameworkUI;
             resetHistory();
+            currentTurnHiddenNarrative = [];
+            resetStaticNarration("");
             Engine.play(currentPassageForHuman());
         });
 
@@ -1206,7 +1376,20 @@
                 return;
             }
             $("#ai-settings-status").text(result.warning || `Model selected: ${result.model.name}.`);
-            $(".framework-model-id").text(result.model.id);
+            $(".framework-character-model-id").text(result.model.id);
+        });
+
+        $("#openrouter-narrator-model-select").on("change", function () {
+            const result = setup.AIRuntimeSettings.selectNarratorModel($(this).val());
+            if (!result.ok) {
+                $("#ai-settings-status").text(result.error.message);
+                $(this).val(setup.AIRuntimeSettings.getSelectedNarratorModelId());
+                return;
+            }
+            $("#ai-settings-status").text(result.warning || `Narrator model selected: ${result.model.name}.`);
+            $(".framework-narrator-model-id").text(result.model.id);
+            resetStaticNarration(staticNarrationState.key);
+            renderLocationView();
         });
 
         $("#save-ai-settings").on("click", function () {
@@ -1237,6 +1420,17 @@
         $("#show-invisible-events").on("change", function () {
             showInvisibleEvents = $(this).prop("checked");
             renderLocationView();
+        });
+
+        $("#enable-narrator").on("change", function () {
+            if (!setup.NarratorService) return;
+            const result = setup.NarratorService.setEnabled($(this).prop("checked"));
+            if (result.enabled && staticNarrationState.status === "failed") {
+                resetStaticNarration(staticNarrationState.key);
+            }
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
         });
 
     }
@@ -1278,7 +1472,10 @@
         }
         appendHistory(result.historyEntries || []);
         uiState.selectedAction = null;
-        uiState.turnNarrative = result.narrativeFragments || [];
+        uiState.rawTurnNarrative = cloneUIValue(result.rawNarrativeFragments || result.narrativeFragments || []);
+        uiState.narratedTurnNarrative = cloneUIValue(result.narratedNarrativeFragments || []);
+        uiState.dynamicNarrationValid = Boolean(result.narrator && result.narrator.used);
+        uiState.turnNarrative = cloneUIValue(result.narrativeFragments || []);
         currentTurnHiddenNarrative = cloneUIValue(result.hiddenNarrativeEntries || []);
         if (result.waveResult && result.waveResult.paused) {
             uiState.locationStatus = `Intent submitted. Automatic AI processing is paused; ${result.waveResult.remainingQueue.count} turn(s) remain queued.`;
@@ -1323,7 +1520,10 @@
         }
         appendHistory(result && result.historyEntries || []);
         uiState.selectedAction = null;
-        uiState.turnNarrative = result && result.narrativeFragments || [];
+        uiState.rawTurnNarrative = cloneUIValue(result && (result.rawNarrativeFragments || result.narrativeFragments) || []);
+        uiState.narratedTurnNarrative = cloneUIValue(result && result.narratedNarrativeFragments || []);
+        uiState.dynamicNarrationValid = Boolean(result && result.narrator && result.narrator.used);
+        uiState.turnNarrative = cloneUIValue(result && result.narrativeFragments || []);
         currentTurnHiddenNarrative = cloneUIValue(result && result.hiddenNarrativeEntries || []);
         uiState.locationStatus = result && result.ok
             ? (result.waveResult && result.waveResult.truncated
@@ -1569,7 +1769,11 @@
         getHistoryEntries: function () {
             getUIState();
             return cloneUIValue(historyEntries);
-        }
+        },
+        rawStaticFragments: rawStaticFragments,
+        rawDynamicFragments: rawDynamicFragments,
+        currentTurnPresentation: currentTurnPresentation,
+        getStaticNarrationState: function () { return cloneUIValue(staticNarrationState); }
     };
 
     setup.GameUI = {
@@ -1583,8 +1787,15 @@
         takeControl: function (characterId) {
             const result = setup.Game.takeHumanControl(characterId);
             if (result.ok) {
-                getUIState().interactionTargetId = "";
-                getUIState().selectedAction = null;
+                const uiState = getUIState();
+                uiState.interactionTargetId = "";
+                uiState.selectedAction = null;
+                uiState.turnNarrative = [];
+                uiState.rawTurnNarrative = [];
+                uiState.narratedTurnNarrative = [];
+                uiState.dynamicNarrationValid = false;
+                currentTurnHiddenNarrative = [];
+                resetStaticNarration("");
                 Engine.play(currentPassageForHuman());
             }
             return result;

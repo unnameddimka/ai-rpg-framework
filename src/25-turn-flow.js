@@ -161,6 +161,47 @@
         return splitPresentation(entries);
     }
 
+
+    async function narratePresentation(presentation, humanId) {
+        const rawFragments = presentation && Array.isArray(presentation.visible) ? presentation.visible.slice() : [];
+        if (!setup.NarratorService || !setup.NarratorService.isEnabled || !setup.NarratorService.isEnabled()) {
+            return {
+                attempted: false,
+                used: false,
+                rawFragments: rawFragments,
+                narratedFragments: [],
+                result: null
+            };
+        }
+        let result;
+        try {
+            const view = setup.CharacterAPI.getView(humanId);
+            result = await setup.NarratorService.narrateTick({
+                view: view,
+                entries: presentation && presentation.entries || []
+            });
+        } catch (error) {
+            result = {
+                ok: false,
+                fallbackUsed: true,
+                error: {
+                    code: "NARRATOR_PRESENTATION_EXCEPTION",
+                    message: "Narrator presentation failed unexpectedly; raw presentation was used."
+                }
+            };
+        }
+        const narratedFragments = result && result.ok && result.value && Array.isArray(result.value.fragments)
+            ? result.value.fragments.filter(Boolean)
+            : [];
+        return {
+            attempted: true,
+            used: narratedFragments.length > 0,
+            rawFragments: rawFragments,
+            narratedFragments: narratedFragments,
+            result: result || null
+        };
+    }
+
     async function submitHumanIntent(input, client) {
         const actorId = setup.Game.getHumanCharacterId();
         input = input && typeof input === "object" ? input : {};
@@ -184,6 +225,7 @@
         const wavePresentation = describeWave(waveResult, actorId);
         const entries = submittedPresentation.entries.concat(wavePresentation.entries);
         const presentation = splitPresentation(entries);
+        const narration = await narratePresentation(presentation, actorId);
 
         return {
             ok: true,
@@ -191,7 +233,15 @@
             turnConsumed: true,
             intentResult: clone(intentResult),
             waveResult: clone(waveResult),
-            narrativeFragments: presentation.visible,
+            narrativeFragments: narration.used ? narration.narratedFragments : narration.rawFragments,
+            rawNarrativeFragments: narration.rawFragments,
+            narratedNarrativeFragments: narration.narratedFragments,
+            narrator: {
+                attempted: narration.attempted,
+                used: narration.used,
+                fallbackUsed: Boolean(narration.attempted && !narration.used),
+                error: narration.result && !narration.result.ok ? clone(narration.result.error) : null
+            },
             hiddenNarrativeEntries: presentation.hidden,
             historyEntries: presentation.entries,
             destinationId: intentResult.actionResult && intentResult.actionResult.ok && input.action && input.action.type === "move"
@@ -204,13 +254,22 @@
         const actorId = setup.Game.getHumanCharacterId();
         const waveResult = await setup.AITurnScheduler.processWave(client || setup.OpenRouterClient);
         const presentation = describeWave(waveResult, actorId);
+        const narration = await narratePresentation(presentation, actorId);
         return {
             ok: waveResult.ok,
             error: waveResult.ok ? null : clone(waveResult.error),
             actorId: actorId,
             turnConsumed: true,
             waveResult: clone(waveResult),
-            narrativeFragments: presentation.visible,
+            narrativeFragments: narration.used ? narration.narratedFragments : narration.rawFragments,
+            rawNarrativeFragments: narration.rawFragments,
+            narratedNarrativeFragments: narration.narratedFragments,
+            narrator: {
+                attempted: narration.attempted,
+                used: narration.used,
+                fallbackUsed: Boolean(narration.attempted && !narration.used),
+                error: narration.result && !narration.result.ok ? clone(narration.result.error) : null
+            },
             hiddenNarrativeEntries: presentation.hidden,
             historyEntries: presentation.entries
         };

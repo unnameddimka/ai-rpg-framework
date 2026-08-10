@@ -207,6 +207,7 @@ async function main() {
     assert(modelIds.join(",") === [
         "thedrummer/cydonia-24b-v4.1",
         "sao10k/l3.3-euryale-70b",
+        "sao10k/l3.3-euryale-70b:nitro",
         "sao10k/l3.1-euryale-70b:nitro",
         "mistralai/mistral-small-3.2-24b-instruct",
         "deepseek/deepseek-v4-pro"
@@ -214,6 +215,16 @@ async function main() {
         setup.AIRuntimeSettings.getDefaultModelId() === "thedrummer/cydonia-24b-v4.1" &&
         setup.AIRuntimeSettings.getSelectedModelId() === "thedrummer/cydonia-24b-v4.1",
         "generated model list should expose all configured candidates and select its authored default");
+    assert(setup.AIRuntimeSettings.getDefaultNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro" &&
+        setup.AIRuntimeSettings.getSelectedNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro",
+        "narrator model selection should start from its independently authored default");
+    const characterModelBeforeNarratorSelection = setup.AIRuntimeSettings.getSelectedModelId();
+    const narratorSelection = setup.AIRuntimeSettings.selectNarratorModel("deepseek/deepseek-v4-pro", storage);
+    assert(narratorSelection.ok && narratorSelection.persisted &&
+        storageData[setup.AIRuntimeSettings.NARRATOR_MODEL_STORAGE_KEY] === "deepseek/deepseek-v4-pro" &&
+        setup.AIRuntimeSettings.getSelectedModelId() === characterModelBeforeNarratorSelection,
+        "narrator model selection should persist independently without changing the character model");
+    setup.AIRuntimeSettings.selectNarratorModel(setup.AIRuntimeSettings.getDefaultNarratorModelId(), storage);
     const euryaleId = "sao10k/l3.3-euryale-70b";
     const selectedEuryale = setup.AIRuntimeSettings.selectModel(euryaleId, storage);
     assert(selectedEuryale.ok && selectedEuryale.persisted &&

@@ -169,28 +169,60 @@
         return setup.AIRuntimeSettings.getSelectedModelId();
     }
 
-    async function chat(messages, fetchOverride) {
-        const modelId = selectedModelId();
+    function normalizedRequestOptions(options) {
+        const source = options && typeof options === "object" ? options : {};
+        const modelId = typeof source.modelId === "string" && source.modelId.trim()
+            ? source.modelId.trim()
+            : selectedModelId();
+        const maxTokens = Number.isFinite(source.maxTokens) && source.maxTokens > 0
+            ? Math.floor(source.maxTokens)
+            : MAX_TOKENS;
+        const reasoningMaxTokens = source.reasoningMaxTokens === null || source.reasoningMaxTokens === false || source.reasoningMaxTokens === 0
+            ? 0
+            : Number.isFinite(source.reasoningMaxTokens) && source.reasoningMaxTokens > 0
+                ? Math.floor(source.reasoningMaxTokens)
+                : REASONING_MAX_TOKENS;
+        const temperature = Number.isFinite(source.temperature)
+            ? source.temperature
+            : TEMPERATURE;
+        return {
+            modelId: modelId,
+            maxTokens: maxTokens,
+            reasoningMaxTokens: reasoningMaxTokens,
+            temperature: temperature
+        };
+    }
+
+    async function chatWithOptions(messages, options, fetchOverride) {
+        const requestOptions = normalizedRequestOptions(options);
+        const modelId = requestOptions.modelId;
         const key = setup.AIRuntimeSettings.getKey();
-        if (!key) return safeFailure("API_KEY_MISSING", "Enter an OpenRouter API key before taking an AI turn.");
+        function failure(code, message, status, extra) {
+            return safeFailure(code, message, status, Object.assign({ modelId: modelId }, extra || {}));
+        }
+        if (!key) return failure("API_KEY_MISSING", "Enter an OpenRouter API key before taking an AI turn.");
         const fetchFunction = fetchOverride || (typeof fetch === "function" ? fetch : null);
-        if (!fetchFunction) return safeFailure("NETWORK_ERROR", "Browser network access is unavailable.");
+        if (!fetchFunction) return failure("NETWORK_ERROR", "Browser network access is unavailable.");
+        const requestBody = {
+            model: modelId,
+            stream: false,
+            max_tokens: requestOptions.maxTokens,
+            temperature: requestOptions.temperature,
+            messages: messages
+        };
+        if (requestOptions.reasoningMaxTokens > 0) {
+            requestBody.reasoning = { max_tokens: requestOptions.reasoningMaxTokens };
+        }
+
         let response;
         try {
             response = await fetchFunction(ENDPOINT, {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    model: modelId,
-                    stream: false,
-                    max_tokens: MAX_TOKENS,
-                    reasoning: { max_tokens: REASONING_MAX_TOKENS },
-                    temperature: TEMPERATURE,
-                    messages: messages
-                })
+                body: JSON.stringify(requestBody)
             });
         } catch (error) {
-            return safeFailure("NETWORK_ERROR", "OpenRouter could not be reached. Check browser network or CORS access.", 0, {
+            return failure("NETWORK_ERROR", "OpenRouter could not be reached. Check browser network or CORS access.", 0, {
                 providerResponse: {
                     endpoint: ENDPOINT,
                     url: ENDPOINT,
@@ -213,30 +245,30 @@
         const diagnostics = providerDiagnostics(response, body, retryAfterMs);
 
         if (!response.ok) {
-            if (response.status === 401) return safeFailure("AUTHENTICATION_FAILED", messageWithProvider("OpenRouter authentication failed.", body), 401, { providerResponse: diagnostics });
-            if (response.status === 402) return safeFailure("INSUFFICIENT_CREDITS", messageWithProvider("OpenRouter reports insufficient credits.", body), 402, { providerResponse: diagnostics });
+            if (response.status === 401) return failure("AUTHENTICATION_FAILED", messageWithProvider("OpenRouter authentication failed.", body), 401, { providerResponse: diagnostics });
+            if (response.status === 402) return failure("INSUFFICIENT_CREDITS", messageWithProvider("OpenRouter reports insufficient credits.", body), 402, { providerResponse: diagnostics });
             if (response.status === 429) {
                 const suffix = Number.isFinite(retryAfterMs)
                     ? ` Retry after ${Math.max(1, Math.ceil(retryAfterMs / 1000))} seconds.`
                     : "";
-                return safeFailure("RATE_LIMITED", messageWithProvider(`OpenRouter rate limited the request.${suffix}`, body), 429, {
+                return failure("RATE_LIMITED", messageWithProvider(`OpenRouter rate limited the request.${suffix}`, body), 429, {
                     retryAfterMs: retryAfterMs,
                     providerResponse: diagnostics
                 });
             }
-            if (response.status >= 500) return safeFailure("PROVIDER_UNAVAILABLE", messageWithProvider("OpenRouter is temporarily unavailable.", body), response.status, { providerResponse: diagnostics });
-            return safeFailure("PROVIDER_REQUEST_FAILED", messageWithProvider("OpenRouter rejected the request.", body), response.status, { providerResponse: diagnostics });
+            if (response.status >= 500) return failure("PROVIDER_UNAVAILABLE", messageWithProvider("OpenRouter is temporarily unavailable.", body), response.status, { providerResponse: diagnostics });
+            return failure("PROVIDER_REQUEST_FAILED", messageWithProvider("OpenRouter rejected the request.", body), response.status, { providerResponse: diagnostics });
         }
 
         const parsed = body.parsedBody;
         if (!parsed || typeof parsed !== "object") {
-            return safeFailure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned an unreadable response.", response.status, { providerResponse: diagnostics });
+            return failure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned an unreadable response.", response.status, { providerResponse: diagnostics });
         }
         const choice = parsed && parsed.choices && parsed.choices[0];
         const finishReason = choice && typeof choice.finish_reason === "string" ? choice.finish_reason : "";
         const content = choice && choice.message && choice.message.content;
         if (finishReason === "length") {
-            return safeFailure(
+            return failure(
                 "MODEL_OUTPUT_TRUNCATED",
                 "OpenRouter stopped generation at the completion token limit before a complete assistant response was available.",
                 response.status,
@@ -244,7 +276,7 @@
             );
         }
         if (typeof content !== "string") {
-            return safeFailure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned no assistant content.", response.status, { providerResponse: diagnostics });
+            return failure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned no assistant content.", response.status, { providerResponse: diagnostics });
         }
         return {
             ok: true,
@@ -258,7 +290,18 @@
         };
     }
 
-    const client = { ENDPOINT: ENDPOINT, MAX_TOKENS: MAX_TOKENS, REASONING_MAX_TOKENS: REASONING_MAX_TOKENS, getModelId: selectedModelId, chat: chat };
+    async function chat(messages, fetchOverride) {
+        return chatWithOptions(messages, null, fetchOverride);
+    }
+
+    const client = {
+        ENDPOINT: ENDPOINT,
+        MAX_TOKENS: MAX_TOKENS,
+        REASONING_MAX_TOKENS: REASONING_MAX_TOKENS,
+        getModelId: selectedModelId,
+        chat: chat,
+        chatWithOptions: chatWithOptions
+    };
     Object.defineProperty(client, "MODEL", { enumerable: true, get: selectedModelId });
     setup.OpenRouterClient = client;
 }());

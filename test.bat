@@ -28,4 +28,6 @@ if errorlevel 1 exit /b 1
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-generator-tests.js
 if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-narrator-tests.js
+if errorlevel 1 exit /b 1
 endlocal
