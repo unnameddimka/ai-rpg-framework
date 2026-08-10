@@ -1,148 +1,337 @@
-# Presentation Narrator
+# Presentation Narrator v2
 
-Status: implemented specification, 2026-08-10.
+## Status
 
-## Goal
+Implemented presentation-only architecture for the AI RPG Framework.
 
-Add an optional AI-powered presentation narrator that rewrites deterministic player-facing scene material into concise literary prose without participating in simulation. The narrator is not a controller, does not decide actions, does not mutate state, and never creates canonical facts.
+The Narrator is not a controller. It never chooses character actions, mutates canonical world state, creates observations, writes memories, changes initiative, or rewrites History. It transforms the Human player's already-grounded visible scene into concise literary presentation.
 
-The intended flow is:
+## Successful presentation path
 
-`controllers -> deterministic engine -> canonical state/events -> PresentationAssembler -> NarratorService -> PresentationRenderer -> UI`
-
-`NarratorService` may reuse the shared OpenRouter transport and serialized request executor, but it has its own model selection, prompt, request/response validation, generation budget, error handling, and exchange-log metadata. It does not receive character memory, beliefs, relationships, continuation, psychology, AI descriptions, action schemas, initiative, controller identity, or scheduler internals.
-
-## Presentation categories
-
-### 1. Static scene
-
-Static scene material contains the room/location description and static fixtures/sublocations such as stairs, tables, beds, counters, and permanent scenery. It contains no dynamic items or other state that may change during the visit.
-
-Rule: if something may change after the player enters the location, it belongs to dynamic presentation.
-
-Static narration is requested once for every location entry. There is no cross-visit cache in this version; re-entering a location creates a fresh request and model variation is acceptable.
-
-### 2. Dynamic grounded scene
-
-Dynamic presentation contains the full current visible mutable scene, including character descriptions/positions, visible dynamic items, movement, and grounded formal actions/results/failures. It is rebuilt from the current canonical Human-visible projection.
-
-Exactly one dynamic narrator request is made after the complete Human turn and resulting AI reaction wave. It receives the full current dynamic snapshot, not only a delta. Slightly different prose for unchanged positions on different ticks is intentional.
-
-Human- and AI-controlled actors are not distinguished for narration purposes.
-
-### 3. Verbatim character-authored content
-
-Human narrative/speech and AI `publicNarrative`/`spokenText` are immutable character-authored RP. They may be supplied to the narrator as read-only context so surrounding prose can flow naturally, but the narrator never becomes their authoritative source.
-
-Character-authored text reaches the renderer with an explicit actor attribution and is restored byte-for-byte from a separately retained canonical original.
-
-## Protected paired verbatim blocks
-
-The mixed tick stream uses paired protected regions:
+When narration succeeds, normal gameplay renders:
 
 ```text
-<verbatim id="v1">
-Captain John Price: *Price raises his mug slightly.* Evening, Nell.
-</verbatim>
+Location title
+History ▾
+
+[muted blue static narration]
+
+[muted green dynamic narration with immutable character-authored blocks inline]
+
+          spinner
+         Thinking...
+       (while busy)
+
+[gameplay controls]
+[turn input]
 ```
 
-Paired tags explicitly delimit arbitrary multi-line RP text. Before embedding a payload in the narrator request, framing-significant markup characters are escaped so character text cannot close its own block or create a fake block. The unescaped canonical original is stored separately by ID.
+A successful dynamic Narrator result replaces the legacy `Latest turn` plus raw dynamic scene presentation. Narrated and equivalent raw dynamic presentation are never shown at the same time.
 
-The narrator may read protected payloads but must not rewrite, translate, shorten, extend, split, merge, move, remove, or reorder them.
+## Static narration
 
-The framework does not trust the model to obey that instruction. Returned verbatim payloads are discarded and canonical originals are reinserted by ID before rendering.
+Static narration is generated freshly when the Human-controlled character enters a location.
 
-A narrator response is invalid if any expected block is missing, duplicated, reordered, nested, malformed, has a changed ID, or if an unexpected block is introduced. Invalid framing causes raw fallback.
+Input is derived only from the Human restricted canonical view and contains relatively static public facts such as:
 
-## Narrator operations
+- location name;
+- authored location description;
+- public sublocation text / permanent fixtures.
 
-### `describeLocation(view)`
+Dynamic character positions and mutable item state are excluded.
 
-Called when the Human-controlled character enters a location. Receives only static presentation facts and returns literary static scene prose.
+Static failure affects only the static section. A valid dynamic Narrator result may still be used independently.
 
-### `narrateTick({ view, entries })`
+The static completion ceiling is 400 tokens. The prompt asks for one or two compact paragraphs and strongly discourages filler.
 
-Called once after the full reaction wave. Receives:
+## Dynamic Narrator input
 
-- the full current Human-visible dynamic scene;
-- chronological grounded player-facing presentation entries for the tick;
-- paired verbatim character blocks as read-only context.
+Dynamic narration runs exactly once after the complete Human turn and resulting AI reaction wave have resolved.
 
-The narrator may rewrite only non-verbatim material. Causal order between character RP and grounded actions/results must remain intact.
+Its input deliberately separates two concepts.
 
-## Prompt contract
+### `snapshot`
 
-The narrator system prompt is independent from character decision prompts. It establishes that supplied facts are authoritative; the model is a presentation rewriter rather than an actor or GM; it may improve syntax, combine repetition, vary wording, and create natural transitions; and it must not invent, remove, or change facts, actions, state, identity, possession, results, dialogue, or causal order.
+`snapshot` is the final visible state after the complete tick.
 
-Narrator requests are stateless and intentionally small. Do not send full character/world context or any private cognition/state irrelevant to presentation.
+It answers: **what is visibly true now?**
 
-## Model and UI
+It is rebuilt from the Human restricted view and may include:
 
-Narrator model selection is independent from the character model.
+- Human position;
+- Human character inventory visible to the player;
+- visible character presence and positions;
+- visible mutable items in the location;
+- items in currently accessible non-location inventories/surfaces.
 
-Default narrator model:
+The snapshot is authoritative for the final visible state.
 
-`sao10k/l3.3-euryale-70b:nitro`
+### `tickEvents`
 
-The left sidebar exposes:
+`tickEvents` is the causal sequence of visible presentation events produced during the current tick.
 
-- Character model selector;
-- Narrator model selector;
-- `Enable narrator` checkbox near `Show invisible events`.
+It answers: **what just happened?**
 
-When narrator is disabled, the existing raw presentation path is used.
+This is not the UI History. History remains a separate raw canonical journal and is not supplied to the Narrator as previous literary context.
+
+Grounded engine action events/results/failures remain ordinary fact events in `tickEvents`.
+
+## Immutable character-authored blocks
+
+Human-authored narrative and AI character-authored public narrative/speech are immutable presentation material.
+
+They are represented in `tickEvents` as structured `kind: "character"` entries with framework-owned IDs such as `v1`, `v2`, etc.
+
+The framework separately retains:
+
+- canonical block contents;
+- canonical block order.
+
+The Narrator receives the block text for linguistic context, but it never returns that text. It therefore cannot edit, omit, reorder, translate, shorten, extend, or corrupt character-authored material.
+
+The old `<verbatim>...</verbatim>` return protocol is removed.
+
+## Dynamic request contract
+
+Conceptually:
+
+```json
+{
+  "snapshot": [
+    "Traveler sits at the third table.",
+    "Nell stands nearby.",
+    "Traveler has a mug of ale."
+  ],
+  "tickEvents": [
+    {
+      "kind": "fact",
+      "sourceKind": "action_event",
+      "text": "Nell returned from the bar."
+    },
+    {
+      "kind": "character",
+      "id": "v1",
+      "sourceKind": "narrative",
+      "text": "Nell: *She smiles.* Here's your ale."
+    },
+    {
+      "kind": "fact",
+      "sourceKind": "action_event",
+      "text": "Nell gave Mug of ale to Traveler."
+    }
+  ],
+  "immutableBlockOrder": ["v1"]
+}
+```
+
+The dynamic Narrator returns JSON only:
+
+```json
+{
+  "prose": [
+    "Narration before v1.",
+    "Narration after v1."
+  ]
+}
+```
+
+No character-authored text is returned by the model.
+
+## Tolerant block assembly
+
+For `N` immutable blocks the natural response shape is `N + 1` prose strings:
+
+- before the first immutable block;
+- between each pair;
+- after the final immutable block.
+
+Empty prose strings are valid and encouraged when there is nothing useful to add.
+
+The framework deliberately tolerates segment-count mistakes:
+
+- too few prose segments are padded with empty strings;
+- extra prose segments are appended after the last immutable block in returned order;
+- no repair request is made merely because the count differs.
+
+The assembler deterministically interleaves model prose with canonical framework-owned character blocks.
+
+Fallback is reserved for genuinely unusable Narrator output such as transport failure, empty response, or dynamic content that cannot be parsed into the basic `{ "prose": [...] }` contract.
+
+A single surrounding JSON markdown fence is tolerated.
+
+## Grounded events and character text
+
+Character-authored attempt-phase text and later grounded engine events may both appear in the same tick input.
+
+Example:
+
+```text
+IMMUTABLE CHARACTER BLOCK
+*Nell offers the mug.*
+Here's your ale.
+
+GROUNDED FACT
+Nell gave Mug of ale to Traveler.
+```
+
+The Narrator may use the grounded fact to connect the presentation coherently but cannot modify the immutable character block.
+
+## Grounding and literary freedom
+
+The Narrator is allowed restrained flavour but must not invent concrete unsupplied world facts.
+
+Allowed:
+
+- sentence rhythm and compression;
+- restrained metaphor;
+- slightly ornate novel-like phrasing;
+- mild stylistic atmosphere that does not become a new objective fact.
+
+Forbidden inventions include new:
+
+- objects;
+- people;
+- actions;
+- sounds;
+- weather;
+- architecture;
+- visible environmental details;
+- character emotions or intentions asserted as fact;
+- causal events.
+
+There is intentionally no second semantic-validator model pass. Grounding is primarily prompt-enforced and observed through presentation diagnostics/exchange logs.
+
+## Style
+
+Target style: **a well-written novel that has been edited aggressively**.
+
+Guidelines:
+
+- concise and vivid;
+- one strong detail rather than several weak ones;
+- no filler;
+- no repeated restatement of the same fact;
+- do not re-describe the entire room every tick;
+- unchanged snapshot facts should be terse;
+- important new events may receive slightly more vivid treatment.
+
+Static narration may be somewhat more atmospheric than dynamic narration.
+
+Dynamic completion ceiling: 700 tokens.
+
+Narrator requests have no character-style reasoning budget.
 
 ## Failure semantics
 
-Narration is non-canonical presentation work. Network errors, provider errors, truncation, empty/malformed output, or verbatim validation failures must never roll back, repeat, or otherwise affect a world tick.
+Narrator failure is presentation-only.
 
-On any narrator failure, render the existing raw/canonical presentation. Automatic narration retries are not required.
+It never:
 
-## Shared request executor and logging
+- rolls back a world tick;
+- repeats AI reactions;
+- retries character actions;
+- changes canonical state;
+- modifies History.
 
-Narrator requests use the same serialized request/cooldown infrastructure as character model calls, but bypass the character `AIProtocol` response validator through a generic/custom execution path.
+Static and dynamic failure are independent.
 
-They are recorded in the existing transient exchange history and therefore in the crystal-sphere exchange export with:
+Raw fallback uses the existing deterministic presentation.
+
+## Persistent presentation colours
+
+Presentation sections use subtle diagnostic backgrounds as normal UI presentation for the foreseeable future.
+
+- successful static Narrator section: muted blue;
+- successful dynamic Narrator section: muted green;
+- raw/fallback section: muted red.
+
+The colours are intentionally close to the page background, with modest padding and rounding and no `STATIC`, `DYNAMIC`, or `RAW` labels.
+
+The entire assembled dynamic scene, including immutable character-authored blocks, shares the same green dynamic container.
+
+## Busy indicator
+
+While turn processing is active, the previous completed scene remains visible.
+
+One generic busy indicator is shown between scene/debug presentation and gameplay shortcut controls:
+
+```text
+[large centered spinner]
+Thinking...
+```
+
+The spinner is roughly three to four times the body-text size: clearly visible but not giant.
+
+The UI does not expose which character, Narrator, or model is currently processing.
+
+Existing busy-state disabling of gameplay controls remains in effect.
+
+## Hot model switching
+
+Character and Narrator model selections are independent runtime preferences.
+
+Changing either selector during gameplay applies to the next corresponding request. It does not reset the game or mutate world state.
+
+An already-running transport call is unaffected by later selector changes.
+
+Changing the Narrator model does not itself trigger a fresh narration request. Existing presentation remains until the next normal Narrator lifecycle request.
+
+## Location transitions
+
+After Human movement and the complete reaction wave:
+
+1. the tick resolves;
+2. the destination Human restricted view is authoritative;
+3. destination static narration is generated freshly;
+4. dynamic narration uses the completed tick's `tickEvents` plus the final destination `snapshot`;
+5. previous-location presentation must not leak into the new scene.
+
+## History
+
+History remains canonical/raw and independent from Narrator presentation.
+
+Narrator prose is never written into History and previous History entries are never rewritten.
+
+## Exchange logging
+
+Narrator calls continue through the shared AI request executor and exchange history with:
 
 - `purpose: "narration"`;
-- `stage: "location"` or `"tick"`;
-- selected narrator model;
-- sent messages;
-- raw response;
-- narration validation trace;
-- usage/cost/provider diagnostics;
-- fallback status where applicable.
+- `stage: "location"` or `stage: "tick"`;
+- actual selected model ID;
+- request messages containing structured static input or `snapshot`/`tickEvents`;
+- raw provider content;
+- parsed prose / assembly result;
+- tolerant padding and extra-segment counts;
+- fallback/error information.
 
-API keys and authorization secrets remain excluded by the existing export redaction rules.
+The trace also exposes a structured `presentationInput` copy for easier debugging.
 
-## History and simulation invariants
+## Acceptance criteria
 
-Existing History remains unchanged and continues to store raw grounded/player-facing entries. Narrator prose does not replace History and never becomes world state, event truth, memory, belief, relationship state, continuation, or an AI observation.
+The implementation is accepted when:
 
-The deterministic engine remains the sole owner of objective state and formal action results. Existing restricted-view/perception rules remain authoritative. Narrator output must never expand what the HumanController is allowed to perceive.
-
-## Unified narrated scene presentation
-
-When narration succeeds, the narrator is a replacement presentation path rather than an extra layer on top of the legacy UI.
-
-The normal narrated location view is composed as one main scene:
-
-`History -> narrated static location prose -> narrated dynamic tick prose with inline verbatim character blocks -> gameplay/debug controls`
-
-A successful dynamic narration therefore replaces both of the legacy dynamic presentation components:
-
-- the boxed `Latest turn` transcript; and
-- the raw current-position/presence paragraphs such as `You are standing...`, `Nell stands...`, or `Price sits...`.
-
-Character-authored Human/AI text remains inside the narrated dynamic scene at its causal position. It is not collected into a separate panel. The paired `<verbatim id="...">...</verbatim>` blocks are only an internal narrator framing protocol; after validation, the renderer discards model-returned inner payloads, restores the canonical originals, and renders the resulting fragments inline as ordinary scene prose.
-
-Static and dynamic narrator validity are independent. A valid narrated static room description may remain visible if a later tick narration fails. The dynamic portion itself is all-or-nothing:
-
-- successful `narrateTick` -> render only the narrated dynamic scene (plus optional invisible-event debug rows when explicitly enabled);
-- narrator disabled or `narrateTick` failure -> render the complete legacy dynamic fallback: `Latest turn` plus raw dynamic scene state.
-
-Never render successful narrated dynamic prose simultaneously with its raw `Latest turn` or raw character-position equivalent.
-
-Disabling `Enable narrator` immediately selects the legacy raw presentation path without advancing the world. Re-enabling may reuse currently valid presentation state; it does not itself imply a simulation tick.
-
-Narrator presentation state is non-canonical. It must not enter world state, History, character memory, beliefs, observations, or action semantics. Loading a save invalidates cached narrated presentation so stale prose is not reused across restored runtime state.
+1. successful static narration replaces raw static description;
+2. successful dynamic narration replaces legacy `Latest turn` plus raw dynamic scene;
+3. immutable Human/AI character text appears inline and cannot be altered by the Narrator;
+4. the Narrator no longer returns `<verbatim>` blocks;
+5. dynamic input separates final `snapshot` from causal current-tick `tickEvents`;
+6. UI History remains separate and raw;
+7. empty prose slots are valid;
+8. missing prose slots are padded with empty strings;
+9. extra prose slots are appended after the final immutable block;
+10. count mismatch alone never triggers fallback or a repair request;
+11. grounded engine events remain available alongside immutable character blocks;
+12. Narrator failure never affects simulation state;
+13. narrated and equivalent raw dynamic presentation never appear simultaneously;
+14. static / dynamic / raw sections use subtle blue / green / red backgrounds;
+15. no colour labels are shown;
+16. previous completed scene remains visible while processing;
+17. the centered spinner appears between presentation and gameplay controls;
+18. busy text is exactly `Thinking...`;
+19. static and dynamic ceilings are 400 and 700 completion tokens;
+20. prompts strongly prefer concise edited literary prose without concrete hallucinated facts;
+21. character and Narrator models can be changed live and independently;
+22. model selection affects the next corresponding request without forcing a reset or immediate re-narration;
+23. location-entry narration is fresh and does not leak previous-location presentation;
+24. Narrator traces/exchange logs expose the structured input and assembly diagnostics.

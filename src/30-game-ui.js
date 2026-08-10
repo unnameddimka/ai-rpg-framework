@@ -181,22 +181,7 @@
         const waveBusy = Boolean(setup.AITurnScheduler && setup.AITurnScheduler.isWaveInFlight && setup.AITurnScheduler.isWaveInFlight());
         const aiBusy = controllerBusy || executorBusy || waveBusy;
         const busy = uiState.turnBusy || aiBusy;
-        let text = "";
-        if (busy) {
-            if (aiBusy) {
-                const queue = setup.AITurnScheduler && setup.AITurnScheduler.getQueueView
-                    ? setup.AITurnScheduler.getQueueView()
-                    : null;
-                text = executorStatus.activePurpose === "narration"
-                    ? "Narrator is writing…"
-                    : queue && queue.head && queue.head.recipientName
-                        ? `${queue.head.recipientName} is thinking…`
-                        : "AI is thinking…";
-            } else {
-                text = "Processing turn…";
-            }
-        }
-        return { busy: busy, aiBusy: aiBusy, text: text };
+        return { busy: busy, aiBusy: aiBusy, text: busy ? "Thinking..." : "" };
     }
 
     function actionKey(action) {
@@ -652,9 +637,16 @@
         const narrated = isNarratorEnabled() && staticNarrationState.key === key && staticNarrationState.status === "ready"
             ? staticNarrationState.fragments
             : [];
-        (narrated.length ? narrated : rawStaticFragments(view)).forEach(function (fragment) {
-            appendRPElement(root, "p", fragment, narrated.length ? "framework-narrated-static" : "");
+        const fragments = narrated.length ? narrated : rawStaticFragments(view);
+        if (!fragments.length) return;
+        const section = document.createElement("section");
+        section.className = narrated.length
+            ? "framework-presentation-block framework-narrated-static"
+            : "framework-presentation-block framework-raw-presentation framework-raw-static";
+        fragments.forEach(function (fragment) {
+            appendRPElement(section, "p", fragment);
         });
+        root.appendChild(section);
     }
 
     function renderRawDynamicScene(root, view) {
@@ -665,11 +657,36 @@
 
     function renderNarratedDynamicScene(root, fragments) {
         const section = document.createElement("section");
-        section.className = "framework-narrated-dynamic";
+        section.className = "framework-presentation-block framework-narrated-dynamic";
         (Array.isArray(fragments) ? fragments : []).forEach(function (fragment) {
             appendRPElement(section, "p", fragment);
         });
         if (section.childNodes.length > 0) root.appendChild(section);
+    }
+
+    function renderRawDynamicPresentation(root, view, fragments) {
+        const hasTurn = Array.isArray(fragments) && fragments.length > 0;
+        const hasScene = rawDynamicFragments(view).length > 0;
+        const hasDebug = showInvisibleEvents && currentTurnHiddenNarrative.length > 0;
+        if (!hasTurn && !hasScene && !hasDebug) return;
+        const section = document.createElement("section");
+        section.className = "framework-presentation-block framework-raw-presentation framework-raw-dynamic";
+        renderLegacyLatestTurn(section, fragments);
+        renderRawDynamicScene(section, view);
+        root.appendChild(section);
+    }
+
+    function renderBusyIndicator(root, busyState) {
+        if (!busyState || !busyState.busy) return;
+        const row = document.createElement("div");
+        row.className = "framework-busy-row";
+        row.setAttribute("aria-live", "polite");
+        const spinner = document.createElement("span");
+        spinner.className = "framework-spinner is-visible";
+        spinner.setAttribute("aria-hidden", "true");
+        row.appendChild(spinner);
+        appendTextElement(row, "span", "Thinking...", "framework-busy-text");
+        root.appendChild(row);
     }
 
     function renderInvisibleDebugEntries(root) {
@@ -1122,12 +1139,12 @@
             renderNarratedDynamicScene(root, turnPresentation.fragments);
             renderInvisibleDebugEntries(root);
         } else {
-            renderLegacyLatestTurn(root, turnPresentation.fragments);
-            renderRawDynamicScene(root, view);
+            renderRawDynamicPresentation(root, view, turnPresentation.fragments);
         }
 
         renderPrivateFeedback(root, actorId, view);
         renderPromptLab(root, view);
+        renderBusyIndicator(root, busyState);
 
         const groups = buildContextualActionGroups(view);
         const shortcuts = document.createElement("section");
@@ -1388,8 +1405,6 @@
             }
             $("#ai-settings-status").text(result.warning || `Narrator model selected: ${result.model.name}.`);
             $(".framework-narrator-model-id").text(result.model.id);
-            resetStaticNarration(staticNarrationState.key);
-            renderLocationView();
         });
 
         $("#save-ai-settings").on("click", function () {
@@ -1613,10 +1628,6 @@
         })).join("");
 
         actionRoot.innerHTML = `
-            <div class="framework-busy-row" aria-live="polite">
-                <span class="framework-spinner${busy ? " is-visible" : ""}" aria-hidden="true"></span>
-                <span id="framework-busy-text">${escapeHtml(busyState.text)}</span>
-            </div>
             <div id="framework-action-status" class="framework-status"></div>
 
             <div class="framework-narrative-action">

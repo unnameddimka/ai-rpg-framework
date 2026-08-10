@@ -20,7 +20,7 @@ function memoryStorage() {
     };
 }
 
-async function testRuntimeSettingsTransportAndLogging() {
+function narratorContext() {
     const storage = memoryStorage();
     const context = {
         setup: {},
@@ -37,27 +37,104 @@ async function testRuntimeSettingsTransportAndLogging() {
         "src/21-ai-settings.js",
         "src/22-openrouter-client.js",
         "src/24-ai-request-executor.js",
-        "src/26-presentation-narrator.js",
-        "src/24-prompt-lab.js"
+        "src/26-presentation-narrator.js"
     ].forEach(function (file) {
         vm.runInContext(source(file), context, { filename: file });
     });
+    return { context: context, storage: storage };
+}
 
+function sampleView() {
+    return {
+        self: {
+            id: "player",
+            name: "Traveler",
+            position_text: "You are standing by the fire.",
+            inventory: [{ id: "ownedMug", name: "Mug of ale" }]
+        },
+        location: {
+            id: "room",
+            name: "Room",
+            description: ["Stone walls."],
+            sublocations: [{ id: "table", name: "Table", public_text: "A scarred table stands by the wall." }],
+            characters: [{
+                id: "nell",
+                name: "Nell",
+                presence_text: "Nell watches the room.",
+                position_text: "Nell stands beside the table."
+            }],
+            items: [{ id: "coin", name: "Gold coin" }]
+        },
+        accessible_inventories: [
+            { id: "inventory_room", owner_id: "room", name: "Room", items: [] },
+            { id: "inventory_table", owner_id: "table", name: "Table", items: [{ id: "mug", name: "Mug of ale" }] }
+        ]
+    };
+}
+
+async function testStructuredInputAndTolerantAssembly() {
+    const { context } = narratorContext();
+    const assembler = context.setup.PresentationAssembler;
+    const entries = [
+        { visibleToHuman: true, kind: "human_narrative", actorId: "player", text: "Traveler: Hello." },
+        { visibleToHuman: true, kind: "human_action_event", actorId: "player", text: "Traveler paid 2 gold." },
+        { visibleToHuman: true, kind: "narrative", actorId: "nell", text: "Nell: *She nods.* Right away." },
+        { visibleToHuman: true, kind: "action_event", actorId: "nell", text: "Nell gave Mug of ale to Traveler." },
+        { visibleToHuman: false, kind: "narrative", actorId: "hidden", text: "Invisible text." }
+    ];
+
+    const request = assembler.tickMessages(sampleView(), entries);
+    assert(Array.isArray(request.snapshot) && request.snapshot.some(function (fact) { return fact.includes("Traveler is standing by the fire"); }) &&
+        request.snapshot.some(function (fact) { return fact.includes("Traveler carries: Mug of ale"); }),
+        "dynamic input should contain an authoritative final visible snapshot including the Human character's own inventory");
+    assert(request.tickEvents.length === 4 && request.tickEvents[0].kind === "character" && request.tickEvents[0].id === "v1" &&
+        request.tickEvents[1].kind === "fact" && request.tickEvents[2].kind === "character" && request.tickEvents[2].id === "v2" &&
+        !JSON.stringify(request.tickEvents).includes("Invisible text"),
+        "tickEvents should preserve causal order, mark immutable character blocks, and exclude invisible events");
+    assert(request.immutableOrder.join(",") === "v1,v2" && request.immutableBlocks.v1 === "Traveler: Hello." &&
+        request.immutableBlocks.v2.includes("Right away"),
+        "framework should retain canonical immutable block contents and order outside the model output");
+    assert(!request.messages[1].content.includes("<verbatim") && request.messages[1].content.includes('"snapshot"') &&
+        request.messages[1].content.includes('"tickEvents"'),
+        "dynamic request should use structured snapshot/tickEvents JSON instead of the old verbatim-tag protocol");
+
+    const tooFew = assembler.assembleDynamicPresentation(["Opening."], request.immutableBlocks, request.immutableOrder);
+    assert(tooFew.paddedCount === 2 && tooFew.extrasAppendedCount === 0 &&
+        tooFew.fragments.join("|") === "Opening.|Traveler: Hello.|Nell: *She nods.* Right away.",
+        "too few prose segments should be padded with empty strings instead of causing fallback");
+
+    const extras = assembler.assembleDynamicPresentation(
+        ["Opening.", "Between.", "Closing.", "Extra one.", "Extra two."],
+        request.immutableBlocks,
+        request.immutableOrder
+    );
+    assert(extras.paddedCount === 0 && extras.extrasAppendedCount === 2 &&
+        extras.fragments.join("|") === "Opening.|Traveler: Hello.|Between.|Nell: *She nods.* Right away.|Closing.|Extra one.|Extra two.",
+        "extra prose segments should be appended after the last immutable block in returned order");
+
+    const empties = assembler.assembleDynamicPresentation(["", "", ""], request.immutableBlocks, request.immutableOrder);
+    assert(empties.fragments.length === 2 && empties.fragments[0] === request.immutableBlocks.v1 && empties.fragments[1] === request.immutableBlocks.v2,
+        "empty prose slots should be valid and should not force filler around immutable character text");
+}
+
+async function testRuntimeTransportBudgetsHotSwitchingAndLogging() {
+    const { context, storage } = narratorContext();
     const settings = context.setup.AIRuntimeSettings;
+    const narrator = context.setup.NarratorService;
+    assert(narrator.STATIC_MAX_TOKENS === 400 && narrator.DYNAMIC_MAX_TOKENS === 700,
+        "static and dynamic narrator completion ceilings should be 400 and 700 tokens");
     assert(settings.getDefaultNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro",
-        "Llama 3.3 Euryale 70B Nitro should be the narrator default");
-    const characterModelId = settings.getSelectedModelId();
-    const selected = settings.selectNarratorModel("deepseek/deepseek-v4-pro", storage);
-    assert(selected.ok && settings.getSelectedNarratorModelId() === "deepseek/deepseek-v4-pro",
-        "narrator model should be independently selectable");
-    assert(settings.getSelectedModelId() === characterModelId,
-        "selecting a narrator model must not change the character model");
-    settings.selectNarratorModel("sao10k/l3.3-euryale-70b:nitro", storage);
-    settings.save("sk-or-v1-narrator-test-key-1234567890", false, storage, Date.now());
+        "Llama 3.3 Euryale 70B Nitro should remain the narrator default");
 
-    let capturedBody = null;
-    async function fakeFetch(url, options) {
-        capturedBody = JSON.parse(options.body);
+    const characterModelId = settings.getSelectedModelId();
+    settings.save("sk-or-v1-narrator-test-key-1234567890", false, storage, Date.now());
+    const bodies = [];
+    context.fetch = async function (url, options) {
+        const body = JSON.parse(options.body);
+        bodies.push(body);
+        const content = body.max_tokens === 400
+            ? "Stone walls frame the quiet room."
+            : JSON.stringify({ prose: ["Nell crosses the room.", "The mug is now in the Traveler's hands."] });
         return {
             ok: true,
             status: 200,
@@ -66,92 +143,123 @@ async function testRuntimeSettingsTransportAndLogging() {
             headers: { get: function () { return null; }, forEach: function () {} },
             text: async function () {
                 return JSON.stringify({
-                    choices: [{ finish_reason: "stop", message: { content: "Narrated." } }],
-                    usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 }
+                    choices: [{ finish_reason: "stop", message: { content: content } }],
+                    usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 }
                 });
             }
         };
-    }
-
-    const narratorTransport = await context.setup.OpenRouterClient.chatWithOptions(
-        [{ role: "user", content: "Narrate." }],
-        {
-            modelId: settings.getSelectedNarratorModelId(),
-            maxTokens: 1200,
-            reasoningMaxTokens: 0,
-            temperature: 0.7
-        },
-        fakeFetch
-    );
-    assert(narratorTransport.ok, "narrator transport should accept a successful provider response");
-    assert(capturedBody.model === "sao10k/l3.3-euryale-70b:nitro" && capturedBody.max_tokens === 1200 && capturedBody.temperature === 0.7,
-        "narrator transport should use its independent model and lightweight generation budget");
-    assert(!Object.prototype.hasOwnProperty.call(capturedBody, "reasoning"),
-        "narrator transport should not send the character reasoning budget");
-
-    await context.setup.OpenRouterClient.chat([{ role: "user", content: "Character turn." }], fakeFetch);
-    assert(capturedBody.model === characterModelId && capturedBody.max_tokens === 3000 &&
-        capturedBody.reasoning && capturedBody.reasoning.max_tokens === 1500,
-        "existing character-model transport defaults should remain unchanged");
-
-    const view = {
-        self: { id: "player", name: "Traveler", position_text: "You are standing in the room." },
-        location: {
-            id: "room",
-            name: "Room",
-            description: ["Stone walls."],
-            sublocations: [],
-            characters: [],
-            items: []
-        },
-        accessible_inventories: []
     };
+
+    settings.selectNarratorModel("sao10k/l3.3-euryale-70b:nitro", storage);
+    const staticResult = await narrator.describeLocation(sampleView());
+    assert(staticResult.ok && bodies[0].model === "sao10k/l3.3-euryale-70b:nitro" && bodies[0].max_tokens === 400 &&
+        !Object.prototype.hasOwnProperty.call(bodies[0], "reasoning"),
+        "static narrator request should use the currently selected narrator model, 400-token ceiling, and no reasoning budget");
+
+    const switched = settings.selectNarratorModel("deepseek/deepseek-v4-pro", storage);
+    assert(switched.ok && settings.getSelectedModelId() === characterModelId,
+        "narrator hot switching must remain independent from the selected character model");
+    const tickResult = await narrator.narrateTick({
+        view: sampleView(),
+        entries: [{ visibleToHuman: true, kind: "narrative", actorId: "nell", text: "Nell: Here you are." }]
+    });
+    assert(tickResult.ok && bodies[1].model === "deepseek/deepseek-v4-pro" && bodies[1].max_tokens === 700 &&
+        bodies[1].temperature === 0.7 && !Object.prototype.hasOwnProperty.call(bodies[1], "reasoning"),
+        "changing narrator model during gameplay should affect the next narrator request without changing character transport defaults");
+
+    const history = context.setup.AIRequestExecutor.getExchangeHistory();
+    const narrationEntries = history.entries.filter(function (entry) { return entry.request.purpose === "narration"; });
+    assert(narrationEntries.length === 2 && narrationEntries[0].request.stage === "location" && narrationEntries[1].request.stage === "tick" &&
+        narrationEntries[1].request.modelId === "deepseek/deepseek-v4-pro" &&
+        narrationEntries[1].result.trace.presentationInput && Array.isArray(narrationEntries[1].result.trace.presentationInput.snapshot) &&
+        Array.isArray(narrationEntries[1].result.trace.presentationInput.tickEvents),
+        "exchange logging should expose narration purpose/stage/model plus structured snapshot and tickEvents input");
+
+    let capturedCharacterBody = null;
+    async function fakeCharacterFetch(url, options) {
+        capturedCharacterBody = JSON.parse(options.body);
+        return {
+            ok: true,
+            status: 200,
+            statusText: "OK",
+            url: url,
+            headers: { get: function () { return null; }, forEach: function () {} },
+            text: async function () {
+                return JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "{}" } }] });
+            }
+        };
+    }
+    await context.setup.OpenRouterClient.chat([{ role: "user", content: "Character turn." }], fakeCharacterFetch);
+    assert(capturedCharacterBody.model === characterModelId && capturedCharacterBody.max_tokens === 3000 &&
+        capturedCharacterBody.reasoning && capturedCharacterBody.reasoning.max_tokens === 1500,
+        "existing character transport should keep its independent 3000/1500 defaults after narrator model switching");
+}
+
+async function testNarratorResponseToleranceAndFallback() {
+    const { context } = narratorContext();
+    const view = sampleView();
     const entries = [
-        { visibleToHuman: true, kind: "narrative", text: "Nell: *She smiles.* Hello." },
-        { visibleToHuman: true, kind: "action_event", text: "Nell took Empty mug." }
+        { visibleToHuman: true, kind: "narrative", actorId: "nell", text: "Nell: First line." },
+        { visibleToHuman: true, kind: "action_event", actorId: "nell", text: "Nell moved." },
+        { visibleToHuman: true, kind: "narrative", actorId: "nell", text: "Nell: Second line." }
     ];
-    const goodClient = {
+
+    const shortClient = {
+        chat: async function () {
+            return { ok: true, modelId: "fake/short", content: JSON.stringify({ prose: ["Before."] }), usage: null };
+        }
+    };
+    const shortResult = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, shortClient);
+    assert(shortResult.ok && !shortResult.fallbackUsed && shortResult.value.assembly.paddedCount === 2 &&
+        shortResult.value.fragments.includes("Nell: First line.") && shortResult.value.fragments.includes("Nell: Second line."),
+        "a short prose array should remain a valid narration and preserve canonical immutable blocks");
+
+    const extraClient = {
         chat: async function () {
             return {
                 ok: true,
-                modelId: "fake/narrator",
-                content: [
-                    "The room settles into a quieter rhythm.",
-                    '<verbatim id="v1">MODEL-CHANGED TEXT</verbatim>',
-                    "Nell takes the mug."
-                ].join("\n\n"),
-                usage: { total_tokens: 7 }
+                modelId: "fake/extra",
+                content: JSON.stringify({ prose: ["Before.", "Middle.", "After.", "Tail one.", "Tail two."] }),
+                usage: null
             };
         }
     };
-    const narrated = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, goodClient);
-    assert(narrated.ok && narrated.value.fragments.includes("Nell: *She smiles.* Hello."),
-        "successful tick narration should restore the canonical character-authored block");
-    assert(!narrated.value.text.includes("MODEL-CHANGED TEXT"),
-        "model-returned verbatim payload must never reach final presentation");
+    const extraResult = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, extraClient);
+    const tail = extraResult.value.fragments.slice(-2).join("|");
+    assert(extraResult.ok && extraResult.value.assembly.extrasAppendedCount === 2 && tail === "Tail one.|Tail two.",
+        "extra prose blocks should be appended instead of causing narrator fallback");
 
-    const history = context.setup.AIRequestExecutor.getExchangeHistory();
-    const last = history.entries[history.entries.length - 1];
-    assert(last.request.purpose === "narration" && last.request.stage === "tick" && last.result.ok,
-        "narrator requests should use the shared executor and be marked in exchange history");
-    context.setup.Game = {
-        getWorld: function () { return { turn: 7, entities: { player: { id: "player", locationId: "room" } } }; },
-        getHumanCharacterId: function () { return "player"; }
+    const fencedClient = {
+        chat: async function () {
+            return { ok: true, modelId: "fake/fenced", content: '```json\n{"prose":["","",""]}\n```', usage: null };
+        }
     };
-    context.setup.AITurnScheduler = { getQueueView: function () { return { count: 0, entries: [], head: null }; } };
-    const exported = context.setup.PromptLab.buildExchangeLog(0);
-    assert(exported.ok && exported.data.exchangeHistory.entries.some(function (entry) {
-        return entry.request && entry.request.purpose === "narration" && entry.request.stage === "tick";
-    }), "sphere exchange export should include narrator requests with narration-specific purpose/stage metadata");
+    const fencedResult = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, fencedClient);
+    assert(fencedResult.ok && fencedResult.value.fragments.length === 2,
+        "a single JSON markdown fence should be tolerated and empty prose should leave only immutable blocks");
+
+    const extraKeyClient = {
+        chat: async function () {
+            return {
+                ok: true,
+                modelId: "fake/extra-key",
+                content: JSON.stringify({ prose: ["Before.", "Between.", "After."], note: "ignore me" }),
+                usage: null
+            };
+        }
+    };
+    const extraKeyResult = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, extraKeyClient);
+    assert(extraKeyResult.ok && extraKeyResult.value.assembly.ignoredResponseKeys.join(",") === "note",
+        "harmless extra response keys should be ignored and logged rather than causing presentation fallback");
 
     const badClient = {
         chat: async function () {
-            return { ok: true, modelId: "fake/narrator", content: '<verbatim id="v2">wrong id</verbatim>', usage: null };
+            return { ok: true, modelId: "fake/bad", content: "not json at all", usage: null };
         }
     };
     const invalid = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, badClient);
-    assert(!invalid.ok && invalid.fallbackUsed && invalid.error.code === "NARRATOR_INVALID_VERBATIM",
-        "invalid paired verbatim framing should fail narration and request raw fallback");
+    assert(!invalid.ok && invalid.fallbackUsed && invalid.error.code === "NARRATOR_INVALID_RESPONSE",
+        "genuinely unparsable dynamic narrator output should still request raw fallback");
 }
 
 async function testTurnFlowIntegration() {
@@ -202,7 +310,7 @@ async function testTurnFlowIntegration() {
                 isEnabled: function () { return true; },
                 narrateTick: async function (input) {
                     narratorCalls++;
-                    assert(input.entries.length === 4, "narrator should receive the complete raw presentation after the wave");
+                    assert(input.entries.length === 4, "narrator should receive the complete current-tick raw presentation after the wave");
                     return { ok: true, value: { fragments: ["LITERARY", "Traveler: hello", "Nell: *Nell smiles.* Hi."] } };
                 }
             }
@@ -215,27 +323,25 @@ async function testTurnFlowIntegration() {
         target_id: "",
         action: { type: "take_item", item_id: "mug" }
     });
-    assert(narratorCalls === 1, "one completed human turn/reaction wave should produce exactly one narrator request");
+    assert(narratorCalls === 1, "one completed human turn/reaction wave should produce exactly one dynamic narrator request");
     assert(result.narrativeFragments[0] === "LITERARY" && result.rawNarrativeFragments[0] === "Traveler: hello",
-        "narrated display output should coexist with the retained raw fallback presentation");
+        "narrated display output should coexist internally with the retained raw fallback presentation");
     assert(result.historyEntries[0].text === "Traveler: hello" && result.historyEntries.some(function (entry) { return entry.text === "Nell moved."; }),
-        "History must remain the original raw grounded presentation rather than narrator prose");
+        "History must remain original raw grounded presentation rather than narrator prose");
 
     context.setup.NarratorService.narrateTick = async function () {
         throw new Error("synthetic narrator failure");
     };
-    const fallback = await context.setup.TurnFlow.submitHumanIntent({
-        text: "fallback line",
-        target_id: "",
-        action: null
-    });
-    assert(fallback.ok && fallback.narrativeFragments[0] === "Traveler: fallback line" &&
-        fallback.narrator && fallback.narrator.fallbackUsed && fallback.narrator.error.code === "NARRATOR_PRESENTATION_EXCEPTION",
+    const fallback = await context.setup.TurnFlow.submitHumanIntent({ text: "fallback line", target_id: "", action: null });
+    assert(fallback.ok && fallback.narrativeFragments[0] === "Traveler: fallback line" && fallback.narrator &&
+        fallback.narrator.fallbackUsed && fallback.narrator.error.code === "NARRATOR_PRESENTATION_EXCEPTION",
         "unexpected narrator exceptions must fall back to raw presentation without failing the completed world tick");
 }
 
 Promise.resolve()
-    .then(testRuntimeSettingsTransportAndLogging)
+    .then(testStructuredInputAndTolerantAssembly)
+    .then(testRuntimeTransportBudgetsHotSwitchingAndLogging)
+    .then(testNarratorResponseToleranceAndFallback)
     .then(testTurnFlowIntegration)
     .then(function () { console.log("All presentation narrator tests passed."); })
     .catch(function (error) {

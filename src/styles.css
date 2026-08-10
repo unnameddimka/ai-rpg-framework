@@ -427,20 +427,42 @@ details[open] > summary .framework-disclosure-arrow {
     font-style: italic;
 }
 
-.framework-turn-narrative {
-    margin: 1rem 0 1.4rem;
-    padding: 1rem;
-    border-left: 4px solid #8c795c;
-    background: rgba(255, 255, 255, 0.06);
+.framework-presentation-block {
+    margin: 0.8rem 0 1rem;
+    padding: 0.72rem 0.9rem;
+    border-radius: 0.38rem;
+}
+
+.framework-presentation-block > :first-child {
+    margin-top: 0;
+}
+
+.framework-presentation-block > :last-child {
+    margin-bottom: 0;
+}
+
+.framework-narrated-static {
+    background: rgba(74, 96, 116, 0.16);
 }
 
 .framework-narrated-dynamic {
-    margin: 0.9rem 0 1.4rem;
+    background: rgba(73, 106, 84, 0.16);
 }
 
-.framework-narrated-dynamic p {
-    margin: 0.65rem 0;
+.framework-raw-presentation {
+    background: rgba(116, 76, 76, 0.16);
+}
+
+.framework-presentation-block p {
+    margin: 0.6rem 0;
     white-space: pre-wrap;
+}
+
+.framework-turn-narrative {
+    margin: 0 0 0.8rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 
 .framework-invisible-debug-list {
@@ -540,26 +562,33 @@ details[open] > summary .framework-disclosure-arrow {
 /* Turn panel status and selected action */
 .framework-busy-row {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 0.55rem;
-    min-height: 1.6rem;
-    margin: 0.2rem 0 0.45rem;
+    justify-content: center;
+    gap: 0.45rem;
+    margin: 1.4rem 0 1.25rem;
+    min-height: 4.7rem;
+    text-align: center;
     font-weight: bold;
 }
 
 .framework-spinner {
-    width: 1rem;
-    height: 1rem;
+    width: 3.25rem;
+    height: 3.25rem;
     box-sizing: border-box;
-    border: 2px solid currentColor;
+    border: 0.28rem solid currentColor;
     border-right-color: transparent;
     border-radius: 50%;
     opacity: 0;
 }
 
 .framework-spinner.is-visible {
-    opacity: 1;
+    opacity: 0.86;
     animation: framework-spin 0.75s linear infinite;
+}
+
+.framework-busy-text {
+    font-size: 1rem;
 }
 
 @keyframes framework-spin {

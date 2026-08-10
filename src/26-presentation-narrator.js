@@ -1,37 +1,37 @@
 (function () {
     "use strict";
 
-    const NARRATOR_MAX_TOKENS = 1200;
+    const STATIC_MAX_TOKENS = 400;
+    const DYNAMIC_MAX_TOKENS = 700;
     const NARRATOR_TEMPERATURE = 0.7;
-    const VERBATIM_KINDS = new Set(["human_narrative", "narrative"]);
+    const IMMUTABLE_KINDS = new Set(["human_narrative", "narrative"]);
     let enabled = true;
 
     const STATIC_SYSTEM_PROMPT = [
         "You are the presentation narrator for a role-playing game.",
         "You do not control characters and you do not decide what happens.",
         "The supplied static location facts are authoritative.",
-        "Rewrite those facts into concise, natural literary prose suitable for showing the player on entering the location.",
-        "Do not invent, remove, or alter locations, objects, architecture, state, actions, people, atmosphere facts, or causal facts.",
-        "Do not add dynamic characters or items that are not supplied.",
-        "You may combine repetitive sentences and vary wording, but every supplied fact must remain true.",
-        "Return only the finished prose. Do not explain the task and do not use a markdown code fence."
+        "Rewrite them into concise, vivid literary prose suitable for showing the player on entering the location.",
+        "Keep a slightly ornate, novel-like voice, but write like an aggressively edited book: prefer one strong detail over several weak ones, avoid filler, and do not repeat the same fact in different words.",
+        "Do not invent, remove, or alter concrete locations, objects, architecture, state, actions, people, sounds, weather, lighting conditions, emotions, intentions, atmosphere facts, or causal facts that are not supplied.",
+        "Restrained stylistic flavour, rhythm, metaphor, and phrasing are allowed only when they do not create new objective world facts.",
+        "Do not add dynamic characters or mutable items that are not supplied.",
+        "Return only the finished prose. Usually one or two compact paragraphs are enough. Do not explain the task and do not use a markdown code fence."
     ].join(" ");
 
     const TICK_SYSTEM_PROMPT = [
         "You are the presentation narrator for a role-playing game.",
         "You do not control characters, choose actions, simulate psychology, or change the world.",
-        "Everything supplied outside protected verbatim blocks is authoritative grounded presentation material.",
-        "Rewrite the non-verbatim material into concise, natural literary prose while preserving every supplied fact and the causal order of the tick.",
-        "The CURRENT DYNAMIC SCENE is the final visible state after the tick. Describe all supplied character positions and visible dynamic items; wording may vary from tick to tick.",
-        "The TICK STREAM is chronological. Keep grounded actions and results in causal order relative to protected character text.",
-        "Produce one continuous scene presentation: weave the final dynamic snapshot and chronological tick stream together instead of writing separate snapshot and event summaries.",
-        "Place literary prose before, between, and after protected blocks where that best preserves causal flow. The protected character blocks must remain inline inside that prose, not collected into a separate section.",
-        "Never invent actions, dialogue, objects, positions, ownership, results, emotions as objective facts, or unseen events.",
-        "Never turn an attempt or failure into a success.",
-        "Protected blocks use exactly <verbatim id=\"vN\"> ... </verbatim>.",
-        "Their contents are read-only character-authored text. You may read them for linguistic continuity, but do not correct, paraphrase, translate, shorten, extend, split, merge, move, or delete them.",
-        "Preserve every verbatim opening tag, id, closing tag, and block order exactly. Every supplied verbatim block must appear exactly once in the returned presentation. Do not introduce new verbatim blocks or nest them.",
-        "Write natural prose around the protected blocks and return only the finished mixed presentation. Do not output wrapper tags or a markdown code fence."
+        "The input contains two different authoritative views of the completed current tick: snapshot is the final visible state after the tick, while tickEvents is the causal sequence of what happened during that tick.",
+        "Use tickEvents to preserve causal order and snapshot to avoid ending with stale positions, ownership, inventory, or other visible state.",
+        "Some tickEvents are immutable character-authored blocks with kind=character and an id. Their text is read-only context. Never quote, paraphrase, correct, translate, shorten, extend, merge, split, or reproduce those immutable texts in your response; the framework inserts them itself.",
+        "Return exactly one JSON object with exactly one key named prose. prose must be an array of strings containing only your literary prose around the immutable blocks.",
+        "If there are N immutable character blocks, the natural shape is N+1 prose strings: before the first block, between each pair, and after the last block. Any prose string may be empty when nothing useful should be added.",
+        "Do not add filler merely to occupy a prose slot. Do not repeat the whole room every tick. Unchanged snapshot facts should be terse; important new events may receive slightly more vivid treatment.",
+        "Keep grounded facts and results true. Never turn an attempt or failure into success.",
+        "Do not invent concrete unsupplied objects, people, actions, sounds, weather, architecture, visible environmental details, emotions, intentions, or causal events.",
+        "Restrained literary flavour, rhythm, and metaphor are allowed only when they do not become new objective facts.",
+        "Prefer concise, vivid prose with a slightly ornate novel-like voice. Return JSON only, with no markdown fence and no explanation."
     ].join(" ");
 
     function clone(value) {
@@ -40,13 +40,6 @@
 
     function asText(value) {
         return value === undefined || value === null ? "" : String(value);
-    }
-
-    function escapeVerbatimPayload(value) {
-        return asText(value)
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
     }
 
     function thirdPersonSelfPosition(view) {
@@ -76,9 +69,13 @@
         return facts;
     }
 
-    function buildDynamicFacts(view) {
+    function buildSnapshot(view) {
         if (!view || !view.location || !view.self) return [];
         const facts = [thirdPersonSelfPosition(view)];
+        const selfItems = itemNames(view.self.inventory || []);
+        if (selfItems.length) {
+            facts.push(`${view.self.name || "Character"} carries: ${selfItems.join(", ")}.`);
+        }
         (view.location.characters || []).forEach(function (character) {
             if (!character) return;
             const presence = asText(character.presence_text || character.playerDescription).trim();
@@ -100,91 +97,79 @@
         return facts;
     }
 
-    function buildTickStream(entries) {
-        const originals = {};
-        const order = [];
-        const parts = [];
+    function buildTickEvents(entries) {
+        const immutableBlocks = {};
+        const immutableOrder = [];
+        const tickEvents = [];
         let nextId = 1;
+
         (Array.isArray(entries) ? entries : []).forEach(function (entry) {
             if (!entry || entry.visibleToHuman === false || !asText(entry.text).trim()) return;
-            if (VERBATIM_KINDS.has(entry.kind)) {
+            const text = asText(entry.text);
+            if (IMMUTABLE_KINDS.has(entry.kind)) {
                 const id = `v${nextId++}`;
-                const original = asText(entry.text);
-                originals[id] = original;
-                order.push(id);
-                parts.push(`<verbatim id="${id}">\n${escapeVerbatimPayload(original)}\n</verbatim>`);
+                immutableBlocks[id] = text;
+                immutableOrder.push(id);
+                tickEvents.push({
+                    kind: "character",
+                    id: id,
+                    sourceKind: entry.kind || null,
+                    actorId: entry.actorId || null,
+                    text: text
+                });
             } else {
-                parts.push(asText(entry.text).trim());
+                tickEvents.push({
+                    kind: "fact",
+                    sourceKind: entry.kind || null,
+                    actorId: entry.actorId || null,
+                    text: text.trim()
+                });
             }
         });
-        return { parts: parts, originals: originals, order: order };
+
+        return {
+            tickEvents: tickEvents,
+            immutableBlocks: immutableBlocks,
+            immutableOrder: immutableOrder
+        };
     }
 
     function staticMessages(view) {
         const facts = buildStaticFacts(view);
-        return [
-            { role: "system", content: STATIC_SYSTEM_PROMPT },
-            { role: "user", content: `STATIC LOCATION FACTS:\n${facts.map(function (fact) { return `- ${fact}`; }).join("\n")}` }
-        ];
-    }
-
-    function tickMessages(view, entries) {
-        const dynamicFacts = buildDynamicFacts(view);
-        const stream = buildTickStream(entries);
-        const streamText = stream.parts.length ? stream.parts.join("\n\n") : "(No chronological tick events need separate presentation.)";
         return {
             messages: [
-                { role: "system", content: TICK_SYSTEM_PROMPT },
-                { role: "user", content: [
-                    "CURRENT DYNAMIC SCENE:",
-                    dynamicFacts.map(function (fact) { return `- ${fact}`; }).join("\n") || "- No visible dynamic scene facts.",
-                    "",
-                    "TICK STREAM:",
-                    streamText
-                ].join("\n") }
+                { role: "system", content: STATIC_SYSTEM_PROMPT },
+                { role: "user", content: `STATIC LOCATION FACTS:\n${facts.map(function (fact) { return `- ${fact}`; }).join("\n")}` }
             ],
-            originals: stream.originals,
-            order: stream.order
+            input: { staticFacts: facts }
         };
     }
 
-    function validateVerbatimResponse(text, expectedOrder) {
-        const source = asText(text);
-        const expected = Array.isArray(expectedOrder) ? expectedOrder.slice() : [];
-        const errors = [];
-        const seen = [];
-        let activeId = null;
-        const tokenPattern = /<verbatim id="([^"]+)">|<\/verbatim>/g;
-        let token;
-        while ((token = tokenPattern.exec(source)) !== null) {
-            if (token[1]) {
-                if (activeId !== null) errors.push(`Nested verbatim block '${token[1]}' is not allowed.`);
-                activeId = token[1];
-                seen.push(activeId);
-            } else {
-                if (activeId === null) errors.push("Unexpected verbatim closing tag.");
-                activeId = null;
-            }
-        }
-        if (activeId !== null) errors.push(`Verbatim block '${activeId}' is not closed.`);
+    function tickMessages(view, entries) {
+        const snapshot = buildSnapshot(view);
+        const stream = buildTickEvents(entries);
+        const payload = {
+            snapshot: snapshot,
+            tickEvents: stream.tickEvents,
+            immutableBlockOrder: stream.immutableOrder
+        };
+        return {
+            messages: [
+                { role: "system", content: TICK_SYSTEM_PROMPT },
+                { role: "user", content: `NARRATOR INPUT JSON:\n${JSON.stringify(payload)}` }
+            ],
+            input: clone(payload),
+            snapshot: snapshot,
+            tickEvents: stream.tickEvents,
+            immutableBlocks: stream.immutableBlocks,
+            immutableOrder: stream.immutableOrder
+        };
+    }
 
-        const openingCount = (source.match(/<verbatim\b/g) || []).length;
-        const closingCount = (source.match(/<\/verbatim>/g) || []).length;
-        if (openingCount !== expected.length) errors.push(`Expected ${expected.length} verbatim opening tag(s), received ${openingCount}.`);
-        if (closingCount !== expected.length) errors.push(`Expected ${expected.length} verbatim closing tag(s), received ${closingCount}.`);
-        if (seen.length !== expected.length || seen.some(function (id, index) { return id !== expected[index]; })) {
-            errors.push(`Verbatim block order must be exactly: ${expected.join(", ") || "(none)"}.`);
-        }
-        const unique = new Set(seen);
-        if (unique.size !== seen.length) errors.push("Duplicate verbatim block IDs are not allowed.");
-        seen.forEach(function (id) {
-            if (!expected.includes(id)) errors.push(`Unexpected verbatim block '${id}'.`);
-        });
-
-        if (expected.length === 0 && (openingCount || closingCount)) {
-            errors.push("Static narration must not introduce verbatim blocks.");
-        }
-        return { ok: errors.length === 0, errors: errors, seen: seen };
+    function stripSingleCodeFence(value) {
+        const text = asText(value).trim();
+        const match = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+        return match ? match[1].trim() : text;
     }
 
     function splitNarratableText(value) {
@@ -193,33 +178,80 @@
         return text.split(/\n\s*\n+/).map(function (part) { return part.trim(); }).filter(Boolean);
     }
 
-    function restoreVerbatimFragments(text, originals, expectedOrder) {
-        const validation = validateVerbatimResponse(text, expectedOrder);
-        if (!validation.ok) {
-            return { ok: false, errors: validation.errors, fragments: [], text: "" };
+    function parseDynamicResponse(value) {
+        const raw = stripSingleCodeFence(value);
+        let parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (error) {
+            return {
+                ok: false,
+                error: "Narrator dynamic response was not valid JSON."
+            };
         }
-        const source = asText(text);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.prose)) {
+            return {
+                ok: false,
+                error: "Narrator dynamic response must be an object containing a prose array."
+            };
+        }
+        const ignoredKeys = Object.keys(parsed).filter(function (key) { return key !== "prose"; });
+        const prose = [];
+        for (let index = 0; index < parsed.prose.length; index++) {
+            const item = parsed.prose[index];
+            if (item === null || item === undefined) {
+                prose.push("");
+            } else if (typeof item === "string") {
+                prose.push(item);
+            } else {
+                return {
+                    ok: false,
+                    error: `Narrator prose segment ${index} is not a string.`
+                };
+            }
+        }
+        return { ok: true, prose: prose, ignoredKeys: ignoredKeys };
+    }
+
+    function assembleDynamicPresentation(proseSegments, immutableBlocks, immutableOrder) {
+        const prose = Array.isArray(proseSegments) ? proseSegments.slice() : [];
+        const order = Array.isArray(immutableOrder) ? immutableOrder.slice() : [];
+        const expectedCount = order.length + 1;
+        const receivedCount = prose.length;
+        const paddedCount = Math.max(0, expectedCount - receivedCount);
+        const extrasAppendedCount = Math.max(0, receivedCount - expectedCount);
+        while (prose.length < expectedCount) prose.push("");
+
         const fragments = [];
-        const blockPattern = /<verbatim id="([^"]+)">[\s\S]*?<\/verbatim>/g;
-        let cursor = 0;
-        let match;
-        while ((match = blockPattern.exec(source)) !== null) {
-            fragments.push.apply(fragments, splitNarratableText(source.slice(cursor, match.index)));
-            fragments.push(asText(originals && originals[match[1]]));
-            cursor = match.index + match[0].length;
+        function appendProse(value) {
+            fragments.push.apply(fragments, splitNarratableText(value));
         }
-        fragments.push.apply(fragments, splitNarratableText(source.slice(cursor)));
+
+        for (let index = 0; index < order.length; index++) {
+            appendProse(prose[index]);
+            const original = asText(immutableBlocks && immutableBlocks[order[index]]);
+            if (original !== "") fragments.push(original);
+        }
+        appendProse(prose[order.length]);
+        for (let index = expectedCount; index < prose.length; index++) {
+            appendProse(prose[index]);
+        }
+
         return {
-            ok: true,
-            errors: [],
-            fragments: fragments.filter(function (fragment) { return fragment !== ""; }),
-            text: fragments.filter(function (fragment) { return fragment !== ""; }).join("\n\n")
+            fragments: fragments,
+            text: fragments.join("\n\n"),
+            prose: proseSegments ? proseSegments.slice() : [],
+            expectedProseCount: expectedCount,
+            receivedProseCount: receivedCount,
+            paddedCount: paddedCount,
+            extrasAppendedCount: extrasAppendedCount
         };
     }
 
-    function traceFor(stage, messages, response, rawContent, validationErrors, parsedValue) {
+    function traceFor(stage, messages, response, rawContent, validationErrors, parsedValue, presentationInput) {
         return {
             stage: stage,
+            presentationInput: presentationInput ? clone(presentationInput) : null,
             attempts: [{
                 attempt: 1,
                 kind: "narration",
@@ -236,13 +268,14 @@
         };
     }
 
-    function narratorTransport() {
+    function narratorTransport(stage, modelId) {
+        const maxTokens = stage === "location" ? STATIC_MAX_TOKENS : DYNAMIC_MAX_TOKENS;
         return {
             enforceRequestTiming: true,
             chat: function (messages) {
                 return setup.OpenRouterClient.chatWithOptions(messages, {
-                    modelId: setup.AIRuntimeSettings.getSelectedNarratorModelId(),
-                    maxTokens: NARRATOR_MAX_TOKENS,
+                    modelId: modelId,
+                    maxTokens: maxTokens,
                     reasoningMaxTokens: 0,
                     temperature: NARRATOR_TEMPERATURE
                 });
@@ -250,106 +283,93 @@
         };
     }
 
-    function executeNarration(stage, messages, originals, expectedOrder, clientOverride) {
+    function failureResult(stage, messages, response, modelId, error, rawContent, validationErrors, presentationInput) {
+        return {
+            ok: false,
+            value: null,
+            error: error,
+            fallbackUsed: true,
+            repaired: false,
+            modelId: response && response.modelId || modelId,
+            usage: response && response.usage || null,
+            rawContent: rawContent || "",
+            trace: traceFor(stage, messages, response, rawContent || "", validationErrors || [], null, presentationInput),
+            execution: { fallbackUsed: true }
+        };
+    }
+
+    function executeNarration(specification, clientOverride) {
+        const spec = specification || {};
+        const stage = spec.stage;
+        const messages = clone(spec.messages || []);
         const modelId = setup.AIRuntimeSettings.getSelectedNarratorModelId();
         return setup.AIRequestExecutor.executeCustom({
             actorId: null,
             purpose: "narration",
             stage: stage,
             messages: clone(messages),
-            client: clientOverride || narratorTransport(),
+            client: clientOverride || narratorTransport(stage, modelId),
             run: async function (policyClient) {
                 const response = await policyClient.chat(messages);
                 if (!response || !response.ok) {
                     const error = response && response.error
                         ? clone(response.error)
                         : { code: "NARRATOR_REQUEST_FAILED", message: "Narrator request failed." };
-                    return {
-                        ok: false,
-                        value: null,
-                        error: error,
-                        fallbackUsed: true,
-                        repaired: false,
-                        modelId: response && response.modelId || modelId,
-                        usage: response && response.usage || null,
-                        rawContent: response && typeof response.content === "string" ? response.content : "",
-                        trace: traceFor(stage, messages, response, response && response.content || "", [], null),
-                        execution: { fallbackUsed: true }
-                    };
+                    return failureResult(stage, messages, response, modelId, error,
+                        response && typeof response.content === "string" ? response.content : "", [], spec.input);
                 }
 
                 const rawContent = asText(response.content).trim();
                 if (!rawContent) {
-                    const errors = ["Narrator returned empty content."];
-                    return {
-                        ok: false,
-                        value: null,
-                        error: { code: "NARRATOR_EMPTY_RESPONSE", message: "Narrator returned empty content." },
-                        fallbackUsed: true,
-                        repaired: false,
-                        modelId: response.modelId || modelId,
-                        usage: response.usage || null,
-                        rawContent: rawContent,
-                        trace: traceFor(stage, messages, response, rawContent, errors, null),
-                        execution: { fallbackUsed: true }
-                    };
+                    return failureResult(stage, messages, response, modelId,
+                        { code: "NARRATOR_EMPTY_RESPONSE", message: "Narrator returned empty content." },
+                        rawContent, ["Narrator returned empty content."], spec.input);
                 }
 
-                let restored;
+                let value;
                 if (stage === "tick") {
-                    restored = restoreVerbatimFragments(rawContent, originals || {}, expectedOrder || []);
-                    if (!restored.ok) {
-                        return {
-                            ok: false,
-                            value: null,
-                            error: {
-                                code: "NARRATOR_INVALID_VERBATIM",
-                                message: "Narrator response did not preserve protected verbatim blocks.",
-                                details: clone(restored.errors)
-                            },
-                            fallbackUsed: true,
-                            repaired: false,
-                            modelId: response.modelId || modelId,
-                            usage: response.usage || null,
-                            rawContent: rawContent,
-                            trace: traceFor(stage, messages, response, rawContent, restored.errors, null),
-                            execution: { fallbackUsed: true }
-                        };
+                    const parsed = parseDynamicResponse(rawContent);
+                    if (!parsed.ok) {
+                        return failureResult(stage, messages, response, modelId,
+                            { code: "NARRATOR_INVALID_RESPONSE", message: "Narrator returned an unusable dynamic response.", details: [parsed.error] },
+                            rawContent, [parsed.error], spec.input);
                     }
+                    const assembled = assembleDynamicPresentation(parsed.prose, spec.immutableBlocks || {}, spec.immutableOrder || []);
+                    if (!assembled.fragments.length) {
+                        return failureResult(stage, messages, response, modelId,
+                            { code: "NARRATOR_EMPTY_PRESENTATION", message: "Narrator produced no usable dynamic presentation." },
+                            rawContent, ["Narrator produced no usable dynamic presentation."], spec.input);
+                    }
+                    value = {
+                        stage: stage,
+                        text: assembled.text,
+                        fragments: clone(assembled.fragments),
+                        prose: clone(parsed.prose),
+                        immutableBlockIds: clone(spec.immutableOrder || []),
+                        assembly: {
+                            expectedProseCount: assembled.expectedProseCount,
+                            receivedProseCount: assembled.receivedProseCount,
+                            paddedCount: assembled.paddedCount,
+                            extrasAppendedCount: assembled.extrasAppendedCount,
+                            ignoredResponseKeys: clone(parsed.ignoredKeys || [])
+                        }
+                    };
                 } else {
-                    const staticValidation = validateVerbatimResponse(rawContent, []);
-                    if (!staticValidation.ok) {
-                        return {
-                            ok: false,
-                            value: null,
-                            error: {
-                                code: "NARRATOR_INVALID_STATIC_RESPONSE",
-                                message: "Narrator returned invalid static presentation framing.",
-                                details: clone(staticValidation.errors)
-                            },
-                            fallbackUsed: true,
-                            repaired: false,
-                            modelId: response.modelId || modelId,
-                            usage: response.usage || null,
-                            rawContent: rawContent,
-                            trace: traceFor(stage, messages, response, rawContent, staticValidation.errors, null),
-                            execution: { fallbackUsed: true }
-                        };
+                    const prose = stripSingleCodeFence(rawContent);
+                    const fragments = splitNarratableText(prose);
+                    if (!fragments.length) {
+                        return failureResult(stage, messages, response, modelId,
+                            { code: "NARRATOR_EMPTY_PRESENTATION", message: "Narrator produced no usable static presentation." },
+                            rawContent, ["Narrator produced no usable static presentation."], spec.input);
                     }
-                    restored = {
-                        ok: true,
-                        fragments: splitNarratableText(rawContent),
-                        text: rawContent,
-                        errors: []
+                    value = {
+                        stage: stage,
+                        text: prose,
+                        fragments: clone(fragments),
+                        immutableBlockIds: []
                     };
                 }
 
-                const value = {
-                    stage: stage,
-                    text: restored.text,
-                    fragments: clone(restored.fragments),
-                    verbatimIds: clone(expectedOrder || [])
-                };
                 return {
                     ok: true,
                     value: value,
@@ -359,7 +379,7 @@
                     modelId: response.modelId || modelId,
                     usage: response.usage || null,
                     rawContent: rawContent,
-                    trace: traceFor(stage, messages, response, rawContent, [], value),
+                    trace: traceFor(stage, messages, response, rawContent, [], value, spec.input),
                     execution: { fallbackUsed: false }
                 };
             }
@@ -375,7 +395,12 @@
                 error: { code: "NARRATOR_DISABLED", message: "Narrator is disabled." }
             });
         }
-        return executeNarration("location", staticMessages(view), {}, [], clientOverride);
+        const assembled = staticMessages(view);
+        return executeNarration({
+            stage: "location",
+            messages: assembled.messages,
+            input: assembled.input
+        }, clientOverride);
     }
 
     function narrateTick(input, clientOverride) {
@@ -389,22 +414,31 @@
         }
         const source = input && typeof input === "object" ? input : {};
         const assembled = tickMessages(source.view, source.entries || []);
-        return executeNarration("tick", assembled.messages, assembled.originals, assembled.order, clientOverride);
+        return executeNarration({
+            stage: "tick",
+            messages: assembled.messages,
+            input: assembled.input,
+            immutableBlocks: assembled.immutableBlocks,
+            immutableOrder: assembled.immutableOrder
+        }, clientOverride);
     }
 
     setup.PresentationAssembler = {
         buildStaticFacts: buildStaticFacts,
-        buildDynamicFacts: buildDynamicFacts,
-        buildTickStream: buildTickStream,
+        buildSnapshot: buildSnapshot,
+        buildDynamicFacts: buildSnapshot,
+        buildTickEvents: buildTickEvents,
+        buildTickStream: buildTickEvents,
         staticMessages: staticMessages,
         tickMessages: tickMessages,
-        escapeVerbatimPayload: escapeVerbatimPayload,
-        validateVerbatimResponse: validateVerbatimResponse,
-        restoreVerbatimFragments: restoreVerbatimFragments
+        parseDynamicResponse: parseDynamicResponse,
+        assembleDynamicPresentation: assembleDynamicPresentation
     };
 
     setup.NarratorService = {
-        NARRATOR_MAX_TOKENS: NARRATOR_MAX_TOKENS,
+        STATIC_MAX_TOKENS: STATIC_MAX_TOKENS,
+        DYNAMIC_MAX_TOKENS: DYNAMIC_MAX_TOKENS,
+        NARRATOR_MAX_TOKENS: DYNAMIC_MAX_TOKENS,
         NARRATOR_TEMPERATURE: NARRATOR_TEMPERATURE,
         STATIC_SYSTEM_PROMPT: STATIC_SYSTEM_PROMPT,
         TICK_SYSTEM_PROMPT: TICK_SYSTEM_PROMPT,
