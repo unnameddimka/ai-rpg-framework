@@ -194,7 +194,8 @@ async function main() {
         "thedrummer/cydonia-24b-v4.1",
         "sao10k/l3.3-euryale-70b",
         "sao10k/l3.1-euryale-70b:nitro",
-        "mistralai/mistral-small-3.2-24b-instruct"
+        "mistralai/mistral-small-3.2-24b-instruct",
+        "deepseek/deepseek-v4-pro"
     ].join(",") &&
         setup.AIRuntimeSettings.getDefaultModelId() === "thedrummer/cydonia-24b-v4.1" &&
         setup.AIRuntimeSettings.getSelectedModelId() === "thedrummer/cydonia-24b-v4.1",
@@ -303,8 +304,12 @@ async function main() {
         decisionPrompt.includes("do not start a purposive movement or task and immediately discard why") &&
         decisionPrompt.includes("complete local action may leave continuation null") &&
         decisionPrompt.includes("normally make progress rather than return an accidental no-op") &&
+        decisionPrompt.includes("currently available formal action clearly advances it") &&
+        decisionPrompt.includes("available_actions describes only what is possible right now") &&
+        decisionPrompt.includes("Choose the action type from its semantic description first") &&
+        decisionPrompt.includes("continuation never overrides the current canonical view") &&
         decisionPrompt.includes("do not blindly repeat the same action"),
-        "decision prompt should distinguish capabilities from motives and preserve unfinished purpose without creating a plan queue");
+        "decision prompt should distinguish capabilities from motives, preserve unfinished purpose, and advance one current grounded step without creating a plan queue");
     assert(decisionPrompt.includes("Directly addressed meaningful speech normally deserves an in-character response") &&
         decisionPrompt.includes("completely empty no-op after direct address should be deliberate") &&
         decisionPrompt.includes("already passed deterministic perception and delivery rules") &&
@@ -334,8 +339,20 @@ async function main() {
         decisionPrompt.includes("Narrated behavior never mutates canonical state") &&
         decisionPrompt.includes("generic assistant-like NPC replies") &&
         decisionPrompt.includes("formal action in this response is only an attempt") &&
-        decisionPrompt.includes("must not claim that the formal action successfully changed the world"),
-        "technical prompt should retain concise RP and engine grounding while being more structured");
+        decisionPrompt.includes("Small visible behavior that does not change canonical state may stay narrative") &&
+        decisionPrompt.includes("small sip that does not mechanically consume the whole drink") &&
+        decisionPrompt.includes("Narrative is not an alternate execution channel") &&
+        decisionPrompt.includes("multi-step mechanical task successfully changed the world or is complete") &&
+        decisionPrompt.includes("Do not record an unconfirmed mechanical completion") &&
+        decisionPrompt.includes("silently verify the current view against continuation") &&
+        decisionPrompt.includes("must not claim that the formal action or a multi-step mechanical task successfully changed the world"),
+        "technical prompt should retain concise RP while preventing narrative or memory from skipping grounded task progress");
+    assert(setup.Game.ActionRegistry.move.description.includes("Leave the current location") &&
+        setup.Game.ActionRegistry.move.description.includes("listed location IDs") &&
+        setup.Game.ActionRegistry.move_within_location.description.includes("Stay in the current location") &&
+        setup.Game.ActionRegistry.move_within_location.description.includes("listed sublocation IDs") &&
+        setup.Game.ActionRegistry.move_within_location.description.includes("never a location ID"),
+        "canonical movement action descriptions should clearly distinguish location movement from sublocation movement");
     const requiredShape = JSON.parse(validationMessages[1].content).requiredResponseShape;
     assert(Object.prototype.hasOwnProperty.call(requiredShape, "continuation") && requiredShape.continuation === null,
         "decision requests should require a nullable continuation field");
@@ -356,8 +373,9 @@ async function main() {
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "valid single action decision should pass");
     const unavailableMove = setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "street" }, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available);
-    assert(!unavailableMove.ok && unavailableMove.errors.some(function (error) { return error.includes("selected unavailable option") && error.includes("street"); }),
-        "action protocol should reject structurally valid values outside current view options");
+    assert(!unavailableMove.ok && unavailableMove.errors.some(function (error) {
+        return error.includes("selected unavailable option") && error.includes("street") && error.includes("Allowed values") && error.includes("bar");
+    }), "action protocol should reject structurally valid values outside current view options and expose the allowed values");
 
     const optionCatalog = {
         take_item: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["mug"] } },
@@ -382,6 +400,14 @@ async function main() {
         !optionDecision({ type: "consume", item_id: "missing" }).ok &&
         optionDecision({ type: "give_item", target_id: "player", item_id: "mug" }).ok,
         "current action options should constrain item, target, destination, inventory, and amount parameters");
+    assert(setup.AIProtocol.validateDecision(decisionFixture({
+        action: { type: "place_item", item_id: "mug", target_inventory_id: "table" },
+        publicNarrative: null,
+        spokenText: null,
+        continuation: "Take the mug to the bar",
+        memoryUpdates: emptyUpdates()
+    }), optionCatalog).ok,
+        "mechanical validation should not become an engine-side planner that rejects a valid action merely because it appears inconsistent with free-form continuation");
     assert(!setup.AIProtocol.validateDecision(decisionFixture({ action: [{ type: "move" }], publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "multiple actions should be rejected");
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
@@ -434,8 +460,48 @@ async function main() {
     } };
     const optionRepaired = await setup.AIProtocol.requestValidated(validationMessages, "decision", optionRepairClient);
     assert(optionRepaired.ok && optionRepairCalls === 2 && optionRepairMessages.some(function (message) {
-        return message.role === "user" && message.content.includes("selected unavailable option") && message.content.includes("street");
-    }), "unavailable concrete action options should enter the normal protocol repair path with a concrete error");
+        return message.role === "user" && message.content.includes("selected unavailable option") && message.content.includes("street") &&
+            message.content.includes("Preserve the character's underlying purpose") && message.content.includes("Current action catalog") &&
+            message.content.includes("destination_ids=[\"bar\"]");
+    }), "unavailable concrete action options should enter repair with allowed values, purpose-preserving guidance, and the current catalog");
+
+    const movementCatalog = {
+        move: {
+            description: setup.Game.ActionRegistry.move.description,
+            schema: { properties: { type: {}, destination_id: {} }, required: ["type", "destination_id"] },
+            options: { destination_ids: ["bar"] }
+        },
+        move_within_location: {
+            description: setup.Game.ActionRegistry.move_within_location.description,
+            schema: { properties: { type: {}, destination_id: {} }, required: ["type", "destination_id"] },
+            options: { destination_ids: ["commonRoomTableOne", "underStairsNook"] }
+        }
+    };
+    const movementMessages = setup.AIProtocol.decisionMessages({
+        schemaVersion: 1,
+        view: { available_actions: movementCatalog },
+        character: { aiDescription: "Test actor" },
+        mind: { knownFacts: [], beliefs: [], relationships: [], recentMemories: [], longTermMemories: [] },
+        continuation: "Take the empty mug to the bar",
+        pendingObservations: []
+    });
+    let movementRepairCalls = 0;
+    let movementRepairMessages = null;
+    const movementRepairClient = { chat: async function (messages) {
+        movementRepairCalls++;
+        movementRepairMessages = messages;
+        return movementRepairCalls === 1
+            ? response({ action: { type: "move_within_location", destination_id: "bar" }, publicNarrative: null, spokenText: null, continuation: "Take the empty mug to the bar", memoryUpdates: emptyUpdates() })
+            : response({ action: { type: "move", destination_id: "bar" }, publicNarrative: null, spokenText: null, continuation: "Take the empty mug to the bar", memoryUpdates: emptyUpdates() });
+    } };
+    const movementRepaired = await setup.AIProtocol.requestValidated(movementMessages, "decision", movementRepairClient);
+    assert(movementRepaired.ok && movementRepaired.value.action.type === "move" && movementRepairCalls === 2 &&
+        movementRepairMessages.some(function (message) {
+            return message.role === "user" && message.content.includes('Allowed values for action "move_within_location"') &&
+                message.content.includes("commonRoomTableOne") && message.content.includes("- move:") &&
+                message.content.includes("destination_ids=[\"bar\"]") &&
+                message.content.includes("Do not fall back to action:null solely because the previous action type or option was invalid");
+        }), "repair should preserve the purpose and make the correct action type/options easy to recover after a movement-schema mistake");
     repairCalls = 0;
     const badRepair = { chat: async function () { repairCalls++; return { ok: true, content: "still bad" }; } };
     assert(!(await setup.AIProtocol.requestValidated(validationMessages, "decision", badRepair)).ok && repairCalls === 2,

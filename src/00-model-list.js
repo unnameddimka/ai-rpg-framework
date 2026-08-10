@@ -19,6 +19,10 @@
         {
             "id": "mistralai/mistral-small-3.2-24b-instruct",
             "name": "Mistral Small 3.2 24B"
+        },
+        {
+            "id": "deepseek/deepseek-v4-pro",
+            "name": "DeepSeek V4 Pro"
         }
     ]
 };

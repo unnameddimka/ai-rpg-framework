@@ -127,7 +127,8 @@ The same file names the default model. The catalog contains:
 - `thedrummer/cydonia-24b-v4.1` — **Cydonia 24B V4.1** and the current default;
 - `sao10k/l3.3-euryale-70b` — **Llama 3.3 Euryale 70B**;
 - `sao10k/l3.1-euryale-70b:nitro` — **Llama 3.1 Euryale 70B**, routed for speed;
-- `mistralai/mistral-small-3.2-24b-instruct` — **Mistral Small 3.2 24B**.
+- `mistralai/mistral-small-3.2-24b-instruct` — **Mistral Small 3.2 24B**;
+- `deepseek/deepseek-v4-pro` — **DeepSeek V4 Pro** (current primary manual action-chain benchmark).
 
 1. Open the AI Settings panel in the sidebar and choose a model.
 2. Enter an OpenRouter API key. The password field is cleared after saving.

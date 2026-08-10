@@ -960,7 +960,7 @@
 
     const ActionRegistry = {
         move: {
-            description: "Move to a directly connected location.",
+            description: "Leave the current location and enter another directly connected location. destination_id must be one of this action's listed location IDs.",
             schema: {
                 type: "object",
                 properties: {
@@ -1027,7 +1027,7 @@
         },
 
         move_within_location: {
-            description: "Move to another position within the current location.",
+            description: "Stay in the current location and change only the current sublocation/position. destination_id must be one of this action's listed sublocation IDs, never a location ID.",
             schema: {
                 type: "object",
                 properties: {

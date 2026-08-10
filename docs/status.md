@@ -52,6 +52,9 @@
   memory discipline. Delivered observations are already perceived; returning character IDs remain the
   same known people; available actions are capabilities rather than recommendations; spontaneous NPC
   initiative remains valid; unfinished purposive atomic steps retain their purpose in `continuation`.
+  Continuation never overrides the refreshed canonical view, a useful current formal step should normally
+  advance an adopted purpose, future steps may appear only after prerequisites, and narrative/memory may
+  not declare a multi-step mechanical task complete before grounded engine results establish it.
 - AI decisions now include per-utterance `spokenLoudness` using the same canonical `noticeable` /
   `hidden` values and the same `CharacterAPI.submitIntent()` perception path as HumanController.
   Whisper-like prose has no mechanical effect on loudness, and AI loudness is not persisted between turns.
@@ -71,7 +74,7 @@
   suppressed presentation entries with an explicit debug-only marker.
 - The browser uses fixed OpenRouter with non-streaming requests and a build-validated model
   catalog from `data/model_list.json`. Cydonia remains the authored default; Llama 3.3
-  Euryale, speed-routed Llama 3.1 Euryale, and Mistral Small 3.2 24B are
+  Euryale, speed-routed Llama 3.1 Euryale, Mistral Small 3.2 24B, and DeepSeek V4 Pro are
   selectable alternatives. The selected model persists separately from the API key and falls
   back to the authored default when invalid.
 - The restricted character `view` is now the canonical shared projection for HumanController
@@ -86,11 +89,13 @@
   least one second between live transport calls, honors `Retry-After` after HTTP 429, exposes
   transient busy/cooldown status, and performs no automatic rate-limit retry.
 - The local JSON-only protocol rejects arbitrary fields and permits at most one repair request
-  for malformed or schema-invalid JSON. `spokenTargetId` gives addressed speech an explicit
-  structured target independent of the formal-action target, while `spokenLoudness` selects the
-  canonical Human/AI noticeability for the current utterance. The prompt treats the current
-  canonical view as authoritative and keeps narrative/speech in the attempt phase until engine
-  confirmation.
+  for malformed or schema-invalid JSON. Option-validation errors expose the allowed values, and decision
+  repairs receive a compact deterministic copy of the current action types, semantic descriptions, and
+  option sets so a malformed action can be corrected without discarding the underlying purpose.
+  `spokenTargetId` gives addressed speech an explicit structured target independent of the formal-action
+  target, while `spokenLoudness` selects the canonical Human/AI noticeability for the current utterance.
+  The prompt treats the current canonical view as authoritative and keeps narrative/speech in the attempt
+  phase until engine confirmation.
 - Engine-owned bounded memory updates support recent-memory append, belief upsert, and
   relationship upsert only. Observation consumption removes supplied IDs rather than clearing
   an inbox wholesale.
