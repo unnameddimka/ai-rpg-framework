@@ -97,6 +97,10 @@ async function testStructuredInputAndTolerantAssembly() {
     assert(!request.messages[1].content.includes("<verbatim") && request.messages[1].content.includes('"snapshot"') &&
         request.messages[1].content.includes('"tickEvents"'),
         "dynamic request should use structured snapshot/tickEvents JSON instead of the old verbatim-tag protocol");
+    assert(context.setup.NarratorService.TICK_SYSTEM_PROMPT.includes("tickEvents is the chronological spine") &&
+        context.setup.NarratorService.TICK_SYSTEM_PROMPT.includes("not a checklist to repeat") &&
+        context.setup.NarratorService.TICK_SYSTEM_PROMPT.includes("the game will insert them unchanged"),
+        "dynamic prompt should frame the task as concise literary writing, make tickEvents primary, and treat snapshot as reference rather than a checklist");
 
     const tooFew = assembler.assembleDynamicPresentation(["Opening."], request.immutableBlocks, request.immutableOrder);
     assert(tooFew.paddedCount === 2 && tooFew.extrasAppendedCount === 0 &&
@@ -195,6 +199,69 @@ async function testRuntimeTransportBudgetsHotSwitchingAndLogging() {
         "existing character transport should keep its independent 3000/1500 defaults after narrator model switching");
 }
 
+async function testTolerantDynamicJsonRecovery() {
+    const { context } = narratorContext();
+    const parser = context.setup.PresentationAssembler.parseDynamicResponse;
+
+    const exact = parser('{"prose":["Exact."]}');
+    assert(exact.ok && exact.prose[0] === "Exact." && exact.responseParsing.mode === "exact" &&
+        exact.responseParsing.ignoredPrefixLength === 0 && exact.responseParsing.ignoredSuffixLength === 0,
+        "clean dynamic JSON should use the exact fast path");
+
+    const whitespace = parser('  \n {"prose":["Whitespace."]} \n ');
+    assert(whitespace.ok && whitespace.responseParsing.mode === "exact",
+        "surrounding whitespace should remain an exact parse after normalization");
+
+    const prefixed = parser('NARRATOR OUTPUT JSON:\n{"prose":["Recovered prefix."]}');
+    assert(prefixed.ok && prefixed.prose[0] === "Recovered prefix." && prefixed.responseParsing.mode === "recovered" &&
+        prefixed.responseParsing.ignoredPrefixLength > 0,
+        "an explanatory prefix should not invalidate a usable embedded narrator object");
+
+    const fenced = parser('```json\n{"prose":["Recovered fence."]}\n```');
+    assert(fenced.ok && fenced.prose[0] === "Recovered fence." && fenced.responseParsing.mode === "recovered",
+        "markdown fences should be tolerated by balanced-object recovery rather than special-case exact parsing");
+
+    const trailingProse = parser('{"prose":["Recovered prose tail."]}\nHope this helps.');
+    assert(trailingProse.ok && trailingProse.responseParsing.mode === "recovered" &&
+        trailingProse.responseParsing.ignoredSuffixLength > 0,
+        "trailing prose should be ignored after a valid narrator object");
+
+    const trailingCode = parser('{"prose":[]}\n```python\ndef narrate(scene):\n    return scene\n```');
+    assert(trailingCode.ok && trailingCode.prose.length === 0 && trailingCode.responseParsing.mode === "recovered",
+        "trailing code should be ignored after a valid narrator object");
+
+    const extraBrace = parser('{"prose":["Recovered extra brace."]}}');
+    assert(extraBrace.ok && extraBrace.prose[0] === "Recovered extra brace." && extraBrace.responseParsing.mode === "recovered",
+        "a harmless extra closing brace after a valid object should be recoverable");
+
+    const bracesInString = parser('prefix {"prose":["A {brace} stays inside the string."]} suffix');
+    assert(bracesInString.ok && bracesInString.prose[0].includes("{brace}") && bracesInString.responseParsing.mode === "recovered",
+        "balanced-object scanning must ignore braces inside JSON strings");
+
+    const escapedQuote = parser('prefix {"prose":["She said \\\"stay {here}\\\" quietly."]} suffix');
+    assert(escapedQuote.ok && escapedQuote.prose[0].includes('"stay {here}"') && escapedQuote.responseParsing.mode === "recovered",
+        "balanced-object scanning must handle escaped quotes and braces inside strings");
+
+    const nestedExtra = parser('{"prose":["Nested extra."],"debug":{"shape":{"ok":true}}}');
+    assert(nestedExtra.ok && nestedExtra.responseParsing.mode === "exact" && nestedExtra.ignoredKeys.join(",") === "debug",
+        "irrelevant nested extra fields should be ignored without weakening the prose string-array contract");
+
+    const laterValid = parser('{"status":"not narration"}\n{"prose":["Use the later object."]}');
+    assert(laterValid.ok && laterValid.prose[0] === "Use the later object." && laterValid.responseParsing.mode === "recovered" &&
+        laterValid.responseParsing.acceptedCandidateIndex > 0,
+        "recovery should continue past earlier JSON-looking objects that do not satisfy the narrator contract");
+
+    const invalidMember = parser('{"prose":["ok",null]}');
+    assert(!invalidMember.ok && invalidMember.responseParsing.mode === "failed",
+        "the semantic contract should still require every prose member to be a string");
+
+    const candidates = context.setup.PresentationAssembler.balancedJsonObjectCandidates(
+        'text {"a":"{not structural}","b":{"c":1}} tail'
+    );
+    assert(candidates.length >= 1 && JSON.parse(candidates[0].text).b.c === 1,
+        "the exported scanner helper should recover a balanced nested JSON object without regex parsing");
+}
+
 async function testNarratorResponseToleranceAndFallback() {
     const { context } = narratorContext();
     const view = sampleView();
@@ -235,8 +302,11 @@ async function testNarratorResponseToleranceAndFallback() {
         }
     };
     const fencedResult = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, fencedClient);
-    assert(fencedResult.ok && fencedResult.value.fragments.length === 2,
-        "a single JSON markdown fence should be tolerated and empty prose should leave only immutable blocks");
+    assert(fencedResult.ok && fencedResult.value.fragments.length === 2 &&
+        fencedResult.value.assembly.responseParsing.mode === "recovered" &&
+        fencedResult.trace.responseParsing.mode === "recovered" &&
+        fencedResult.trace.attempts[0].responseParsing.mode === "recovered",
+        "recovered dynamic JSON should be used normally and exchange diagnostics should record recovery mode");
 
     const extraKeyClient = {
         chat: async function () {
@@ -258,8 +328,19 @@ async function testNarratorResponseToleranceAndFallback() {
         }
     };
     const invalid = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, badClient);
-    assert(!invalid.ok && invalid.fallbackUsed && invalid.error.code === "NARRATOR_INVALID_RESPONSE",
-        "genuinely unparsable dynamic narrator output should still request raw fallback");
+    assert(!invalid.ok && invalid.fallbackUsed && invalid.error.code === "NARRATOR_INVALID_RESPONSE" &&
+        invalid.trace.responseParsing.mode === "failed",
+        "genuinely unparsable dynamic narrator output should still request raw fallback with failed parsing diagnostics");
+
+    const apiFailureClient = {
+        chat: async function () {
+            return { ok: false, modelId: "fake/failure", error: { code: "RATE_LIMITED", message: "Synthetic failure." } };
+        }
+    };
+    const apiFailure = await context.setup.NarratorService.narrateTick({ view: view, entries: entries }, apiFailureClient);
+    assert(!apiFailure.ok && apiFailure.fallbackUsed && apiFailure.error.code === "RATE_LIMITED" &&
+        apiFailure.trace.responseParsing === null,
+        "transport/API failure should still use raw fallback without pretending JSON parsing ran");
 }
 
 async function testTurnFlowIntegration() {
@@ -341,6 +422,7 @@ async function testTurnFlowIntegration() {
 Promise.resolve()
     .then(testStructuredInputAndTolerantAssembly)
     .then(testRuntimeTransportBudgetsHotSwitchingAndLogging)
+    .then(testTolerantDynamicJsonRecovery)
     .then(testNarratorResponseToleranceAndFallback)
     .then(testTurnFlowIntegration)
     .then(function () { console.log("All presentation narrator tests passed."); })

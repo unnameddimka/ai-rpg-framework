@@ -155,9 +155,21 @@ The framework deliberately tolerates segment-count mistakes:
 
 The assembler deterministically interleaves model prose with canonical framework-owned character blocks.
 
-Fallback is reserved for genuinely unusable Narrator output such as transport failure, empty response, or dynamic content that cannot be parsed into the basic `{ "prose": [...] }` contract.
+Fallback is reserved for genuinely unusable Narrator output such as transport failure, empty response, or dynamic content from which no usable `{ "prose": [...] }` object can be recovered.
 
-A single surrounding JSON markdown fence is tolerated.
+### Tolerant dynamic JSON recovery
+
+Dynamic parsing is deliberately pragmatic. The framework first attempts `JSON.parse()` on the whole trimmed response. If that exact fast path fails, it scans the raw response for balanced JSON objects with a string-aware brace scanner that respects quoted strings, escaped quotes, backslashes, and nested objects. It then accepts the first candidate whose `prose` field is an array containing only strings.
+
+This allows otherwise usable Narrator output to survive harmless model chatter such as:
+
+- an explanatory heading before the JSON;
+- a markdown/code-fence wrapper;
+- prose or code after a valid JSON object;
+- an extra closing brace after an otherwise complete object;
+- earlier JSON-looking objects that do not satisfy the Narrator contract.
+
+Irrelevant extra keys on an otherwise valid response are ignored and recorded diagnostically. The framework does not make a second repair request. The path is `exact parse -> tolerant recovery -> raw fallback`.
 
 ## Grounded events and character text
 
@@ -212,8 +224,11 @@ Guidelines:
 - no filler;
 - no repeated restatement of the same fact;
 - do not re-describe the entire room every tick;
-- unchanged snapshot facts should be terse;
-- important new events may receive slightly more vivid treatment.
+- `tickEvents` are the narrative spine;
+- `snapshot` is authoritative reference information, not a checklist to restate;
+- unchanged snapshot facts may be omitted unless needed for clarity;
+- important new events may receive slightly more vivid treatment;
+- prose slots may be empty when immutable character material already carries the scene.
 
 Static narration may be somewhat more atmospheric than dynamic narration.
 
@@ -303,6 +318,7 @@ Narrator calls continue through the shared AI request executor and exchange hist
 - raw provider content;
 - parsed prose / assembly result;
 - tolerant padding and extra-segment counts;
+- response parsing mode (`exact`, `recovered`, or `failed`) plus recovery diagnostics;
 - fallback/error information.
 
 The trace also exposes a structured `presentationInput` copy for easier debugging.

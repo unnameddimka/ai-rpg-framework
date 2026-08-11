@@ -20,18 +20,16 @@
     ].join(" ");
 
     const TICK_SYSTEM_PROMPT = [
-        "You are the presentation narrator for a role-playing game.",
-        "You do not control characters, choose actions, simulate psychology, or change the world.",
-        "The input contains two different authoritative views of the completed current tick: snapshot is the final visible state after the tick, while tickEvents is the causal sequence of what happened during that tick.",
-        "Use tickEvents to preserve causal order and snapshot to avoid ending with stale positions, ownership, inventory, or other visible state.",
-        "Some tickEvents are immutable character-authored blocks with kind=character and an id. Their text is read-only context. Never quote, paraphrase, correct, translate, shorten, extend, merge, split, or reproduce those immutable texts in your response; the framework inserts them itself.",
-        "Return exactly one JSON object with exactly one key named prose. prose must be an array of strings containing only your literary prose around the immutable blocks.",
-        "If there are N immutable character blocks, the natural shape is N+1 prose strings: before the first block, between each pair, and after the last block. Any prose string may be empty when nothing useful should be added.",
-        "Do not add filler merely to occupy a prose slot. Do not repeat the whole room every tick. Unchanged snapshot facts should be terse; important new events may receive slightly more vivid treatment.",
-        "Keep grounded facts and results true. Never turn an attempt or failure into success.",
+        "You are writing the next few lines of a role-playing novel. The game has already decided what happened; you only present it.",
+        "tickEvents is the chronological spine of this completed tick. snapshot is the authoritative final visible state, but it is reference information, not a checklist to repeat.",
+        "Use tickEvents to tell what just happened and snapshot only when needed to keep the result consistent with the final positions, possessions, visible items, and other visible state.",
+        "Some tickEvents have kind=character. Those passages are already written and the game will insert them unchanged. Do not quote, paraphrase, translate, summarize, or reproduce their text. Write only the prose that belongs before, between, and after those passages.",
+        "Return one JSON object: {\"prose\":[\"...\"]}. Use one prose slot before the first character passage, one between each pair, and one after the last. A slot may be an empty string when nothing useful belongs there.",
+        "Do not add filler just to fill a slot, and do not re-describe unchanged room or snapshot facts unless clarity requires them.",
+        "Keep grounded events and results true. Never turn an attempt or failure into success.",
         "Do not invent concrete unsupplied objects, people, actions, sounds, weather, architecture, visible environmental details, emotions, intentions, or causal events.",
-        "Restrained literary flavour, rhythm, and metaphor are allowed only when they do not become new objective facts.",
-        "Prefer concise, vivid prose with a slightly ornate novel-like voice. Return JSON only, with no markdown fence and no explanation."
+        "Restrained rhythm, metaphor, and literary flavour are welcome only when they do not become new objective facts.",
+        "Be concise, vivid, slightly ornate, and aggressively edited. Return the JSON object and nothing else."
     ].join(" ");
 
     function clone(value) {
@@ -178,39 +176,138 @@
         return text.split(/\n\s*\n+/).map(function (part) { return part.trim(); }).filter(Boolean);
     }
 
-    function parseDynamicResponse(value) {
-        const raw = stripSingleCodeFence(value);
-        let parsed;
-        try {
-            parsed = JSON.parse(raw);
-        } catch (error) {
-            return {
-                ok: false,
-                error: "Narrator dynamic response was not valid JSON."
-            };
-        }
+    function validateDynamicObject(parsed) {
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Array.isArray(parsed.prose)) {
             return {
                 ok: false,
                 error: "Narrator dynamic response must be an object containing a prose array."
             };
         }
-        const ignoredKeys = Object.keys(parsed).filter(function (key) { return key !== "prose"; });
-        const prose = [];
         for (let index = 0; index < parsed.prose.length; index++) {
-            const item = parsed.prose[index];
-            if (item === null || item === undefined) {
-                prose.push("");
-            } else if (typeof item === "string") {
-                prose.push(item);
-            } else {
+            if (typeof parsed.prose[index] !== "string") {
                 return {
                     ok: false,
                     error: `Narrator prose segment ${index} is not a string.`
                 };
             }
         }
-        return { ok: true, prose: prose, ignoredKeys: ignoredKeys };
+        return {
+            ok: true,
+            prose: parsed.prose.slice(),
+            ignoredKeys: Object.keys(parsed).filter(function (key) { return key !== "prose"; })
+        };
+    }
+
+    function balancedJsonObjectCandidates(value) {
+        const text = asText(value);
+        const candidates = [];
+        const maxCandidates = 64;
+
+        for (let start = 0; start < text.length && candidates.length < maxCandidates; start++) {
+            if (text[start] !== "{") continue;
+            let depth = 0;
+            let inString = false;
+            let escaped = false;
+
+            for (let index = start; index < text.length; index++) {
+                const character = text[index];
+                if (inString) {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (character === "\\") {
+                        escaped = true;
+                    } else if (character === '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (character === '"') {
+                    inString = true;
+                    continue;
+                }
+                if (character === "{") {
+                    depth++;
+                    continue;
+                }
+                if (character === "}") {
+                    depth--;
+                    if (depth === 0) {
+                        candidates.push({
+                            start: start,
+                            end: index + 1,
+                            text: text.slice(start, index + 1)
+                        });
+                        break;
+                    }
+                    if (depth < 0) break;
+                }
+            }
+        }
+
+        return candidates;
+    }
+
+    function parseDynamicResponse(value) {
+        const raw = asText(value).trim();
+        let exactParsed;
+        try {
+            exactParsed = JSON.parse(raw);
+            const exactValidation = validateDynamicObject(exactParsed);
+            if (exactValidation.ok) {
+                return {
+                    ok: true,
+                    prose: exactValidation.prose,
+                    ignoredKeys: exactValidation.ignoredKeys,
+                    responseParsing: {
+                        mode: "exact",
+                        candidateCount: 0,
+                        acceptedCandidateIndex: null,
+                        ignoredPrefixLength: 0,
+                        ignoredSuffixLength: 0
+                    }
+                };
+            }
+        } catch (error) {
+            exactParsed = null;
+        }
+
+        const candidates = balancedJsonObjectCandidates(raw);
+        for (let index = 0; index < candidates.length; index++) {
+            const candidate = candidates[index];
+            let parsed;
+            try {
+                parsed = JSON.parse(candidate.text);
+            } catch (error) {
+                continue;
+            }
+            const validation = validateDynamicObject(parsed);
+            if (!validation.ok) continue;
+            return {
+                ok: true,
+                prose: validation.prose,
+                ignoredKeys: validation.ignoredKeys,
+                responseParsing: {
+                    mode: "recovered",
+                    candidateCount: candidates.length,
+                    acceptedCandidateIndex: index,
+                    ignoredPrefixLength: candidate.start,
+                    ignoredSuffixLength: raw.length - candidate.end
+                }
+            };
+        }
+
+        return {
+            ok: false,
+            error: "Narrator dynamic response contained no usable JSON object with a prose string array.",
+            responseParsing: {
+                mode: "failed",
+                candidateCount: candidates.length,
+                acceptedCandidateIndex: null,
+                ignoredPrefixLength: 0,
+                ignoredSuffixLength: 0
+            }
+        };
     }
 
     function assembleDynamicPresentation(proseSegments, immutableBlocks, immutableOrder) {
@@ -248,10 +345,11 @@
         };
     }
 
-    function traceFor(stage, messages, response, rawContent, validationErrors, parsedValue, presentationInput) {
+    function traceFor(stage, messages, response, rawContent, validationErrors, parsedValue, presentationInput, responseParsing) {
         return {
             stage: stage,
             presentationInput: presentationInput ? clone(presentationInput) : null,
+            responseParsing: responseParsing ? clone(responseParsing) : null,
             attempts: [{
                 attempt: 1,
                 kind: "narration",
@@ -261,6 +359,7 @@
                 usage: response && response.usage ? clone(response.usage) : null,
                 providerResponse: response && response.providerResponse ? clone(response.providerResponse) : null,
                 parsedValue: parsedValue ? clone(parsedValue) : null,
+                responseParsing: responseParsing ? clone(responseParsing) : null,
                 validationErrors: clone(validationErrors || [])
             }],
             finalStatus: validationErrors && validationErrors.length ? "invalid" : (response && response.ok ? "valid" : "failed"),
@@ -283,7 +382,7 @@
         };
     }
 
-    function failureResult(stage, messages, response, modelId, error, rawContent, validationErrors, presentationInput) {
+    function failureResult(stage, messages, response, modelId, error, rawContent, validationErrors, presentationInput, responseParsing) {
         return {
             ok: false,
             value: null,
@@ -293,7 +392,7 @@
             modelId: response && response.modelId || modelId,
             usage: response && response.usage || null,
             rawContent: rawContent || "",
-            trace: traceFor(stage, messages, response, rawContent || "", validationErrors || [], null, presentationInput),
+            trace: traceFor(stage, messages, response, rawContent || "", validationErrors || [], null, presentationInput, responseParsing),
             execution: { fallbackUsed: true }
         };
     }
@@ -332,7 +431,7 @@
                     if (!parsed.ok) {
                         return failureResult(stage, messages, response, modelId,
                             { code: "NARRATOR_INVALID_RESPONSE", message: "Narrator returned an unusable dynamic response.", details: [parsed.error] },
-                            rawContent, [parsed.error], spec.input);
+                            rawContent, [parsed.error], spec.input, parsed.responseParsing);
                     }
                     const assembled = assembleDynamicPresentation(parsed.prose, spec.immutableBlocks || {}, spec.immutableOrder || []);
                     if (!assembled.fragments.length) {
@@ -351,7 +450,8 @@
                             receivedProseCount: assembled.receivedProseCount,
                             paddedCount: assembled.paddedCount,
                             extrasAppendedCount: assembled.extrasAppendedCount,
-                            ignoredResponseKeys: clone(parsed.ignoredKeys || [])
+                            ignoredResponseKeys: clone(parsed.ignoredKeys || []),
+                            responseParsing: clone(parsed.responseParsing || null)
                         }
                     };
                 } else {
@@ -379,7 +479,8 @@
                     modelId: response.modelId || modelId,
                     usage: response.usage || null,
                     rawContent: rawContent,
-                    trace: traceFor(stage, messages, response, rawContent, [], value, spec.input),
+                    trace: traceFor(stage, messages, response, rawContent, [], value, spec.input,
+                        stage === "tick" && value && value.assembly ? value.assembly.responseParsing : null),
                     execution: { fallbackUsed: false }
                 };
             }
@@ -432,6 +533,7 @@
         staticMessages: staticMessages,
         tickMessages: tickMessages,
         parseDynamicResponse: parseDynamicResponse,
+        balancedJsonObjectCandidates: balancedJsonObjectCandidates,
         assembleDynamicPresentation: assembleDynamicPresentation
     };
 
