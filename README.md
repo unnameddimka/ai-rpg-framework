@@ -329,6 +329,8 @@ The current implementation does **not** yet perform automatic context summarizat
 
 Game saves store canonical world/character state needed to continue the game. The detailed AI request/response exchange log is runtime debugging data and is **not** stored in saves.
 
+Compatible older playthroughs are migrated automatically after a rebuild using a **fresh authored world + preserved lives** model. Current locations, exits, character authoring, item definitions, abilities, and authored `knownFacts` come from the new build; surviving characters keep their beliefs, relationships, recent/long-term memories, continuation, wallet, valid position/controller state, and valid runtime item instances. During this process the UI shows **Migrating save...** and commits the candidate world only after full validation. Failed migration never silently resets the playthrough.
+
 ---
 
 ## 8. Presentation Narrator

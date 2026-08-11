@@ -218,6 +218,13 @@ assert(uiSource.includes("framework-spinner") && uiSource.includes("AIRequestExe
     uiSource.includes('appendTextElement(row, "span", "Thinking...", "framework-busy-text")') &&
     !uiSource.includes("Narrator is writing…") && !uiSource.includes("is thinking…"),
     "busy presentation should use one generic Thinking indicator regardless of which character or narrator request is active");
+assert(uiSource.includes('renderMigrationOverlay("Migrating save..."') &&
+    uiSource.includes("setup.SaveMigration.migrate()") && uiSource.includes("yieldForMigrationPaint") &&
+    uiSource.includes('"Save migration failed. Your original save was not changed."'),
+    "restored old saves should render a blocking migration status before transactional migration and preserve explicit failure messaging");
+assert(stylesSource.includes(".framework-migration-overlay") && stylesSource.includes("z-index: 12000") &&
+    stylesSource.includes(".framework-migration-panel"),
+    "save migration should use a dedicated modal blocking overlay rather than ordinary turn status text");
 assert(uiSource.includes("What ${view.self.name} notices") && uiSource.includes("abilityResultsByActor[result.actorId]"),
     "grounded private human-action feedback should remain visible after unified Submit");
 

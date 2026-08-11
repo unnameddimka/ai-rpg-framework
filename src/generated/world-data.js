@@ -231,7 +231,8 @@
       "inventoryId": "inventory_street",
       "exits": {
         "tavernEntrance": "tavernEntrance",
-        "villageTemple": "villageTemple"
+        "villageTemple": "villageTemple",
+        "villageEdge": "villageEdge"
       },
       "sublocations": {
         "streetCenter": {
@@ -589,6 +590,142 @@
           ]
         }
       }
+    },
+    "villageEdge": {
+      "id": "villageEdge",
+      "type": "location",
+      "name": "Village edge",
+      "passage": "The Village Edge",
+      "description": [
+        "The last fences and gardens of the village give way to a narrow path beneath the trees.",
+        "Farther on, the woodland closes around a quieter clearing away from the other homes."
+      ],
+      "defaultSublocationId": "villageEdgePath",
+      "inventoryId": "inventory_villageEdge",
+      "exits": {
+        "street": "street",
+        "secludedCottage": "secludedCottage"
+      },
+      "sublocations": {
+        "villageEdgePath": {
+          "id": "villageEdgePath",
+          "type": "sublocation",
+          "locationId": "villageEdge",
+          "name": "Path at the village edge",
+          "enterLabel": "Stand on the path at the village edge",
+          "selfText": "You are standing where the village path enters the woodland.",
+          "occupantTemplate": "{name} stands where the village path enters the woodland.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "villageEdgePath"
+          ]
+        }
+      }
+    },
+    "secludedCottage": {
+      "id": "secludedCottage",
+      "type": "location",
+      "name": "Mara's cottage",
+      "passage": "Mara's Cottage",
+      "description": [
+        "A small cottage stands alone in a forest clearing, well apart from the village's ordinary homes.",
+        "Cultivated beds around it hold mushrooms, medicinal herbs, and other plants tended for remedies and alchemy."
+      ],
+      "defaultSublocationId": "maraCottageGarden",
+      "inventoryId": "inventory_secludedCottage",
+      "exits": {
+        "villageEdge": "villageEdge"
+      },
+      "sublocations": {
+        "maraCottageGarden": {
+          "id": "maraCottageGarden",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Cottage garden",
+          "publicText": "Narrow beds of herbs and mushrooms surround the cottage, carefully tended beneath the trees.",
+          "enterLabel": "Stand in the cottage garden",
+          "selfText": "You are standing among the cultivated beds outside Mara's cottage.",
+          "occupantTemplate": "{name} stands among the cultivated beds outside Mara's cottage.",
+          "capacity": 12,
+          "reachableSublocationIds": [
+            "maraCottageGarden",
+            "maraCottageFloor"
+          ]
+        },
+        "maraCottageFloor": {
+          "id": "maraCottageFloor",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Cottage interior",
+          "publicText": "Inside, a modest bed, a practical stove and hearth, a work table, and crowded shelves make one small room serve as both home and workshop.",
+          "enterLabel": "Step inside the cottage",
+          "selfText": "You are standing inside Mara's cottage.",
+          "occupantTemplate": "{name} stands inside Mara's cottage.",
+          "capacity": 8,
+          "reachableSublocationIds": [
+            "maraCottageFloor",
+            "maraCottageGarden",
+            "maraCottageBed",
+            "maraCottageTable",
+            "maraCottageShelves"
+          ]
+        },
+        "maraCottageBed": {
+          "id": "maraCottageBed",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Bed",
+          "publicText": "A simple, well-used bed occupies one side of the cottage.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the cottage bed.",
+          "occupantTemplate": "{name} is lying on the cottage bed.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "maraCottageBed",
+            "maraCottageFloor"
+          ]
+        },
+        "maraCottageTable": {
+          "id": "maraCottageTable",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Work table",
+          "publicText": "A scarred wooden table provides space for sorting ingredients, preparing remedies, and ordinary meals.",
+          "enterLabel": "Sit at the work table",
+          "selfText": "You are sitting at the cottage work table.",
+          "occupantTemplate": "{name} sits at the cottage work table.",
+          "capacity": 3,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_maraCottageTable",
+          "inventoryName": "Mara cottage work table",
+          "reachableSublocationIds": [
+            "maraCottageTable",
+            "maraCottageFloor"
+          ]
+        },
+        "maraCottageShelves": {
+          "id": "maraCottageShelves",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Alchemical shelves",
+          "publicText": "Shelves hold jars, bottles, dried herbs, mushrooms, simple powders, a mortar and pestle, and the ordinary supplies of a working hedge witch.",
+          "enterLabel": "Stand by the alchemical shelves",
+          "selfText": "You are standing beside the alchemical shelves.",
+          "occupantTemplate": "{name} stands beside the alchemical shelves.",
+          "capacity": 2,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_maraCottageShelves",
+          "inventoryName": "Alchemical shelves",
+          "reachableSublocationIds": [
+            "maraCottageShelves",
+            "maraCottageFloor"
+          ]
+        }
+      }
     }
   },
   "characters": {
@@ -621,7 +758,7 @@
       "name": "Hooded woman",
       "playerDescription": "A hooded woman watches the room from beneath the edge of her hood.",
       "interactionLabel": "Speak with the hooded woman",
-      "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority.\nYou know a lot about alchemy and medicine, but our magic abilities are limited and you never had the academic education. \nYou are quite beautiful, so people often think you are cooperating with demons, but it is not the case. ",
+      "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority. You know a great deal about alchemy and medicine, but your magical abilities are limited and you never had an academic magical education. You are quite beautiful, so people sometimes accuse you of cooperating with demons, but that is false. You live alone in a secluded cottage beyond the edge of the village, surrounded by forest. You grow herbs and mushrooms around the cottage and work there as a hedge witch, preparing medicines, remedies, simple alchemical mixtures, and potions for people who seek your help.",
       "locationId": "commonRoom",
       "sublocationId": "commonRoomTableOne",
       "inventoryId": "inventory_hoodedWoman",
@@ -635,7 +772,28 @@
         "aura": "A quiet, disciplined magical presence surrounds her."
       },
       "initialMind": {
-        "knownFacts": [],
+        "knownFacts": [
+          {
+            "id": "mara_home",
+            "text": "I live and work in a secluded cottage beyond the edge of the village, surrounded by forest."
+          },
+          {
+            "id": "mara_work",
+            "text": "I grow herbs and mushrooms around my cottage and prepare medicines, remedies, potions, and simple alchemical mixtures there."
+          },
+          {
+            "id": "mara_village_reputation",
+            "text": "Many villagers are uneasy about me and prefer not to associate themselves openly with witchcraft."
+          },
+          {
+            "id": "mara_village_clients",
+            "text": "Despite that unease, villagers quietly seek my advice, medicines, remedies, and potions."
+          },
+          {
+            "id": "mara_open_secret",
+            "text": "People broadly know that villagers come to me for help, but individuals often avoid admitting publicly that they themselves do so."
+          }
+        ],
         "beliefs": [],
         "relationships": [],
         "recentMemories": [],
@@ -677,6 +835,22 @@
           {
             "id": "nell_arrangement",
             "text": "Nell works hard and gives me no reason to reconsider the arrangement; as long as she continues honestly helping, her place here is secure."
+          },
+          {
+            "id": "mara_home",
+            "text": "Mara is a hedge witch who lives alone in a secluded cottage beyond the village edge, surrounded by woodland."
+          },
+          {
+            "id": "mara_services",
+            "text": "Mara grows herbs and mushrooms and prepares medicines, remedies, potions, and simple alchemical mixtures at her cottage."
+          },
+          {
+            "id": "mara_local_reputation",
+            "text": "Many villagers are wary of Mara and of openly associating themselves with witchcraft."
+          },
+          {
+            "id": "mara_open_secret",
+            "text": "Villagers quietly go to Mara for remedies and advice despite that unease; everyone broadly knows this, though people rarely admit their own visits openly."
           }
         ],
         "beliefs": [],
@@ -755,6 +929,22 @@
           {
             "id": "nell_duties",
             "text": "My ordinary responsibilities include serving patrons, collecting mugs, carrying things between the common room and bar, and helping with the general work of the tavern."
+          },
+          {
+            "id": "mara_home",
+            "text": "Mara is a hedge witch who lives alone in a secluded cottage beyond the village edge, surrounded by forest."
+          },
+          {
+            "id": "mara_services",
+            "text": "Mara grows herbs and mushrooms and makes medicines, remedies, potions, and simple alchemical mixtures at her cottage."
+          },
+          {
+            "id": "mara_local_reputation",
+            "text": "Many villagers are uneasy about Mara and her witchcraft, even though they know where she lives and what kind of help she offers."
+          },
+          {
+            "id": "mara_open_secret",
+            "text": "People in the village quietly seek Mara for remedies and advice, and everyone broadly knows it, but individuals often avoid admitting openly that they themselves visit her."
           }
         ],
         "beliefs": [],
@@ -991,6 +1181,7 @@
       "definitionId": "guestRoom4KeyType",
       "inventoryId": "inventory_innkeeper"
     }
-  }
+  },
+  "authoringRevision": "45e0399eee11e5ed93c7e9ea5fda8ce1ca2e4c49653c5cfe924755f8ecec7f16"
 };
 }());

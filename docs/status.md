@@ -103,6 +103,19 @@
   retired soldier turned practical, miserly tavern owner; he and Nell begin with mutual authored
   `knownFacts` and `relationships` describing their established almost-family/employer relationship,
   so neither AI treats the other as a stranger or new applicant.
+- The authored world now extends from the street through **Village edge** to **Mara's cottage**.
+  The cottage is a forest-surrounded hedge-witch home/workplace with a garden, bed, hearth, work
+  table, and alchemical shelves. Mara, Garrick, and Nell receive authored local `knownFacts` about
+  Mara's home, services, reputation, and the village's open-secret dependence on her; Captain Price
+  receives no retroactive local knowledge.
+- Saves now carry separate runtime `schemaVersion` and generated `authoringRevision` compatibility
+  markers. Legacy `world.version = 6` and later compatible saves are reconciled transactionally as
+  **fresh authored world + preserved lives**: current authoring supplies world structure, character
+  profiles, item definitions, abilities, and `knownFacts`, while surviving characters preserve
+  beliefs, relationships, recent/long-term memories, continuation, wallet, valid position/controller
+  state, and valid runtime item instances. Transient events, pending observations, AI queues, and
+  request state are discarded. The UI visibly blocks on **Migrating save...**; candidates validate
+  before atomic commit, and migration failure leaves the original restored save unchanged.
 - Task specifications are organized under `docs/engine/` for technical/framework work and
   `docs/world/` for authored world/character work.
 - Provider, parser, validator, or AI commit failures restore the failed reaction snapshot,

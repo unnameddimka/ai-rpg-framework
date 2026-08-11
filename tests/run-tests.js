@@ -55,6 +55,21 @@ assert(world.entities.captainPrice && world.entities.captainPrice.locationId ===
 assert(world.entities.nell && world.entities.nell.locationId === "commonRoom" &&
     world.entities.nell.sublocationId === "commonRoomFloor" && world.control.assignments.nell === "ai",
     "Nell should start AI-controlled on the common-room floor");
+assert(world.entities.villageEdge && world.entities.secludedCottage &&
+    world.entities.street.exits.villageEdge === "villageEdge" &&
+    world.entities.villageEdge.exits.street === "street" &&
+    world.entities.villageEdge.exits.secludedCottage === "secludedCottage" &&
+    world.entities.secludedCottage.exits.villageEdge === "villageEdge",
+    "street, village edge, and Mara's cottage should form the authored bidirectional route");
+assert(world.entities.maraCottageBed && world.entities.maraCottageTable && world.entities.maraCottageShelves &&
+    world.inventories.inventory_maraCottageTable && world.inventories.inventory_maraCottageShelves,
+    "Mara's cottage should contain authored bed, table, and alchemical shelf sublocations using existing inventory mechanics");
+assert(world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return fact.id === "mara_home"; }) &&
+    world.entities.innkeeper.mind.knownFacts.some(function (fact) { return fact.id === "mara_open_secret"; }) &&
+    world.entities.nell.mind.knownFacts.some(function (fact) { return fact.id === "mara_open_secret"; }),
+    "Mara, Garrick, and Nell should begin with authored local facts about Mara's home and social status");
+assert(!world.entities.captainPrice.mind.knownFacts.some(function (fact) { return String(fact.id || "").startsWith("mara_"); }),
+    "Captain Price should receive no authored local Mara knowledge");
 assert(world.inventories.inventory_captainPrice.itemIds.length === 1 &&
     world.entities[world.inventories.inventory_captainPrice.itemIds[0]].definitionId === "mugOfAle",
     "Price should start with one concrete mug of ale in his inventory");
@@ -308,27 +323,36 @@ savedForAuthoringReconciliation.entities.hoodedWoman.mind.relationships.push({
 });
 const generatedWithEditedMara = JSON.parse(JSON.stringify(generatedBeforeSaveReconciliation));
 generatedWithEditedMara.characters.hoodedWoman.aiDescription = "New editor-authored Mara prompt.";
+generatedWithEditedMara.authoringRevision = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 setup.GeneratedWorldData = generatedWithEditedMara;
 State.variables.world = savedForAuthoringReconciliation;
-assertOk(setup.Game.bootstrap(), "compatible save should reconcile current character AI description");
+const reconcileBootstrap = setup.Game.bootstrap();
+assert(reconcileBootstrap.ok && reconcileBootstrap.migrationRequired,
+    "changed authored world should require transactional reconciliation rather than in-place prompt patching");
+assertOk(setup.SaveMigration.migrate(), "changed authored world should migrate the compatible save");
 world = setup.Game.getWorld();
 assert(world.entities.hoodedWoman.aiDescription === "New editor-authored Mara prompt.",
     "current generated aiDescription should replace the saved authoring copy");
-assert(world.entities.player.name === "Edited Traveler" && world.entities.player.playerDescription.includes("edited in the in-game Character window"),
-    "aiDescription authoring reconciliation must not overwrite runtime public profile edits");
+assert(world.entities.player.name === generatedWithEditedMara.characters.player.name &&
+    world.entities.player.playerDescription === generatedWithEditedMara.characters.player.playerDescription,
+    "authoring reconciliation should rebuild authored public profile fields from the current world");
 assert(world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.id === "memory_save_reconcile"; }) &&
     world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "saved_belief"; }) &&
     world.entities.hoodedWoman.mind.relationships.some(function (relationship) { return relationship.summary === "A relationship preserved from the save."; }),
     "save reconciliation should preserve runtime memories, beliefs, and relationships");
 setup.GeneratedWorldData = generatedBeforeSaveReconciliation;
-assertOk(setup.Game.bootstrap(), "restoring generated authoring data should keep the reconciled save valid");
+const restoreAuthoringBootstrap = setup.Game.bootstrap();
+assert(restoreAuthoringBootstrap.ok && restoreAuthoringBootstrap.migrationRequired,
+    "restoring generated authoring data should be detected as another authoring revision change");
+assertOk(setup.SaveMigration.migrate(), "restoring current authored data should migrate back cleanly");
 world = setup.Game.getWorld();
 world.control.assignments.innkeeper = "human";
 assert(setup.Game.getHumanCharacterId() === "player", "invalid multi-human state should repair to player");
 assertOk(setup.Game.validateWorld(), "world should validate after controller repair");
 
-assert(world.entities.player.playerDescription.includes("edited in the in-game Character window"),
-    "runtime public profile edits should remain independent from aiDescription authoring reconciliation");
+assert(world.entities.player.name === generatedBeforeSaveReconciliation.characters.player.name &&
+    world.entities.player.playerDescription === generatedBeforeSaveReconciliation.characters.player.playerDescription,
+    "authoring migration should restore current authored public profile fields while preserving durable character history");
 assert(world.entities.player.mind && Array.isArray(world.entities.player.mind.pendingObservations),
     "runtime character should own a pending observation inbox");
 const baseActions = setup.CharacterAPI.getAvailableActions("player");
@@ -470,7 +494,7 @@ world.entities.bar.passage = originalPassage;
 assertOk(setup.Game.validateWorld(), "restored world should remain valid");
 
 const storySource = fs.readFileSync(path.join(root, "src/generated/world-passages.twee"), "utf8");
-for (const passage of ["The Tavern", "The Bar", "The Common Room", "The Street"]) {
+for (const passage of ["The Tavern", "The Bar", "The Common Room", "The Street", "The Village Edge", "Mara's Cottage"]) {
     assert(storySource.includes(`:: ${passage}`), `${passage} physical passage should exist`);
 }
 assert(!storySource.includes("->The Tavern"), "normal story should not contain raw physical navigation links");

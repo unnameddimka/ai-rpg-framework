@@ -7,6 +7,7 @@
     let historyEntries = [];
     let historyInitialized = false;
     let staticNarrationState = { key: "", status: "idle", fragments: [], error: null, requestSerial: 0 };
+    let migrationUiInFlight = false;
 
     function optionMarkup(items, emptyLabel) {
         if (!items || items.length === 0) {
@@ -179,8 +180,9 @@
             : { busy: false, activePurpose: null };
         const executorBusy = Boolean(executorStatus && executorStatus.busy);
         const waveBusy = Boolean(setup.AITurnScheduler && setup.AITurnScheduler.isWaveInFlight && setup.AITurnScheduler.isWaveInFlight());
+        const migrationBusy = Boolean(setup.SaveMigration && setup.SaveMigration.isInFlight && setup.SaveMigration.isInFlight());
         const aiBusy = controllerBusy || executorBusy || waveBusy;
-        const busy = uiState.turnBusy || aiBusy;
+        const busy = uiState.turnBusy || aiBusy || migrationBusy || migrationUiInFlight;
         return { busy: busy, aiBusy: aiBusy, text: busy ? "Thinking..." : "" };
     }
 
@@ -1734,6 +1736,97 @@
         });
     }
 
+    function closeMigrationOverlay() {
+        const existing = document.getElementById("framework-migration-overlay");
+        if (existing) existing.remove();
+    }
+
+    function renderMigrationOverlay(title, detail, failed) {
+        closeMigrationOverlay();
+        const overlay = document.createElement("div");
+        overlay.id = "framework-migration-overlay";
+        overlay.className = `framework-migration-overlay${failed ? " is-failed" : ""}`;
+        overlay.setAttribute("role", failed ? "alert" : "status");
+        overlay.setAttribute("aria-live", "assertive");
+        const panel = document.createElement("section");
+        panel.className = "framework-migration-panel";
+        if (!failed) {
+            const spinner = document.createElement("span");
+            spinner.className = "framework-spinner is-visible";
+            spinner.setAttribute("aria-hidden", "true");
+            panel.appendChild(spinner);
+        }
+        appendTextElement(panel, "strong", title, "framework-migration-title");
+        if (detail) appendTextElement(panel, "p", detail, "framework-migration-detail");
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+    }
+
+    function yieldForMigrationPaint() {
+        return new Promise(function (resolve) {
+            if (typeof requestAnimationFrame === "function") {
+                requestAnimationFrame(function () { setTimeout(resolve, 0); });
+            } else {
+                setTimeout(resolve, 0);
+            }
+        });
+    }
+
+    function resetPresentationAfterMigration() {
+        currentTurnHiddenNarrative = [];
+        resetStaticNarration("");
+        const uiState = State.variables.frameworkUI;
+        if (!uiState || typeof uiState !== "object") return;
+        uiState.interactionTargetId = "";
+        uiState.selectedAction = null;
+        uiState.locationStatus = "";
+        uiState.turnNarrative = [];
+        uiState.rawTurnNarrative = [];
+        uiState.narratedTurnNarrative = [];
+        uiState.dynamicNarrationValid = false;
+        uiState.turnBusy = false;
+        uiState.abilityResultsByActor = {};
+    }
+
+    async function migrateBeforeRender(bootstrapResult) {
+        if (migrationUiInFlight) return;
+        migrationUiInFlight = true;
+        renderMigrationOverlay("Migrating save...", "Updating this playthrough to the current world version.", false);
+        await yieldForMigrationPaint();
+
+        const result = setup.SaveMigration.migrate();
+        if (!result || !result.ok) {
+            const message = result && result.error && result.error.message
+                ? result.error.message
+                : "Save migration failed. Your original save was not changed.";
+            renderMigrationOverlay("Save migration failed.", message, true);
+            migrationUiInFlight = false;
+            return;
+        }
+
+        resetPresentationAfterMigration();
+        const report = result.report || setup.SaveMigration.getLastReport();
+        const withWarnings = Boolean(report && report.status === "success_with_warnings");
+        renderMigrationOverlay(
+            withWarnings ? "Save migrated with warnings." : "Save migrated successfully.",
+            withWarnings ? "The playthrough was updated safely. Migration details are available in debug diagnostics." : "The playthrough is ready.",
+            false
+        );
+        await new Promise(function (resolve) { setTimeout(resolve, 350); });
+        closeMigrationOverlay();
+        migrationUiInFlight = false;
+
+        const postBootstrap = setup.Game.bootstrap();
+        if (!postBootstrap.ok || postBootstrap.migrationRequired) {
+            renderMigrationOverlay("Save migration failed.", "The migrated world did not enter a playable current state.", true);
+            return;
+        }
+        if (!checkPhysicalPassageConsistency()) return;
+        renderSidebar();
+        renderLocationView();
+        renderActionPanel();
+    }
+
     function checkPhysicalPassageConsistency() {
         const world = setup.Game.getWorld();
         const actor = world.entities[setup.Game.getHumanCharacterId()];
@@ -1850,7 +1943,16 @@
     };
 
     $(document).on(":passageend", function () {
-        setup.Game.bootstrap();
+        const bootstrap = setup.Game.bootstrap();
+        if (!bootstrap.ok) {
+            const message = bootstrap.error && bootstrap.error.message || "The restored save cannot be opened.";
+            renderMigrationOverlay("Save migration failed.", message, true);
+            return;
+        }
+        if (bootstrap.migrationRequired) {
+            void migrateBeforeRender(bootstrap);
+            return;
+        }
 
         if (!checkPhysicalPassageConsistency()) {
             return;

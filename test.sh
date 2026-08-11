@@ -18,6 +18,7 @@ fi
 
 TEST_FILES=(
     tests/run-tests.js
+    tests/run-migration-tests.js
     tests/run-editor-tests.js
     tests/run-ui-tests.js
     tests/run-ai-tests.js

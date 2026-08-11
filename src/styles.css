@@ -740,3 +740,46 @@ details[open] > summary .framework-disclosure-arrow {
     background: #38322b;
     color: #f3eee7;
 }
+
+.framework-migration-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 12000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    box-sizing: border-box;
+    background: rgba(0, 0, 0, 0.72);
+}
+
+.framework-migration-panel {
+    width: min(34rem, 100%);
+    padding: 1.4rem;
+    box-sizing: border-box;
+    border: 1px solid #777;
+    border-radius: 0.35rem;
+    background: #24211d;
+    color: #eee8df;
+    text-align: center;
+    box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+}
+
+.framework-migration-panel .framework-spinner {
+    display: block;
+    margin: 0 auto 0.9rem;
+}
+
+.framework-migration-title {
+    display: block;
+    font-size: 1.25rem;
+}
+
+.framework-migration-detail {
+    margin: 0.65rem 0 0;
+    opacity: 0.82;
+}
+
+.framework-migration-overlay.is-failed .framework-migration-panel {
+    border-color: #a36f6f;
+}

@@ -1,7 +1,11 @@
 (function () {
     "use strict";
 
-    const WORLD_VERSION = 6;
+    const LEGACY_WORLD_VERSION = 6;
+    const WORLD_SCHEMA_VERSION = 7;
+    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, WORLD_SCHEMA_VERSION]);
+    let migrationInFlight = false;
+    let lastMigrationReport = null;
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
     const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden"]);
@@ -24,9 +28,9 @@
 
     function installGeneratedData(world) {
         const document = setup.GeneratedWorldData;
-        if (!document || document.schemaVersion !== 2 || !document.locations || !document.characters || !document.abilities ||
-                !document.itemDefinitions || !document.items) {
-            throw new Error("Generated world data is missing or uses an unsupported schema version.");
+        if (!document || document.schemaVersion !== 2 || typeof document.authoringRevision !== "string" || !document.authoringRevision ||
+                !document.locations || !document.characters || !document.abilities || !document.itemDefinitions || !document.items) {
+            throw new Error("Generated world data is missing, lacks an authoring revision, or uses an unsupported schema version.");
         }
 
         world.startLocationId = document.startLocationId;
@@ -113,7 +117,8 @@
 
     function createInitialWorld() {
         const world = {
-            version: WORLD_VERSION,
+            schemaVersion: WORLD_SCHEMA_VERSION,
+            authoringRevision: setup.GeneratedWorldData.authoringRevision,
 
             entities: {},
 
@@ -135,7 +140,8 @@
             debug: {
                 lastActionResult: null,
                 controllerLog: [],
-                repairs: []
+                repairs: [],
+                migrationReports: []
             }
         };
         installGeneratedData(world);
@@ -748,6 +754,12 @@
         if (!world || typeof world !== "object") {
             return fail("WORLD_MISSING", "World state does not exist.");
         }
+        if (world.schemaVersion !== WORLD_SCHEMA_VERSION) {
+            return fail("WORLD_SCHEMA_VERSION_INVALID", `World schemaVersion must be ${WORLD_SCHEMA_VERSION}.`);
+        }
+        if (world.authoringRevision !== currentAuthoringRevision()) {
+            return fail("WORLD_AUTHORING_REVISION_INVALID", "World authoringRevision does not match the current generated world.");
+        }
 
         const controlResult = validateControlAssignments(
             world.control && world.control.assignments
@@ -777,60 +789,310 @@
         return ok();
     }
 
-    function reconcileCurrentAuthoringData(world) {
-        const generated = setup.GeneratedWorldData && setup.GeneratedWorldData.characters;
-        if (!world || !world.entities || !generated) return world;
-
-        Object.entries(generated).forEach(function (entry) {
-            const characterId = entry[0];
-            const sourceCharacter = entry[1] || {};
-            const runtimeCharacter = world.entities[characterId];
-            if (!runtimeCharacter || runtimeCharacter.type !== "character") return;
-            runtimeCharacter.aiDescription = typeof sourceCharacter.aiDescription === "string"
-                ? sourceCharacter.aiDescription
-                : "";
-        });
-        return world;
+    function currentAuthoringRevision() {
+        const revision = setup.GeneratedWorldData && setup.GeneratedWorldData.authoringRevision;
+        return typeof revision === "string" ? revision : "";
     }
 
-    function ensureWorld() {
-        const current = State.variables.world;
+    function persistedSchemaVersion(world) {
+        if (!world || typeof world !== "object") return null;
+        if (Number.isInteger(world.schemaVersion)) return world.schemaVersion;
+        if (world.version === LEGACY_WORLD_VERSION) return LEGACY_WORLD_VERSION;
+        return null;
+    }
 
-        if (!current || current.version !== WORLD_VERSION) {
-            State.variables.world = createInitialWorld();
+    function getMigrationStatus(world) {
+        const currentRevision = currentAuthoringRevision();
+        if (!world) {
+            return {
+                required: false,
+                supported: true,
+                fresh: true,
+                fromSchemaVersion: null,
+                toSchemaVersion: WORLD_SCHEMA_VERSION,
+                fromAuthoringRevision: null,
+                toAuthoringRevision: currentRevision
+            };
         }
+        const fromSchemaVersion = persistedSchemaVersion(world);
+        const fromAuthoringRevision = typeof world.authoringRevision === "string" ? world.authoringRevision : null;
+        const supported = SUPPORTED_MIGRATION_SCHEMA_VERSIONS.has(fromSchemaVersion) && fromSchemaVersion <= WORLD_SCHEMA_VERSION;
+        return {
+            required: Boolean(supported && (fromSchemaVersion !== WORLD_SCHEMA_VERSION || fromAuthoringRevision !== currentRevision)),
+            supported: supported,
+            fresh: false,
+            fromSchemaVersion: fromSchemaVersion,
+            toSchemaVersion: WORLD_SCHEMA_VERSION,
+            fromAuthoringRevision: fromAuthoringRevision,
+            toAuthoringRevision: currentRevision
+        };
+    }
 
-        const world = getWorld();
-        reconcileCurrentAuthoringData(world);
+    function migrationFailure(status, message) {
+        return fail("SAVE_MIGRATION_UNSUPPORTED", message || "This save uses an unsupported world schema and cannot be migrated automatically.", {
+            migration: clone(status)
+        });
+    }
 
+    function migrationArray(savedCharacter, partition) {
+        if (!savedCharacter || !savedCharacter.mind || !Array.isArray(savedCharacter.mind[partition])) {
+            throw new Error(`Character ${savedCharacter && savedCharacter.id || "unknown"} has invalid saved mind.${partition}.`);
+        }
+        return clone(savedCharacter.mind[partition]);
+    }
+
+    function candidateInventoryForSavedContainer(savedWorld, candidate, savedContainerId) {
+        if (savedContainerId && candidate.inventories[savedContainerId]) return savedContainerId;
+        const savedInventory = savedContainerId && savedWorld.inventories && savedWorld.inventories[savedContainerId];
+        const ownerId = savedInventory && savedInventory.ownerId;
+        if (!ownerId) return null;
+        const candidateOwner = candidate.entities[ownerId];
+        if (candidateOwner) {
+            const candidateInventoryId = candidateOwner.inventoryId;
+            if (candidateInventoryId && candidate.inventories[candidateInventoryId]) return candidateInventoryId;
+        }
+        const savedOwner = savedWorld.entities && savedWorld.entities[ownerId];
+        if (savedOwner && savedOwner.type === "sublocation" && savedOwner.locationId) {
+            const candidateLocation = getLocation(savedOwner.locationId, candidate);
+            if (candidateLocation && candidate.inventories[candidateLocation.inventoryId]) return candidateLocation.inventoryId;
+        }
+        return null;
+    }
+
+    function removeItemFromCandidate(candidate, itemId) {
+        Object.values(candidate.inventories).forEach(function (inventory) {
+            inventory.itemIds = inventory.itemIds.filter(function (candidateId) { return candidateId !== itemId; });
+        });
+        if (candidate.entities[itemId] && candidate.entities[itemId].type === "item") {
+            delete candidate.entities[itemId];
+        }
+    }
+
+    function reconstructPersistentCounters(candidate, savedWorld) {
+        let nextMemoryId = Number.isInteger(savedWorld.nextMemoryId) && savedWorld.nextMemoryId > 0
+            ? savedWorld.nextMemoryId
+            : 1;
+        getCharacters(candidate).forEach(function (character) {
+            ["recentMemories", "longTermMemories"].forEach(function (partition) {
+                (character.mind[partition] || []).forEach(function (memory) {
+                    const match = memory && typeof memory.id === "string" && memory.id.match(/^memory_ai_(\d+)$/);
+                    if (match) nextMemoryId = Math.max(nextMemoryId, Number(match[1]) + 1);
+                });
+            });
+        });
+        candidate.nextMemoryId = nextMemoryId;
+        candidate.nextGeneratedItemId = Number.isInteger(savedWorld.nextGeneratedItemId) && savedWorld.nextGeneratedItemId > 0
+            ? Math.max(candidate.nextGeneratedItemId, savedWorld.nextGeneratedItemId)
+            : candidate.nextGeneratedItemId;
+        candidate.nextEventId = 1;
+        candidate.nextObservationId = 1;
+        candidate.nextIntentId = 1;
+    }
+
+    function migrateSavedWorld(savedWorld) {
+        const status = getMigrationStatus(savedWorld);
+        if (!status.supported) return migrationFailure(status);
+        if (!status.required) return ok({ migrated: false, report: null });
+        if (migrationInFlight) return fail("SAVE_MIGRATION_IN_FLIGHT", "A save migration is already in progress.");
+
+        migrationInFlight = true;
+        const report = {
+            fromSchemaVersion: status.fromSchemaVersion,
+            toSchemaVersion: status.toSchemaVersion,
+            fromAuthoringRevision: status.fromAuthoringRevision,
+            toAuthoringRevision: status.toAuthoringRevision,
+            status: "running",
+            charactersPreserved: 0,
+            charactersRemoved: 0,
+            characterPositionFallbacks: 0,
+            itemInstancesPreserved: 0,
+            itemInstancesRemoved: 0,
+            itemInstancesRepositioned: 0,
+            authoredKnownFactsLoaded: 0,
+            memoriesPreserved: 0,
+            relationshipsPreserved: 0,
+            beliefsPreserved: 0,
+            warnings: [],
+            errors: []
+        };
+
+        try {
+            const source = clone(savedWorld);
+            const candidate = createInitialWorld();
+            candidate.events = [];
+            candidate.ai.turnQueue = [];
+            candidate.ai.continuations = {};
+            candidate.debug = {
+                lastActionResult: null,
+                controllerLog: [],
+                repairs: [],
+                migrationReports: []
+            };
+
+            const savedCharacters = Object.values(source.entities || {}).filter(function (entity) {
+                return entity && entity.type === "character";
+            });
+            const candidateCharacterIds = new Set(getCharacters(candidate).map(function (character) { return character.id; }));
+            report.charactersRemoved = savedCharacters.filter(function (character) {
+                return !candidateCharacterIds.has(character.id);
+            }).length;
+
+            getCharacters(candidate).forEach(function (character) {
+                report.authoredKnownFactsLoaded += Array.isArray(character.mind.knownFacts) ? character.mind.knownFacts.length : 0;
+                const savedCharacter = source.entities && source.entities[character.id];
+                if (!savedCharacter || savedCharacter.type !== "character") return;
+
+                report.charactersPreserved += 1;
+                character.mind.beliefs = migrationArray(savedCharacter, "beliefs");
+                character.mind.relationships = migrationArray(savedCharacter, "relationships");
+                character.mind.recentMemories = migrationArray(savedCharacter, "recentMemories");
+                character.mind.longTermMemories = migrationArray(savedCharacter, "longTermMemories");
+                character.mind.pendingObservations = [];
+                report.beliefsPreserved += character.mind.beliefs.length;
+                report.relationshipsPreserved += character.mind.relationships.length;
+                report.memoriesPreserved += character.mind.recentMemories.length + character.mind.longTermMemories.length;
+
+                if (Number.isInteger(savedCharacter.wallet) && savedCharacter.wallet >= 0) {
+                    character.wallet = savedCharacter.wallet;
+                } else {
+                    report.warnings.push(`Character ${character.id} had an invalid saved wallet; current authored wallet was used.`);
+                }
+
+                const savedLocation = getLocation(savedCharacter.locationId, candidate);
+                if (!savedLocation) {
+                    const fallbackLocation = getLocation(candidate.startLocationId, candidate);
+                    character.locationId = fallbackLocation.id;
+                    character.sublocationId = fallbackLocation.defaultSublocationId;
+                    report.characterPositionFallbacks += 1;
+                    report.warnings.push(`Character ${character.id} was moved to the start location because saved location ${String(savedCharacter.locationId)} no longer exists.`);
+                } else {
+                    character.locationId = savedLocation.id;
+                    const savedSublocation = getSublocation(savedCharacter.sublocationId, candidate);
+                    if (savedSublocation && savedSublocation.locationId === savedLocation.id) {
+                        character.sublocationId = savedSublocation.id;
+                    } else {
+                        character.sublocationId = savedLocation.defaultSublocationId;
+                        report.characterPositionFallbacks += 1;
+                        report.warnings.push(`Character ${character.id} was moved to ${savedLocation.defaultSublocationId} because saved sublocation ${String(savedCharacter.sublocationId)} no longer exists there.`);
+                    }
+                }
+
+                const savedControllerId = source.control && source.control.assignments && source.control.assignments[character.id];
+                if (CONTROLLER_IDS.has(savedControllerId)) {
+                    candidate.control.assignments[character.id] = savedControllerId;
+                }
+                const continuation = source.ai && source.ai.continuations && source.ai.continuations[character.id];
+                if (typeof continuation === "string" && continuation.length <= 2000) {
+                    candidate.ai.continuations[character.id] = continuation;
+                }
+            });
+
+            const controlValidation = validateControlAssignments(candidate.control.assignments, candidate);
+            if (!controlValidation.ok) {
+                report.warnings.push(`Human controller assignment required repair: ${controlValidation.error.message}`);
+                const repaired = repairControlInvariant(candidate, "save migration controller repair");
+                if (!repaired.ok) throw new Error(repaired.error.message);
+            }
+
+            const savedItems = Object.values(source.entities || {}).filter(function (entity) {
+                return entity && entity.type === "item";
+            });
+            savedItems.forEach(function (savedItem) {
+                const definition = candidate.itemDefinitions[savedItem.definitionId];
+                if (!definition) {
+                    removeItemFromCandidate(candidate, savedItem.id);
+                    report.itemInstancesRemoved += 1;
+                    report.warnings.push(`Item ${savedItem.id} was removed because definition ${String(savedItem.definitionId)} no longer exists.`);
+                    return;
+                }
+                const collision = candidate.entities[savedItem.id];
+                if (collision && collision.type !== "item") {
+                    report.itemInstancesRemoved += 1;
+                    report.warnings.push(`Item ${savedItem.id} was removed because its ID now belongs to a non-item authored entity.`);
+                    return;
+                }
+
+                const targetInventoryId = candidateInventoryForSavedContainer(source, candidate, savedItem.containerId);
+                if (!targetInventoryId) {
+                    removeItemFromCandidate(candidate, savedItem.id);
+                    report.itemInstancesRemoved += 1;
+                    report.warnings.push(`Item ${savedItem.id} was removed because saved container ${String(savedItem.containerId)} no longer has a safe destination.`);
+                    return;
+                }
+
+                removeItemFromCandidate(candidate, savedItem.id);
+                const migratedItem = clone(savedItem);
+                migratedItem.id = savedItem.id;
+                migratedItem.type = "item";
+                migratedItem.definitionId = savedItem.definitionId;
+                migratedItem.containerId = targetInventoryId;
+                migratedItem.name = definition.name;
+                candidate.entities[migratedItem.id] = migratedItem;
+                candidate.inventories[targetInventoryId].itemIds.push(migratedItem.id);
+                report.itemInstancesPreserved += 1;
+                if (targetInventoryId !== savedItem.containerId) {
+                    report.itemInstancesRepositioned += 1;
+                    report.warnings.push(`Item ${savedItem.id} moved from missing container ${String(savedItem.containerId)} to ${targetInventoryId}.`);
+                }
+            });
+
+            reconstructPersistentCounters(candidate, source);
+            const validation = validateWorld(candidate);
+            if (!validation.ok) throw new Error(validation.error.message);
+
+            report.status = report.warnings.length > 0 ? "success_with_warnings" : "success";
+            candidate.debug.migrationReports.push(clone(report));
+            State.variables.world = candidate;
+            lastMigrationReport = clone(report);
+            return ok({ migrated: true, report: clone(report) });
+        } catch (error) {
+            report.status = "failed";
+            report.errors.push(error && error.message ? error.message : String(error));
+            lastMigrationReport = clone(report);
+            return fail("SAVE_MIGRATION_FAILED", "Save migration failed. Your original save was not changed.", {
+                migration: clone(report)
+            });
+        } finally {
+            migrationInFlight = false;
+        }
+    }
+
+    function prepareCurrentWorld(world) {
         if (!world.debug) {
             world.debug = {
                 lastActionResult: null,
                 controllerLog: [],
-                repairs: []
+                repairs: [],
+                migrationReports: []
             };
         }
+        if (!Array.isArray(world.debug.repairs)) world.debug.repairs = [];
+        if (!Array.isArray(world.debug.controllerLog)) world.debug.controllerLog = [];
+        if (!Array.isArray(world.debug.migrationReports)) world.debug.migrationReports = [];
 
         if (!world.control || !world.control.assignments) {
             repairControlInvariant(world, "missing control state");
         } else {
-            const controlResult = validateControlAssignments(
-                world.control.assignments,
-                world
-            );
-
-            if (!controlResult.ok) {
-                repairControlInvariant(world, controlResult.error.message);
-            }
+            const controlResult = validateControlAssignments(world.control.assignments, world);
+            if (!controlResult.ok) repairControlInvariant(world, controlResult.error.message);
         }
-
-        if (!Number.isInteger(world.nextIntentId) || world.nextIntentId < 1) {
-            world.nextIntentId = 1;
-        }
-
+        if (!Number.isInteger(world.nextIntentId) || world.nextIntentId < 1) world.nextIntentId = 1;
         repairAIQueue(world);
-
         return world;
+    }
+
+    function ensureWorld() {
+        if (!State.variables.world) {
+            State.variables.world = createInitialWorld();
+        }
+        const status = getMigrationStatus(State.variables.world);
+        if (!status.supported) {
+            throw new Error("This save uses an unsupported world schema and cannot be migrated automatically.");
+        }
+        if (status.required) {
+            throw new Error("This save must be migrated before gameplay can continue.");
+        }
+        return prepareCurrentWorld(State.variables.world);
     }
 
     function getHumanCharacterId(world) {
@@ -2326,12 +2588,21 @@
     }
 
     setup.Game = {
-        WORLD_VERSION: WORLD_VERSION,
+        WORLD_VERSION: WORLD_SCHEMA_VERSION,
+        WORLD_SCHEMA_VERSION: WORLD_SCHEMA_VERSION,
         ActionRegistry: ActionRegistry,
         createInitialWorld: createInitialWorld,
         bootstrap: function () {
-            ensureWorld();
-            return validateWorld(getWorld());
+            if (!State.variables.world) {
+                State.variables.world = createInitialWorld();
+                return ok({ created: true, migrationRequired: false });
+            }
+            const migration = getMigrationStatus(State.variables.world);
+            if (!migration.supported) return migrationFailure(migration);
+            if (migration.required) return ok({ migrationRequired: true, migration: clone(migration) });
+            const world = prepareCurrentWorld(State.variables.world);
+            const validation = validateWorld(world);
+            return validation.ok ? ok({ migrationRequired: false }) : validation;
         },
         resetWorld: function () {
             State.variables.world = createInitialWorld();
@@ -2366,6 +2637,13 @@
         logController: function (entry) {
             pushDebugLog(ensureWorld(), entry);
         }
+    };
+
+    setup.SaveMigration = {
+        getStatus: function () { return clone(getMigrationStatus(State.variables.world)); },
+        migrate: function () { return migrateSavedWorld(State.variables.world); },
+        isInFlight: function () { return migrationInFlight; },
+        getLastReport: function () { return clone(lastMigrationReport); }
     };
 
     setup.AITurnQueue = {
