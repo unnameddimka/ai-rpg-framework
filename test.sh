@@ -24,6 +24,7 @@ TEST_FILES=(
     tests/run-ai-tests.js
     tests/run-generator-tests.js
     tests/run-narrator-tests.js
+    tests/run-memory-consolidation-tests.js
 )
 
 for test_file in "${TEST_FILES[@]}"; do

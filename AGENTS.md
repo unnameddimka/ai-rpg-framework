@@ -77,9 +77,10 @@ The AI controller may interpret a bounded snapshot of `pendingObservations` duri
 The current milestone still must not:
 
 - count tokens or implement token-budget policies;
-- summarize or compress memories;
 - use embeddings or vector search;
 - run autonomous or time-based NPC loops.
+
+Character memory consolidation is an explicit exception to the older no-compression rule. It is a dedicated AI maintenance operation over a character's own `recentMemories` and `longTermMemories`, not a game turn. Manual consolidation is available for the character selected in the sidebar. Optional automatic consolidation may run only at normal world-tick boundaries when enabled, and is disabled by default. Consolidation must be transactional, preserve the newest ten recent memories unchanged, persist through saves, and never mutate `knownFacts`, beliefs, relationships, continuation, observations, controllers, or objective world state.
 
 Validated AI memory updates may append recent memories and upsert beliefs or relationships only through a dedicated engine-owned function. The model never receives direct mutation access to `mind`.
 

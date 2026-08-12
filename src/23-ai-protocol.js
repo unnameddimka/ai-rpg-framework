@@ -206,6 +206,70 @@
         return finishValidation(value, errors);
     }
 
+
+    function validateMemoryConsolidation(value, existingLongTermIds) {
+        const errors = exactKeyErrors(value, ["longTermMemoriesToUpsert", "longTermMemoriesToAdd"], "response");
+        if (!isPlainObject(value)) return finishValidation(value, errors);
+
+        if (!Array.isArray(value.longTermMemoriesToUpsert)) {
+            errors.push("response.longTermMemoriesToUpsert must be an array.");
+        }
+        if (!Array.isArray(value.longTermMemoriesToAdd)) {
+            errors.push("response.longTermMemoriesToAdd must be an array.");
+        }
+
+        const allowedIds = new Set(Array.isArray(existingLongTermIds) ? existingLongTermIds : []);
+        const seenIds = new Set();
+        (Array.isArray(value.longTermMemoriesToUpsert) ? value.longTermMemoriesToUpsert : []).forEach(function (memory, index) {
+            const path = `response.longTermMemoriesToUpsert[${index}]`;
+            errors.push.apply(errors, exactKeyErrors(memory, ["id", "summary", "importance"], path));
+            if (!isPlainObject(memory)) return;
+            if (typeof memory.id !== "string" || !allowedIds.has(memory.id)) {
+                errors.push(`${path}.id must match an existing long-term-memory ID supplied in the request.`);
+            } else if (seenIds.has(memory.id)) {
+                errors.push(`${path}.id may be upserted only once.`);
+            } else {
+                seenIds.add(memory.id);
+            }
+            errors.push.apply(errors, requiredTextErrors(memory.summary, `${path}.summary`, 2000));
+            if (typeof memory.importance !== "number" || !Number.isFinite(memory.importance) ||
+                    memory.importance < 0 || memory.importance > 1) {
+                errors.push(`${path}.importance must be a finite number from 0 to 1.`);
+            }
+        });
+
+        (Array.isArray(value.longTermMemoriesToAdd) ? value.longTermMemoriesToAdd : []).forEach(function (memory, index) {
+            const path = `response.longTermMemoriesToAdd[${index}]`;
+            errors.push.apply(errors, exactKeyErrors(memory, ["summary", "importance"], path));
+            if (!isPlainObject(memory)) return;
+            errors.push.apply(errors, requiredTextErrors(memory.summary, `${path}.summary`, 2000));
+            if (typeof memory.importance !== "number" || !Number.isFinite(memory.importance) ||
+                    memory.importance < 0 || memory.importance > 1) {
+                errors.push(`${path}.importance must be a finite number from 0 to 1.`);
+            }
+        });
+
+        return finishValidation(value, errors);
+    }
+
+    function memoryConsolidationSystem() {
+        return [
+            "You are consolidating one character's autobiographical memory.",
+            "You are not taking a game turn and you cannot act in the world.",
+            "Use only the supplied character context, existing long-term memories, and recent memories selected for consolidation.",
+            "Produce durable long-term memories that preserve what this character would meaningfully remember about important episodes, relationships, discoveries, conflicts, changes in understanding, and other experiences likely to matter later.",
+            "Long-term memory is thematic rather than chronological. When new material belongs to an existing long-term topic, update that existing memory by its supplied ID instead of creating a duplicate. Add a new long-term memory only when the material represents a genuinely distinct durable topic or episode.",
+            "Preserve the character's subjective perspective, including uncertainty, mistakes, suspicions, conflicting interpretations, and unresolved contradictions. Do not replace remembered experience with objective world truth unless the supplied memories themselves show that the character learned the correction.",
+            "Do not invent events or conclusions. Do not preserve routine detail merely because it occurred. Preserve important nuance that could affect future behavior, relationships, decisions, or understanding.",
+            "You may update existing long-term memories or propose new ones. You may not delete an existing long-term memory.",
+            "Do not modify known facts, beliefs, relationships, continuation, controller state, world state, recent memories, or any other state.",
+            "Do not mention memory consolidation, summarization, prompts, AI models, or the framework as an experience of the character.",
+            "Return exactly one JSON object with the keys longTermMemoriesToUpsert and longTermMemoriesToAdd, and nothing else.",
+            "longTermMemoriesToUpsert must contain records shaped exactly as {\"id\":\"existing_id\",\"summary\":\"...\",\"importance\":0.0}. The id must be one of the supplied existing long-term-memory IDs.",
+            "longTermMemoriesToAdd must contain records shaped exactly as {\"summary\":\"...\",\"importance\":0.0}; do not invent IDs. importance must be from 0 to 1. Both arrays must always be present, even when empty."
+        ].join(" ");
+    }
+
     function baseSystem(stage) {
         if (stage !== "decision") {
             return "You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else: no markdown fence, prose, chain-of-thought, hidden reasoning, patches, or extra fields. Return exactly the keys publicNarrative, spokenText, and memoryUpdates. Do not choose another action; react only to the supplied grounded action result. A formal result supplied here is authoritative. Keep role-play concise and characterful. memoryUpdates must always contain exactly recentMemoriesToAdd, beliefsToUpsert, and relationshipsToUpsert, even when all are empty arrays. A recent memory record is {\"summary\":\"...\",\"importance\":0.0}; importance must be from 0 to 1. A belief record is {\"id\":\"letter_started_id\",\"text\":\"...\",\"confidence\":\"low|medium|high\"}. A relationship record is {\"targetCharacterId\":\"character_id\",\"summary\":\"...\"}.";
@@ -255,12 +319,36 @@
         return Array.isArray(characters) ? characters.map(function (character) { return character.id; }).filter(Boolean) : [];
     }
 
+
+    function existingLongTermIdsFromMessages(messages) {
+        const payload = requestPayloadFromMessages(messages);
+        const records = payload && payload.context && payload.context.existingLongTermMemories;
+        return Array.isArray(records)
+            ? records.map(function (memory) { return memory && memory.id; }).filter(function (id) { return typeof id === "string"; })
+            : [];
+    }
+
     function decisionMessages(context) {
         return [{ role: "system", content: baseSystem("decision") }, { role: "user", content: JSON.stringify({
             stage: "decision",
             context: clone(context || {}),
             requiredResponseShape: { action: null, publicNarrative: null, spokenText: null, spokenTargetId: null, spokenLoudness: null, continuation: null, memoryUpdates: EMPTY_UPDATES }
         }) }];
+    }
+
+
+    function memoryConsolidationMessages(context) {
+        return [
+            { role: "system", content: memoryConsolidationSystem() },
+            { role: "user", content: JSON.stringify({
+                stage: "memory-consolidation",
+                context: clone(context || {}),
+                requiredResponseShape: {
+                    longTermMemoriesToUpsert: [],
+                    longTermMemoriesToAdd: []
+                }
+            }) }
+        ];
     }
 
     function resultMessages(context, action, actionResult) {
@@ -301,6 +389,7 @@
     async function requestValidated(messages, stage, client) {
         const actionCatalog = actionCatalogFromMessages(messages);
         const spokenTargetIds = spokenTargetIdsFromMessages(messages);
+        const existingLongTermIds = existingLongTermIdsFromMessages(messages);
         const trace = {
             stage: stage,
             originalMessages: clone(messages),
@@ -333,7 +422,11 @@
             try {
                 value = extractObject(response.content);
                 attemptTrace.parsedValue = clone(value);
-                validation = stage === "decision" ? validateDecision(value, actionCatalog, spokenTargetIds) : validateResult(value);
+                validation = stage === "decision"
+                    ? validateDecision(value, actionCatalog, spokenTargetIds)
+                    : stage === "memory-consolidation"
+                        ? validateMemoryConsolidation(value, existingLongTermIds)
+                        : validateResult(value);
             } catch (error) {
                 validation = { ok: false, message: error.message, errors: [error.message] };
             }
@@ -371,9 +464,12 @@
         extractObject: extractObject,
         validateDecision: validateDecision,
         validateResult: validateResult,
+        validateMemoryConsolidation: validateMemoryConsolidation,
         actionCatalogFromMessages: actionCatalogFromMessages,
         spokenTargetIdsFromMessages: spokenTargetIdsFromMessages,
+        existingLongTermIdsFromMessages: existingLongTermIdsFromMessages,
         decisionMessages: decisionMessages,
+        memoryConsolidationMessages: memoryConsolidationMessages,
         resultMessages: resultMessages,
         buildRepairMessages: buildRepairMessages,
         requestValidated: requestValidated

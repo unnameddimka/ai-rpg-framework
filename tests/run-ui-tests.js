@@ -257,6 +257,12 @@ assert(!uiSource.includes('id="take-next-ai-turn"') && !uiSource.includes('$("#t
 assert(uiSource.includes('id="stop-auto-ai-processing"') &&
     uiSource.includes("setup.AITurnScheduler.setAutoProcessingPaused"),
     "sidebar should expose a persistent switch that pauses automatic AI processing after Submit");
+assert(uiSource.includes('id="compress-memory-button"') && uiSource.includes("Compress memory") &&
+    uiSource.includes('$("#human-character-select").val()') && uiSource.includes("setup.MemoryConsolidator.compress"),
+    "sidebar should expose manual memory compression for the character selected in the existing Human-controller selector");
+assert(uiSource.includes('id="auto-compress-character-memory"') && uiSource.includes("Auto-compress character memory") &&
+    uiSource.includes("setup.AITurnScheduler.setAutoMemoryCompressionEnabled"),
+    "AI scheduler controls should expose the optional automatic memory-compression toggle");
 assert(uiSource.includes('id="show-invisible-events"') && uiSource.includes("Show invisible events") &&
     uiSource.includes("[DEBUG — NOT VISIBLE TO PLAYER]") && uiSource.includes("framework-invisible-debug-entry") &&
     gameUIModel.getInvisibleEventDebugState().show === false,

@@ -2,8 +2,10 @@
     "use strict";
 
     const AUTO_PAUSE_KEY = "ai-rpg.stop-auto-ai-processing";
+    const AUTO_MEMORY_COMPRESSION_KEY = "ai-rpg.auto-memory-compression";
     let waveInFlight = false;
     let autoProcessingPaused = null;
+    let autoMemoryCompressionEnabled = null;
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -259,6 +261,74 @@
         return { ok: true, paused: autoProcessingPaused };
     }
 
+
+    function readAutoMemoryCompressionEnabled() {
+        if (autoMemoryCompressionEnabled !== null) return autoMemoryCompressionEnabled;
+        try {
+            autoMemoryCompressionEnabled = window.localStorage.getItem(AUTO_MEMORY_COMPRESSION_KEY) === "true";
+        } catch (error) {
+            autoMemoryCompressionEnabled = false;
+        }
+        return autoMemoryCompressionEnabled;
+    }
+
+    function setAutoMemoryCompressionEnabled(enabled) {
+        autoMemoryCompressionEnabled = Boolean(enabled);
+        try {
+            window.localStorage.setItem(
+                AUTO_MEMORY_COMPRESSION_KEY,
+                autoMemoryCompressionEnabled ? "true" : "false"
+            );
+        } catch (error) {
+            // The setting still applies for the current page when storage is unavailable.
+        }
+        return { ok: true, enabled: autoMemoryCompressionEnabled };
+    }
+
+    function automaticMemoryCandidates() {
+        if (!setup.MemoryConsolidator) return [];
+        const threshold = setup.MemoryConsolidator.AUTO_THRESHOLD;
+        const world = setup.Game.getWorld();
+        return Object.values(world.entities).filter(function (entity) {
+            return entity && entity.type === "character" && entity.mind &&
+                Array.isArray(entity.mind.recentMemories) &&
+                entity.mind.recentMemories.length >= threshold;
+        }).map(function (character) {
+            return { characterId: character.id, characterName: character.name };
+        });
+    }
+
+    async function processAutomaticMemoryConsolidation(client) {
+        const report = {
+            enabled: readAutoMemoryCompressionEnabled(),
+            paused: readAutoProcessingPaused(),
+            attemptedCharacterIds: [],
+            compressedCharacterIds: [],
+            results: [],
+            warnings: []
+        };
+        if (!report.enabled || report.paused || !setup.MemoryConsolidator) return report;
+
+        const candidates = automaticMemoryCandidates();
+        for (const candidate of candidates) {
+            report.attemptedCharacterIds.push(candidate.characterId);
+            const result = await setup.MemoryConsolidator.compress(
+                candidate.characterId,
+                client || setup.OpenRouterClient,
+                { automatic: true }
+            );
+            report.results.push(clone(result));
+            if (result.ok && !result.nothingToCompress) {
+                report.compressedCharacterIds.push(candidate.characterId);
+            } else if (!result.ok) {
+                report.warnings.push(
+                    `Memory consolidation failed for ${candidate.characterName}: ${result.error && result.error.message || "unknown error"}`
+                );
+            }
+        }
+        return report;
+    }
+
     async function processNext(client) {
         const next = orderedQueueEntries()[0];
         if (!next) return { ok: false, error: { code: "AI_QUEUE_EMPTY", message: "No pending AI turns." } };
@@ -269,18 +339,38 @@
         if (waveInFlight || setup.AIController.isInFlight()) {
             return { ok: false, error: { code: "AI_WAVE_IN_FLIGHT", message: "An AI reaction wave is already in progress." } };
         }
-        if (orderedQueueEntries().length === 0) {
-            return { ok: true, processedCount: 0, reactedCharacterIds: [], results: [], remainingQueue: getQueueView() };
-        }
-        if (setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
-            return { ok: false, error: { code: "AI_KEY_MISSING", message: "Enter an OpenRouter API key before processing AI reactions." } };
-        }
 
         waveInFlight = true;
         const reacted = new Set();
         const results = [];
         const emergencyLimit = 64;
+        let memoryConsolidation = null;
         try {
+            memoryConsolidation = await processAutomaticMemoryConsolidation(client || setup.OpenRouterClient);
+
+            if (orderedQueueEntries().length === 0) {
+                return {
+                    ok: true,
+                    processedCount: 0,
+                    reactedCharacterIds: [],
+                    results: [],
+                    remainingQueue: getQueueView(),
+                    memoryConsolidation: clone(memoryConsolidation),
+                    warning: memoryConsolidation.warnings.length ? memoryConsolidation.warnings.join(" ") : null
+                };
+            }
+            if (setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
+                return {
+                    ok: false,
+                    error: { code: "AI_KEY_MISSING", message: "Enter an OpenRouter API key before processing AI reactions." },
+                    processedCount: 0,
+                    reactedCharacterIds: [],
+                    results: [],
+                    remainingQueue: getQueueView(),
+                    memoryConsolidation: clone(memoryConsolidation)
+                };
+            }
+
             for (let count = 0; count < emergencyLimit; count++) {
                 const next = orderedQueueEntries(reacted)[0];
                 if (!next) break;
@@ -294,7 +384,8 @@
                         processedCount: reacted.size,
                         reactedCharacterIds: Array.from(reacted),
                         results: results,
-                        remainingQueue: getQueueView()
+                        remainingQueue: getQueueView(),
+                        memoryConsolidation: clone(memoryConsolidation)
                     };
                 }
                 reacted.add(next.entry.characterId);
@@ -302,14 +393,17 @@
 
             const unreacted = orderedQueueEntries(reacted);
             if (unreacted.length > 0 && reacted.size >= emergencyLimit) {
+                const warnings = memoryConsolidation.warnings.slice();
+                warnings.push(`AI world tick stopped at the emergency limit of ${emergencyLimit} model decisions; remaining observations stay pending.`);
                 return {
                     ok: true,
                     truncated: true,
-                    warning: `AI world tick stopped at the emergency limit of ${emergencyLimit} model decisions; remaining observations stay pending.`,
+                    warning: warnings.join(" "),
                     processedCount: reacted.size,
                     reactedCharacterIds: Array.from(reacted),
                     results: results,
-                    remainingQueue: getQueueView()
+                    remainingQueue: getQueueView(),
+                    memoryConsolidation: clone(memoryConsolidation)
                 };
             }
 
@@ -318,7 +412,9 @@
                 processedCount: reacted.size,
                 reactedCharacterIds: Array.from(reacted),
                 results: results,
-                remainingQueue: getQueueView()
+                remainingQueue: getQueueView(),
+                memoryConsolidation: clone(memoryConsolidation),
+                warning: memoryConsolidation.warnings.length ? memoryConsolidation.warnings.join(" ") : null
             };
         } finally {
             waveInFlight = false;
@@ -356,13 +452,19 @@
         },
         isAutoProcessingPaused: readAutoProcessingPaused,
         setAutoProcessingPaused: setAutoProcessingPaused,
+        isAutoMemoryCompressionEnabled: readAutoMemoryCompressionEnabled,
+        setAutoMemoryCompressionEnabled: setAutoMemoryCompressionEnabled,
+        getAutomaticMemoryCandidates: function () { return clone(automaticMemoryCandidates()); },
+        processAutomaticMemoryConsolidation: processAutomaticMemoryConsolidation,
         isWaveInFlight: function () { return waveInFlight; },
         getStatus: function () {
             return {
                 queue: getQueueView(),
                 executor: setup.AIRequestExecutor.getStatus(),
                 waveInFlight: waveInFlight,
-                autoProcessingPaused: readAutoProcessingPaused()
+                autoProcessingPaused: readAutoProcessingPaused(),
+                autoMemoryCompressionEnabled: readAutoMemoryCompressionEnabled(),
+                automaticMemoryCandidateCount: automaticMemoryCandidates().length
             };
         }
     };

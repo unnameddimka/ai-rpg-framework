@@ -1267,6 +1267,7 @@
         const aiSettings = setup.AIRuntimeSettings.getStatus();
         const aiBusy = setup.AIController.isInFlight() || setup.AIRequestExecutor.getStatus().busy || setup.AITurnScheduler.isWaveInFlight();
         const autoProcessingPaused = setup.AITurnScheduler.isAutoProcessingPaused();
+        const autoMemoryCompressionEnabled = setup.AITurnScheduler.isAutoMemoryCompressionEnabled();
         const usage = setup.AITransientDebug.lastUsage;
         const usageText = usage ? `Usage: ${escapeHtml(JSON.stringify(usage))}` : "";
         const modelOptions = aiSettings.models.map(function (model) {
@@ -1297,6 +1298,7 @@
                     }).join("")}
                 </select>
                 <button id="take-control-button">Take control</button>
+                <button id="compress-memory-button" type="button"${aiBusy ? " disabled" : ""}>Compress memory</button>
                 <br><button id="open-character-window" type="button">Character</button>
             </div>
             <div class="framework-sidebar-block">
@@ -1336,6 +1338,7 @@
                 <label class="framework-auto-ai-toggle"><input id="stop-auto-ai-processing" type="checkbox"${autoProcessingPaused ? " checked" : ""}${aiBusy ? " disabled" : ""}> Stop automatic AI request processing</label><br>
                 <label class="framework-auto-ai-toggle"><input id="show-invisible-events" type="checkbox"${showInvisibleEvents ? " checked" : ""}> Show invisible events</label><br>
                 <label class="framework-auto-ai-toggle"><input id="enable-narrator" type="checkbox"${narratorEnabled ? " checked" : ""}${aiBusy ? " disabled" : ""}> Enable narrator</label><br>
+                <label class="framework-auto-ai-toggle"><input id="auto-compress-character-memory" type="checkbox"${autoMemoryCompressionEnabled ? " checked" : ""}${aiBusy ? " disabled" : ""}> Auto-compress character memory</label><br>
                 <span id="ai-queue-status">${queueText}</span><br>
                 <div id="ai-turn-status" class="framework-status">${escapeHtml(setup.AITransientDebug.lastSafeError || "")}</div>
                 <div id="ai-usage-status" class="framework-status">${usageText}</div>
@@ -1363,6 +1366,45 @@
             resetStaticNarration("");
             const passage = currentPassageForHuman();
             Engine.play(passage);
+        });
+
+
+        $("#compress-memory-button").on("click", async function () {
+            const targetId = String($("#human-character-select").val() || "");
+            const target = characters.find(function (character) { return character.id === targetId; });
+            const targetName = target ? target.name : targetId;
+            if (!targetId || !setup.MemoryConsolidator) {
+                $("#sidebar-status").text("Memory consolidation is unavailable.");
+                return;
+            }
+            if (setup.AIRequestExecutor.getStatus().busy || setup.AITurnScheduler.isWaveInFlight()) {
+                $("#sidebar-status").text("Another AI request is already in progress.");
+                return;
+            }
+
+            $("#sidebar-status").text(`Compressing ${targetName}'s memory...`);
+            root.querySelectorAll("button, select, input").forEach(function (control) {
+                control.disabled = true;
+            });
+
+            const result = await setup.MemoryConsolidator.compress(targetId, setup.OpenRouterClient);
+            renderSidebar();
+            $("#human-character-select").val(targetId);
+
+            if (!result.ok) {
+                $("#sidebar-status").text(result.error && result.error.message || "Memory compression failed.");
+                return;
+            }
+            if (result.nothingToCompress) {
+                $("#sidebar-status").text("Nothing to compress.");
+                return;
+            }
+            const report = result.consolidation || {};
+            const changedLongTerm = (report.longTermMemoriesUpserted || 0) + (report.longTermMemoriesAdded || 0);
+            $("#sidebar-status").text(
+                `Memory compressed: ${report.consolidatedRecentCount || 0} recent memories consolidated, ` +
+                `${report.retainedRecentCount || 0} retained, ${changedLongTerm} long-term memories added or updated.`
+            );
         });
 
         $("#open-character-window").on("click", function () {
@@ -1432,6 +1474,14 @@
             $("#ai-turn-status").text(result.paused
                 ? "Automatic processing after Submit is paused. Pass and sphere controls remain available."
                 : "Automatic processing after Submit is enabled.");
+        });
+
+
+        $("#auto-compress-character-memory").on("change", function () {
+            const result = setup.AITurnScheduler.setAutoMemoryCompressionEnabled($(this).prop("checked"));
+            $("#ai-turn-status").text(result.enabled
+                ? `Automatic memory compression is enabled at ${setup.MemoryConsolidator.AUTO_THRESHOLD}+ recent memories.`
+                : "Automatic memory compression is disabled; memory changes only when Compress memory is used.");
         });
 
         $("#show-invisible-events").on("change", function () {

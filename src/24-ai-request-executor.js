@@ -39,7 +39,8 @@
             usage: result && result.usage ? clone(result.usage) : null,
             rawContent: result && typeof result.rawContent === "string" ? result.rawContent : "",
             trace: result && result.trace ? clone(result.trace) : null,
-            execution: result && result.execution ? clone(result.execution) : null
+            execution: result && result.execution ? clone(result.execution) : null,
+            consolidation: result && result.consolidation ? clone(result.consolidation) : null
         };
     }
 
