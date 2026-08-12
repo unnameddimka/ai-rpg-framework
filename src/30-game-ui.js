@@ -1511,12 +1511,44 @@
 
     }
 
+    function resetProgressiveTurnPresentation(uiState) {
+        currentTurnHiddenNarrative = [];
+        uiState.rawTurnNarrative = [];
+        uiState.narratedTurnNarrative = [];
+        uiState.dynamicNarrationValid = false;
+        uiState.turnNarrative = [];
+    }
+
+    function appendCommittedPresentation(uiState, batch) {
+        if (!batch || typeof batch !== "object") return;
+        const visible = Array.isArray(batch.visible) ? batch.visible.filter(Boolean) : [];
+        const hidden = Array.isArray(batch.hidden) ? batch.hidden : [];
+        if (visible.length) {
+            uiState.rawTurnNarrative.push.apply(uiState.rawTurnNarrative, cloneUIValue(visible));
+            uiState.turnNarrative.push.apply(uiState.turnNarrative, cloneUIValue(visible));
+        }
+        if (hidden.length) currentTurnHiddenNarrative.push.apply(currentTurnHiddenNarrative, cloneUIValue(hidden));
+        const meta = batch.meta || {};
+        if (meta.phase === "timelapse-round" && meta.round) {
+            uiState.locationStatus = `Timelapse round ${meta.round}/${meta.totalRounds || "?"} committed...`;
+        } else if (meta.phase === "ai-reaction") {
+            uiState.locationStatus = "Processing AI reactions...";
+        } else if (meta.phase === "human") {
+            uiState.locationStatus = "Processing turn...";
+        }
+        // Keep controls locked, but refresh the already-committed presentation immediately.
+        renderSidebar();
+        renderLocationView();
+        renderActionPanel();
+    }
+
     async function runHumanIntent(input, navigateOnMove) {
         const uiState = getUIState();
         if (getBusyState().busy) {
             return { ok: false, error: { code: "TURN_IN_FLIGHT", message: "A turn is already being processed." } };
         }
 
+        resetProgressiveTurnPresentation(uiState);
         uiState.turnBusy = true;
         uiState.locationStatus = "Processing turn...";
         renderSidebar();
@@ -1525,17 +1557,38 @@
 
         let result;
         try {
-            const pending = setup.TurnFlow.submitHumanIntent(input);
-            renderSidebar();
-            renderLocationView();
-            renderActionPanel();
+            const pending = setup.TurnFlow.submitHumanIntent(input, null, {
+                onCommittedPresentation: function (batch) {
+                    appendCommittedPresentation(uiState, batch);
+                }
+            });
             result = await pending;
         } finally {
             uiState.turnBusy = false;
         }
 
         if (!result || !result.ok) {
-            uiState.locationStatus = result && result.error ? result.error.message : "The turn could not be completed.";
+            if (result && result.turnConsumed) {
+                const actionResult = result.intentResult && result.intentResult.actionResult;
+                if (actionResult) {
+                    const hasFeedback = Array.isArray(actionResult.feedback) && actionResult.feedback.length > 0;
+                    if (!actionResult.ok || hasFeedback) uiState.abilityResultsByActor[result.actorId] = cloneUIValue(actionResult);
+                    else delete uiState.abilityResultsByActor[result.actorId];
+                }
+                appendHistory(result.historyEntries || []);
+                uiState.selectedAction = null;
+                uiState.rawTurnNarrative = cloneUIValue(result.rawNarrativeFragments || result.narrativeFragments || []);
+                uiState.narratedTurnNarrative = cloneUIValue(result.narratedNarrativeFragments || []);
+                uiState.dynamicNarrationValid = Boolean(result.narrator && result.narrator.used);
+                uiState.turnNarrative = cloneUIValue(result.narrativeFragments || []);
+                currentTurnHiddenNarrative = cloneUIValue(result.hiddenNarrativeEntries || []);
+                const committedRounds = result.timelapseResult && result.timelapseResult.committedRounds;
+                uiState.locationStatus = committedRounds
+                    ? `Timelapse stopped after ${committedRounds} committed round(s): ${result.error.message}`
+                    : result.error.message;
+            } else {
+                uiState.locationStatus = result && result.error ? result.error.message : "The turn could not be completed.";
+            }
             refreshCurrentPassage();
             return result;
         }
@@ -1579,7 +1632,7 @@
         if (getBusyState().busy) {
             return { ok: false, error: { code: "TURN_IN_FLIGHT", message: "A turn is already being processed." } };
         }
-        currentTurnHiddenNarrative = [];
+        resetProgressiveTurnPresentation(uiState);
         uiState.turnBusy = true;
         uiState.locationStatus = "Processing queued AI reactions...";
         renderSidebar();
@@ -1588,11 +1641,11 @@
 
         let result;
         try {
-            const pending = setup.TurnFlow.pass();
-            renderSidebar();
-            renderLocationView();
-            renderActionPanel();
-            result = await pending;
+            result = await setup.TurnFlow.pass(null, {
+                onCommittedPresentation: function (batch) {
+                    appendCommittedPresentation(uiState, batch);
+                }
+            });
         } finally {
             uiState.turnBusy = false;
         }

@@ -169,6 +169,38 @@ async function main() {
         setup.Game.getWorld().entities.player.locationId === "upstairsCorridor",
         "an authored blocked transition must consume the HumanController turn, preserve location, and start the AI world tick");
 
+    // Normal ticks should publish each committed block before the full causal reaction wave resolves.
+    world = fresh();
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "commonRoom" }), "progressive tick fixture enters common room");
+    const originalProgressiveProcessAfterSubmit = setup.AITurnScheduler.processAfterSubmit;
+    const priceProgressResult = { ok: true, actorId: "captainPrice", narrativeText: "Price gives a brief nod.", intentResult: { narrativeResult: null }, actionResult: null };
+    const nellProgressResult = { ok: true, actorId: "nell", narrativeText: "Nell smiles in passing.", intentResult: { narrativeResult: null }, actionResult: null };
+    setup.AITurnScheduler.processAfterSubmit = async function (client, options) {
+        options.onCommittedResult(priceProgressResult);
+        await new Promise(function (resolve) { setTimeout(resolve, 5); });
+        options.onCommittedResult(nellProgressResult);
+        return { ok: true, processedCount: 2, reactedCharacterIds: ["captainPrice", "nell"], results: [priceProgressResult, nellProgressResult], remainingQueue: setup.AITurnScheduler.getQueueView() };
+    };
+    const progressiveTickBatches = [];
+    let progressiveTickResolved = false;
+    const progressiveTickPromise = setup.TurnFlow.submitHumanIntent({ text: "Evening.", target_id: "", noticeability: "noticeable" }, null, {
+        onCommittedPresentation: function (batch) {
+            assert(progressiveTickResolved === false, "committed tick blocks must publish before the whole tick promise resolves");
+            progressiveTickBatches.push(clone(batch));
+        }
+    });
+    const progressiveTickResult = await progressiveTickPromise;
+    progressiveTickResolved = true;
+    setup.AITurnScheduler.processAfterSubmit = originalProgressiveProcessAfterSubmit;
+    ok(progressiveTickResult, "progressive normal tick fixture should complete");
+    assert(progressiveTickBatches.length === 3 && progressiveTickBatches[0].meta.phase === "human" &&
+        progressiveTickBatches[1].meta.phase === "ai-reaction" && progressiveTickBatches[1].meta.actorId === "captainPrice" &&
+        progressiveTickBatches[2].meta.actorId === "nell",
+        `normal tick output should commit in human -> AI -> AI order: ${JSON.stringify(progressiveTickBatches)}`);
+    assert(progressiveTickResult.narrativeFragments.length === 3 &&
+        progressiveTickResult.narrativeFragments.filter(function (text) { return text.includes("Price gives a brief nod"); }).length === 1,
+        "final tick aggregation should contain the same committed blocks exactly once rather than duplicate progressive output");
+
     world = fresh();
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "commonRoom" }), "AI presentation attribution fixture enters common room");
     const attributedNarrative = setup.TurnFlow.describeAIResult({
@@ -210,7 +242,8 @@ async function main() {
         "sao10k/l3.3-euryale-70b:nitro",
         "sao10k/l3.1-euryale-70b:nitro",
         "mistralai/mistral-small-3.2-24b-instruct",
-        "deepseek/deepseek-v4-pro"
+        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-flash"
     ].join(",") &&
         setup.AIRuntimeSettings.getDefaultModelId() === "thedrummer/cydonia-24b-v4.1" &&
         setup.AIRuntimeSettings.getSelectedModelId() === "thedrummer/cydonia-24b-v4.1",
@@ -249,6 +282,14 @@ async function main() {
         requestBody.model === euryaleId && setup.OpenRouterClient.MODEL === euryaleId && requestBody.stream === false &&
         requestBody.max_tokens === 6000 && requestBody.reasoning && requestBody.reasoning.max_tokens === 1500,
         "client should use the selected model, Bearer key, non-streaming transport, and explicit completion/reasoning headroom");
+    const boundedClientOk = await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "structured" }], {
+        maxTokens: 1200, reasoningEffort: "none", temperature: 0.2
+    }, fetchOk);
+    const boundedRequestBody = JSON.parse(captured.options.body);
+    assert(boundedClientOk.ok && boundedRequestBody.max_tokens === 1200 && boundedRequestBody.temperature === 0.2 &&
+        boundedRequestBody.reasoning && boundedRequestBody.reasoning.effort === "none" &&
+        !Object.prototype.hasOwnProperty.call(boundedRequestBody.reasoning, "max_tokens"),
+        "bounded structural requests should be able to disable model reasoning explicitly without changing the normal client defaults");
     async function statusFetch(status) { return { ok: false, status: status, json: async function () { return {}; } }; }
     for (const pair of [[401,"AUTHENTICATION_FAILED"],[402,"INSUFFICIENT_CREDITS"],[429,"RATE_LIMITED"],[503,"PROVIDER_UNAVAILABLE"]]) {
         const result = await setup.OpenRouterClient.chat([], function () { return statusFetch(pair[0]); });
@@ -735,7 +776,39 @@ async function main() {
     const concurrentResults = await Promise.all([concurrentA, concurrentB]);
     assert(concurrentResults.every(function (result) { return result.ok; }) &&
         executionOrder.join(",") === "first:start,first:end,second:start,second:end",
-        "shared request executor should serialize game, sphere, repair, and future scheduler requests");
+        "shared request executor should serialize game, sphere, repair, and ordinary scheduler requests");
+
+    const parallelOrder = [];
+    let parallelActive = 0;
+    let parallelMaxActive = 0;
+    function parallelSpec(name, delay) {
+        return {
+            actorId: name,
+            purpose: "executor-parallel-timelapse-test",
+            stage: "timelapse-plan",
+            messages: [{ role: "user", content: name }],
+            client: { enforceRequestTiming: false, chat: async function () {
+                parallelActive++;
+                parallelMaxActive = Math.max(parallelMaxActive, parallelActive);
+                parallelOrder.push(`${name}:start`);
+                await new Promise(function (resolve) { setTimeout(resolve, delay); });
+                parallelOrder.push(`${name}:end`);
+                parallelActive--;
+                return response({ ok: true });
+            } },
+            run: async function (policyClient) {
+                const transport = await policyClient.chat([{ role: "user", content: name }], { maxTokens: 10, reasoningEffort: "none" });
+                return { ok: transport.ok, value: name, modelId: transport.modelId || null, usage: transport.usage || null, rawContent: transport.content || "" };
+            }
+        };
+    }
+    const parallelResults = await Promise.all([
+        setup.AIRequestExecutor.executeCustomConcurrent(parallelSpec("parallel-a", 15)),
+        setup.AIRequestExecutor.executeCustomConcurrent(parallelSpec("parallel-b", 15))
+    ]);
+    assert(parallelResults.every(function (result) { return result.ok; }) && parallelMaxActive === 2 &&
+        parallelOrder[0].endsWith(":start") && parallelOrder[1].endsWith(":start"),
+        `explicit concurrent executor path should overlap causally independent timelapse work: ${JSON.stringify(parallelOrder)}`);
 
     world = queueHooded();
     const oneStage = { chat: async function () { return response({ action: null, publicNarrative: "She nods.", spokenText: "Greetings.", continuation: "Learn why the traveller approached me.", memoryUpdates: {

@@ -132,6 +132,53 @@ async function main() {
     assert(commonRoomCatalog && commonRoomCatalog.timelapseActions.some(function (action) { return action.id === "clean_common_room"; }),
         "common room should expose clean_common_room through the timelapse catalog");
 
+    assert(world.entities.player.aiDescription.includes("Do not assume a particular current location or activity") &&
+        !world.entities.player.aiDescription.includes("newly arrived") &&
+        world.entities.captainPrice.aiDescription.includes("Do not assume that you are currently drinking") &&
+        !world.entities.captainPrice.playerDescription.includes("holds a mug") &&
+        world.entities.innkeeper.aiDescription.includes("When working the tavern you usually tend the bar") &&
+        !world.entities.innkeeper.playerDescription.includes("stands behind the bar") &&
+        !world.entities.nell.playerDescription.includes("stands ready to work"),
+        "AI-facing and static character descriptions should be scene-agnostic while preserving character identity");
+
+    // Exact planner protocol: the three action variants are a union with canonical camelCase fields.
+    const validEarlySleep = setup.NightTimelapse.validatePlan({ steps: [
+        { locationId: "guestRoom1", action: { type: "sleep", bedId: "guestRoom1Bed" } }
+    ] }, priceCatalog, 5);
+    assert(validEarlySleep.ok, "sleep may terminate a remaining timelapse plan early when it is the final step");
+    assert(!setup.NightTimelapse.validatePlan({ steps: [
+        { locationId: "guestRoom1", action: { type: "sleep", bed_id: "guestRoom1Bed" } }
+    ] }, priceCatalog, 5).ok, "sleep must use the exact bedId field rather than bed_id");
+    assert(setup.NightTimelapse.validatePlan({ steps: Array.from({ length: 5 }, function () {
+        return { locationId: "commonRoom", action: { type: "narrate", text: "Wait quietly." } };
+    }) }, priceCatalog, 5).ok, "a plan without sleep should provide exactly every remaining round");
+    assert(!setup.NightTimelapse.validatePlan({ steps: [
+        { locationId: "commonRoom", action: { type: "narrate", text: "Wait quietly." } }
+    ] }, priceCatalog, 5).ok, "a non-sleeping short plan should be rejected");
+    assert(setup.NightTimelapse.validatePlan({ steps: [
+        { locationId: "commonRoom", action: { type: "timelapse_action", actionId: "clean_common_room" } },
+        { locationId: "guestRoom1", action: { type: "sleep", bedId: "guestRoom1Bed" } }
+    ] }, priceCatalog, 5).ok, "authored macros should use the exact timelapse_action/actionId branch");
+    assert(!setup.NightTimelapse.validatePlan({ steps: [
+        { locationId: "commonRoom", action: { type: "clean_common_room" } },
+        { locationId: "guestRoom1", action: { type: "sleep", bedId: "guestRoom1Bed" } }
+    ] }, priceCatalog, 5).ok, "authored action IDs must not be used as action types");
+    assert(!setup.NightTimelapse.validatePlan({ steps: [
+        { locationId: "guestRoom1", action: { type: "sleep", bedId: "guestRoom1Bed" } },
+        { locationId: "commonRoom", action: { type: "narrate", text: "This must not follow sleep." } }
+    ] }, priceCatalog, 5).ok, "no plan step may follow sleep");
+
+    // The reusable core must not own overnight-only HumanController postconditions.
+    world = fresh();
+    ["innkeeper", "captainPrice", "nell", "hoodedWoman"].forEach(function (id) {
+        ok(setup.Game.assignNonHumanController(id, "dummy"), `generic core fixture disables ${id} AI`);
+    });
+    world.entities.player.sleeping = true;
+    const coreOnly = await setup.TimelapseCore.run({ enforceRequestTiming: false }, { mode: "test-core", roundCount: 1 });
+    ok(coreOnly, "generic timelapse core should execute independently of the overnight wrapper");
+    assert(coreOnly.mode === "test-core" && coreOnly.rounds === 1 && setup.Game.getWorld().entities.player.sleeping === true,
+        "generic timelapse core should not wake the HumanController; morning wake belongs to NightTimelapse wrapper");
+
     // Realtime sleep and wake semantics.
     world = fresh();
     place("hoodedWoman", "secludedCottage", "maraCottageBed");
@@ -234,6 +281,94 @@ async function main() {
     assert(failureCalls.filter(function (call) { return call.stage === "timelapse-replan"; }).length === 1,
         "one grounded failure should cause exactly one remaining-plan request");
 
+    // Pure co-location with every participant declining interaction should skip resolver and preserve original plans.
+    world = fresh();
+    place("player", "guestRoom2", "guestRoom2Bed");
+    world.entities.player.sleeping = true;
+    place("innkeeper", "commonRoom", "commonRoomFloor");
+    place("captainPrice", "commonRoom", "commonRoomTableTwo");
+    place("nell", "commonRoom", "underStairsNook");
+    place("hoodedWoman", "secludedCottage", "maraCottageBed");
+    world.entities.hoodedWoman.sleeping = true;
+    ["innkeeper", "captainPrice", "nell", "hoodedWoman"].forEach(function (id) { world.entities[id].mind.pendingObservations = []; });
+    world.ai.turnQueue = [];
+    const noOpStages = [];
+    const noOpClient = {
+        enforceRequestTiming: false,
+        chat: async function (messages) {
+            const payload = plannerPayload(messages);
+            noOpStages.push(payload.stage);
+            if (payload.stage === "timelapse-plan") {
+                const actorId = payload.context.view.self.id;
+                return response({ steps: [
+                    { locationId: "commonRoom", action: { type: "narrate", text: `${actorId} keeps to their own quiet activity.` } },
+                    sleepingPlanFor(actorId)[0]
+                ] });
+            }
+            if (payload.stage === "timelapse-interaction-intent") {
+                return response({ engage: false, intent: "Keep to myself and continue my own activity." });
+            }
+            if (payload.stage === "timelapse-reflection") return response({ memoryUpdates: emptyUpdates() });
+            throw new Error(`No-op encounter should not request ${payload.stage}`);
+        }
+    };
+    const noOpNight = await setup.NightTimelapse.run(noOpClient);
+    ok(noOpNight, "all-ignore co-location should finish without resolver or replan work");
+    assert(!noOpStages.includes("timelapse-interaction-resolver") && !noOpStages.includes("timelapse-replan"),
+        `all-engage=false should skip both resolver and replanning: ${JSON.stringify(noOpStages)}`);
+
+    // A true completion-limit truncation is retried once with the structural low-reasoning policy and remains distinguishable.
+    world = fresh();
+    ["innkeeper", "captainPrice", "nell"].forEach(function (id) {
+        ok(setup.Game.assignNonHumanController(id, "dummy"), `truncation fixture disables ${id} AI`);
+    });
+    place("player", "guestRoom2", "guestRoom2Bed");
+    world.entities.player.sleeping = true;
+    place("hoodedWoman", "secludedCottage", "maraCottageFloor");
+    world.entities.hoodedWoman.mind.pendingObservations = [];
+    world.ai.turnQueue = [];
+    let truncationPlanCalls = 0;
+    const truncationOptions = [];
+    const truncationClient = {
+        enforceRequestTiming: false,
+        chat: async function (messages, requestOptions) {
+            const payload = plannerPayload(messages);
+            if (payload.stage === "timelapse-plan") {
+                truncationPlanCalls++;
+                truncationOptions.push(clone(requestOptions || {}));
+                if (truncationPlanCalls === 1) {
+                    return { ok: false, modelId: "test-night-model", content: "{", error: { code: "MODEL_OUTPUT_TRUNCATED", message: "completion limit" } };
+                }
+                return response({ steps: [{ locationId: "secludedCottage", action: { type: "sleep", bedId: "maraCottageBed" } }] });
+            }
+            if (payload.stage === "timelapse-reflection") return response({ memoryUpdates: emptyUpdates() });
+            throw new Error(`Unexpected truncation-retry stage ${payload.stage}`);
+        }
+    };
+    const retriedNight = await setup.NightTimelapse.run(truncationClient);
+    ok(retriedNight, "one truncated structural response should be retried and recover cleanly");
+    assert(truncationPlanCalls === 2 && truncationOptions.every(function (options) { return options.reasoningEffort === "none" && options.maxTokens === 1200; }),
+        "truncation retry should retain the bounded structural budget with reasoning disabled");
+
+    world = fresh();
+    ["innkeeper", "captainPrice", "nell"].forEach(function (id) {
+        ok(setup.Game.assignNonHumanController(id, "dummy"), `double-truncation fixture disables ${id} AI`);
+    });
+    place("player", "guestRoom2", "guestRoom2Bed");
+    world.entities.player.sleeping = true;
+    place("hoodedWoman", "secludedCottage", "maraCottageFloor");
+    world.entities.hoodedWoman.mind.pendingObservations = [];
+    const alwaysTruncatedClient = {
+        enforceRequestTiming: false,
+        chat: async function () {
+            return { ok: false, modelId: "test-night-model", content: "{", error: { code: "MODEL_OUTPUT_TRUNCATED", message: "completion limit" } };
+        }
+    };
+    const stillTruncated = await setup.NightTimelapse.run(alwaysTruncatedClient);
+    assert(!stillTruncated.ok && stillTruncated.error.code === "MODEL_OUTPUT_TRUNCATED" && stillTruncated.committedRounds === 0 &&
+        setup.Game.getWorld().entities.player.sleeping === false,
+        `a second truncation should surface its specific error rather than generic invalid protocol: ${JSON.stringify(stillTruncated)}`);
+
     // Full five-round Human sleep timelapse with a three-character group encounter and one already-sleeping AI.
     world = fresh();
     place("player", "guestRoom2", "guestRoom2Bed");
@@ -248,15 +383,23 @@ async function main() {
     world.ai.turnQueue = [];
 
     const calls = [];
+    const activeByStage = {};
+    const maxActiveByStage = {};
     const fakeClient = {
         enforceRequestTiming: false,
-        chat: async function (messages) {
+        chat: async function (messages, requestOptions) {
             const payload = plannerPayload(messages);
             assert(payload && payload.stage, `night model call should contain a stage payload: ${JSON.stringify(messages)}`);
-            calls.push({ stage: payload.stage, payload: clone(payload) });
+            calls.push({ stage: payload.stage, payload: clone(payload), requestOptions: clone(requestOptions || {}) });
+            activeByStage[payload.stage] = (activeByStage[payload.stage] || 0) + 1;
+            maxActiveByStage[payload.stage] = Math.max(maxActiveByStage[payload.stage] || 0, activeByStage[payload.stage]);
+            await new Promise(function (resolve) { setTimeout(resolve, 5); });
+            activeByStage[payload.stage]--;
             if (payload.stage === "timelapse-plan") {
                 const actorId = payload.context.view.self.id;
                 assert(actorId !== "hoodedWoman", "already sleeping AI should skip initial activity planning");
+                assert(!Object.prototype.hasOwnProperty.call(payload.context.view, "available_actions"),
+                    "timelapse planning should omit the ordinary view.available_actions contract");
                 return response({
                     steps: [
                         { locationId: "commonRoom", action: { type: "narrate", text: `${actorId} spends the first part of the night in the common room.` } },
@@ -266,7 +409,7 @@ async function main() {
             }
             if (payload.stage === "timelapse-interaction-intent") {
                 const actorId = payload.context.view.self.id;
-                return response({ intent: `${actorId} exchanges a brief greeting and then intends to retire for the night.` });
+                return response({ engage: true, intent: `${actorId} exchanges a brief greeting and then intends to retire for the night.` });
             }
             if (payload.stage === "timelapse-interaction-resolver") {
                 assert(payload.context.participants.length === 3,
@@ -277,7 +420,7 @@ async function main() {
                 assert(!serialized.includes("recentMemories") && !serialized.includes("longTermMemories") &&
                     !serialized.includes("beliefs") && !serialized.includes("relationships") && !serialized.includes("continuation"),
                     "shared encounter resolver must not receive participant private mind context");
-                return response({ resume: "Garrick, Price, and Nell exchanged a brief greeting in the common room before going their separate ways for the night." });
+                return response({ interactionOccurred: true, interactionResume: "Garrick, Price, and Nell exchanged a brief greeting in the common room and verbally ended the conversation." });
             }
             if (payload.stage === "timelapse-replan") {
                 const actorId = payload.context.view.self.id;
@@ -293,7 +436,16 @@ async function main() {
         }
     };
 
-    const result = await setup.TurnFlow.submitHumanIntent({ action: { type: "sleep" } }, fakeClient);
+    let fullNightResolved = false;
+    const progressiveCommits = [];
+    const fullNightPromise = setup.TurnFlow.submitHumanIntent({ action: { type: "sleep" } }, fakeClient, {
+        onCommittedPresentation: function (batch) {
+            assert(fullNightResolved === false, "progressive committed output must be published before the full timelapse promise resolves");
+            progressiveCommits.push(clone(batch));
+        }
+    });
+    const result = await fullNightPromise;
+    fullNightResolved = true;
     ok(result, "Human bed sleep should execute the complete overnight timelapse");
     assert(result.turnConsumed === true && result.timelapseResult && result.timelapseResult.rounds === 5,
         "Human sleep should consume the turn and process exactly five coarse timelapse rounds");
@@ -313,6 +465,14 @@ async function main() {
         stageCounts["timelapse-interaction-resolver"] === 1 && stageCounts["timelapse-replan"] === 3 &&
         stageCounts["timelapse-reflection"] === 4,
         `night call shape should be 3 plans + 3 intents + 1 group resolver + 3 replans + 4 reflections: ${JSON.stringify(stageCounts)}`);
+    assert(maxActiveByStage["timelapse-plan"] >= 2 && maxActiveByStage["timelapse-interaction-intent"] >= 2 &&
+        maxActiveByStage["timelapse-replan"] >= 2 && maxActiveByStage["timelapse-reflection"] >= 2,
+        `causally independent timelapse waves should overlap model calls: ${JSON.stringify(maxActiveByStage)}`);
+    calls.filter(function (call) { return ["timelapse-plan", "timelapse-replan", "timelapse-interaction-intent", "timelapse-interaction-resolver", "timelapse-reflection"].includes(call.stage); })
+        .forEach(function (call) {
+            assert(call.requestOptions.reasoningEffort === "none" && call.requestOptions.maxTokens <= 1800,
+                `timelapse structural/reflection requests should use a bounded low-reasoning request policy: ${JSON.stringify(call)}`);
+        });
     assert(calls.some(function (call) {
         return call.stage === "timelapse-reflection" && call.payload.context.view.self.id === "hoodedWoman";
     }), "an AI that slept through the whole night should still receive end-of-day reflection");
@@ -324,7 +484,13 @@ async function main() {
         "invisible overnight narrative should contain only committed facts/resumes, never planning scaffolding");
     assert(result.hiddenNarrativeEntries && result.hiddenNarrativeEntries.some(function (entry) {
         return entry.text.includes("exchanged a brief greeting");
-    }), "committed night facts should be appended to the existing invisible presentation channel only after completion");
+    }), "committed night facts should remain available through the existing invisible presentation channel after completion");
+    const roundCommits = progressiveCommits.filter(function (batch) { return batch.meta && batch.meta.phase === "timelapse-round"; });
+    assert(progressiveCommits[0] && progressiveCommits[0].meta.phase === "human" && roundCommits.length === 5 &&
+        roundCommits.map(function (batch) { return batch.meta.round; }).join(",") === "1,2,3,4,5",
+        "Human sleep should publish its committed action immediately and then publish each fully resolved timelapse round in order");
+    assert(roundCommits.some(function (batch) { return batch.hidden.some(function (entry) { return entry.text.includes("exchanged a brief greeting"); }); }),
+        "resolved encounter output should be emitted with the round that committed it");
 
     const history = setup.AIRequestExecutor.getExchangeHistory();
     assert(history.maxEntries === 100 && setup.AIRequestExecutor.MAX_EXCHANGE_HISTORY === 100,

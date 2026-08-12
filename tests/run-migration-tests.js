@@ -77,6 +77,9 @@ legacy.events = [{ id: 99, type: "old_event", recipients: [], pendingFor: [], pr
 // Price should retain only runtime memory, never receive new local authored Mara facts.
 legacy.entities.captainPrice.mind.knownFacts = [{ id: "runtime_wrong_partition", text: "This should be replaced by authored baseline." }];
 legacy.entities.captainPrice.mind.recentMemories = [{ id: "price_memory", summary: "I met a hooded woman called Mara in the tavern.", importance: 0.5, protected: false }];
+legacy.entities.captainPrice.aiDescription = "Old save says Price is permanently sitting and drinking ale.";
+legacy.entities.captainPrice.playerDescription = "Old save says Price is holding a mug at the table.";
+legacy.entities.player.aiDescription = "Old save says the Traveler has just arrived at the tavern.";
 
 // Saved runtime item placement and transformed state must win over fresh authored placement.
 place(legacy, "guestRoom1Key", "inventory_hoodedWoman");
@@ -144,6 +147,10 @@ assert(world.entities.hoodedWoman.mind.pendingObservations.length === 0 && world
 assert(world.entities.captainPrice.mind.knownFacts.some(function (fact) { return fact.id === "price_lodging"; }) &&
     world.entities.captainPrice.mind.recentMemories.some(function (memory) { return memory.id === "price_memory"; }),
     "Price should receive the current authored lodging fact while keeping what he actually remembered");
+assert(world.entities.captainPrice.aiDescription.includes("Do not assume that you are currently drinking") &&
+    !world.entities.captainPrice.playerDescription.includes("holding a mug") &&
+    world.entities.player.aiDescription.includes("Do not assume a particular current location or activity"),
+    "save migration should keep current authored character descriptions instead of restoring stale scene-specific descriptions from the save");
 assert(world.entities.guestRoom1Key.containerId === "inventory_hoodedWoman" &&
     world.inventories.inventory_hoodedWoman.itemIds.includes("guestRoom1Key"),
     "saved key placement should override its fresh authored starting placement");

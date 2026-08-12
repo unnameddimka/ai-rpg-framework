@@ -182,6 +182,9 @@
             : Number.isFinite(source.reasoningMaxTokens) && source.reasoningMaxTokens > 0
                 ? Math.floor(source.reasoningMaxTokens)
                 : REASONING_MAX_TOKENS;
+        const reasoningEffort = typeof source.reasoningEffort === "string" && source.reasoningEffort.trim()
+            ? source.reasoningEffort.trim()
+            : null;
         const temperature = Number.isFinite(source.temperature)
             ? source.temperature
             : TEMPERATURE;
@@ -189,6 +192,7 @@
             modelId: modelId,
             maxTokens: maxTokens,
             reasoningMaxTokens: reasoningMaxTokens,
+            reasoningEffort: reasoningEffort,
             temperature: temperature
         };
     }
@@ -210,7 +214,9 @@
             temperature: requestOptions.temperature,
             messages: messages
         };
-        if (requestOptions.reasoningMaxTokens > 0) {
+        if (requestOptions.reasoningEffort) {
+            requestBody.reasoning = { effort: requestOptions.reasoningEffort };
+        } else if (requestOptions.reasoningMaxTokens > 0) {
             requestBody.reasoning = { max_tokens: requestOptions.reasoningMaxTokens };
         }
 

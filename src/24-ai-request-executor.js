@@ -55,7 +55,8 @@
                 purpose: spec.purpose || "unspecified",
                 stage: spec.stage || null,
                 modelId: result && result.modelId || null,
-                messages: clone(spec.messages || [])
+                messages: clone(spec.messages || []),
+                requestOptions: spec.requestOptions ? clone(spec.requestOptions) : null
             },
             result: safeResult(result)
         });
@@ -64,7 +65,7 @@
         }
     }
 
-    async function chatWithPolicy(messages, client) {
+    async function chatWithPolicy(messages, client, requestOptions) {
         const transport = client || setup.OpenRouterClient;
         const timed = usesLiveTiming(transport);
         if (timed) {
@@ -75,7 +76,11 @@
         lastStartedAt = Date.now();
         let result;
         try {
-            result = await transport.chat(messages);
+            if (requestOptions && typeof transport.chatWithOptions === "function") {
+                result = await transport.chatWithOptions(messages, requestOptions);
+            } else {
+                result = await transport.chat(messages, requestOptions || undefined);
+            }
         } catch (error) {
             result = {
                 ok: false,
@@ -105,60 +110,74 @@
         return result;
     }
 
+    async function runExecution(spec, operation) {
+        activeExecutions++;
+        activePurpose = activeExecutions > 1 ? "parallel" : (spec.purpose || "unspecified");
+        const executionStartedAt = Date.now();
+        let result;
+        try {
+            const policyClient = {
+                chat: function (messages, requestOptions) {
+                    return chatWithPolicy(
+                        messages,
+                        spec.client || setup.OpenRouterClient,
+                        requestOptions || spec.requestOptions || null
+                    );
+                }
+            };
+            result = await operation(policyClient, spec);
+            if (result && typeof result === "object") {
+                result.execution = Object.assign({}, result.execution || {}, {
+                    purpose: spec.purpose || "unspecified",
+                    actorId: spec.actorId || null,
+                    modelId: result.modelId || null
+                });
+            }
+            return result;
+        } catch (error) {
+            result = {
+                ok: false,
+                value: null,
+                error: {
+                    code: "AI_EXECUTION_EXCEPTION",
+                    message: "The model request failed unexpectedly."
+                },
+                modelId: null,
+                usage: null,
+                rawContent: "",
+                trace: null,
+                execution: {
+                    purpose: spec.purpose || "unspecified",
+                    actorId: spec.actorId || null,
+                    modelId: null
+                }
+            };
+            return result;
+        } finally {
+            const executionFinishedAt = Date.now();
+            if (result && typeof result === "object") {
+                recordExchange(spec, result, executionStartedAt, executionFinishedAt);
+            }
+            activeExecutions--;
+            if (activeExecutions === 0) activePurpose = null;
+            else if (activeExecutions > 1) activePurpose = "parallel";
+        }
+    }
+
     function enqueue(specification, operation) {
         const spec = specification || {};
         queuedExecutions++;
         const work = chain.catch(function () {}).then(async function () {
             queuedExecutions--;
-            activeExecutions++;
-            activePurpose = spec.purpose || "unspecified";
-            const executionStartedAt = Date.now();
-            let result;
-            try {
-                const policyClient = {
-                    chat: function (messages) {
-                        return chatWithPolicy(messages, spec.client || setup.OpenRouterClient);
-                    }
-                };
-                result = await operation(policyClient, spec);
-                if (result && typeof result === "object") {
-                    result.execution = Object.assign({}, result.execution || {}, {
-                        purpose: spec.purpose || "unspecified",
-                        actorId: spec.actorId || null,
-                        modelId: result.modelId || null
-                    });
-                }
-                return result;
-            } catch (error) {
-                result = {
-                    ok: false,
-                    value: null,
-                    error: {
-                        code: "AI_EXECUTION_EXCEPTION",
-                        message: "The model request failed unexpectedly."
-                    },
-                    modelId: null,
-                    usage: null,
-                    rawContent: "",
-                    trace: null,
-                    execution: {
-                        purpose: spec.purpose || "unspecified",
-                        actorId: spec.actorId || null,
-                        modelId: null
-                    }
-                };
-                return result;
-            } finally {
-                const executionFinishedAt = Date.now();
-                if (result && typeof result === "object") {
-                    recordExchange(spec, result, executionStartedAt, executionFinishedAt);
-                }
-                activeExecutions--;
-                if (activeExecutions === 0) activePurpose = null;
-            }
+            return runExecution(spec, operation);
         });
         chain = work.then(function () {}, function () {});
         return work;
+    }
+
+    function executeConcurrentOperation(specification, operation) {
+        const spec = specification || {};
+        return runExecution(spec, operation);
     }
 
     function execute(specification) {
@@ -172,20 +191,30 @@
         });
     }
 
+    function invalidCustomSpec() {
+        return Promise.resolve({
+            ok: false,
+            value: null,
+            error: { code: "AI_EXECUTOR_INVALID_SPEC", message: "Custom model execution requires a run function." },
+            modelId: null,
+            usage: null,
+            rawContent: "",
+            trace: null
+        });
+    }
+
     function executeCustom(specification) {
         const spec = specification || {};
-        if (typeof spec.run !== "function") {
-            return Promise.resolve({
-                ok: false,
-                value: null,
-                error: { code: "AI_EXECUTOR_INVALID_SPEC", message: "Custom model execution requires a run function." },
-                modelId: null,
-                usage: null,
-                rawContent: "",
-                trace: null
-            });
-        }
+        if (typeof spec.run !== "function") return invalidCustomSpec();
         return enqueue(spec, function (policyClient) {
+            return spec.run(policyClient);
+        });
+    }
+
+    function executeCustomConcurrent(specification) {
+        const spec = specification || {};
+        if (typeof spec.run !== "function") return invalidCustomSpec();
+        return executeConcurrentOperation(spec, function (policyClient) {
             return spec.run(policyClient);
         });
     }
@@ -227,6 +256,7 @@
         MAX_EXCHANGE_HISTORY: MAX_EXCHANGE_HISTORY,
         execute: execute,
         executeCustom: executeCustom,
+        executeCustomConcurrent: executeCustomConcurrent,
         getStatus: getStatus,
         getExchangeHistory: getExchangeHistory,
         clearExchangeHistory: clearExchangeHistory

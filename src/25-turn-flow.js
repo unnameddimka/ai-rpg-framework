@@ -162,6 +162,26 @@
     }
 
 
+
+    function progressivePublishingEnabled(options) {
+        if (!options || typeof options.onCommittedPresentation !== "function") return false;
+        return !(setup.NarratorService && setup.NarratorService.isEnabled && setup.NarratorService.isEnabled());
+    }
+
+    function emitCommittedPresentation(options, presentation, meta) {
+        if (!progressivePublishingEnabled(options)) return;
+        try {
+            options.onCommittedPresentation({
+                entries: clone(presentation && presentation.entries || []),
+                visible: clone(presentation && presentation.visible || []),
+                hidden: clone(presentation && presentation.hidden || []),
+                meta: clone(meta || {})
+            });
+        } catch (error) {
+            // Presentation callbacks never affect canonical turn execution.
+        }
+    }
+
     async function narratePresentation(presentation, humanId) {
         const rawFragments = presentation && Array.isArray(presentation.visible) ? presentation.visible.slice() : [];
         if (!setup.NarratorService || !setup.NarratorService.isEnabled || !setup.NarratorService.isEnabled()) {
@@ -202,7 +222,8 @@
         };
     }
 
-    async function submitHumanIntent(input, client) {
+    async function submitHumanIntent(input, client, options) {
+        options = options && typeof options === "object" ? options : {};
         const actorId = setup.Game.getHumanCharacterId();
         input = input && typeof input === "object" ? input : {};
         const startsNightTimelapse = Boolean(input.action && input.action.type === "sleep");
@@ -226,36 +247,63 @@
             }
         }
 
-        const beforeIntent = startsNightTimelapse ? clone(setup.Game.getWorld()) : null;
         const intentResult = setup.CharacterAPI.submitIntent(actorId, input);
         if (!intentResult.ok) return intentResult;
 
         const submittedPresentation = describeSubmittedIntent(actorId, input, intentResult);
+        emitCommittedPresentation(options, submittedPresentation, { phase: "human", actorId: actorId });
+
         let waveResult;
         let timelapseResult = null;
         let extraHiddenEntries = [];
         if (startsNightTimelapse && intentResult.actionResult && intentResult.actionResult.ok) {
-            timelapseResult = await setup.NightTimelapse.run(client || setup.OpenRouterClient);
-            if (!timelapseResult.ok) {
-                State.variables.world = beforeIntent;
-                return {
-                    ok: false,
-                    error: clone(timelapseResult.error),
-                    actorId: actorId,
-                    turnConsumed: false
-                };
-            }
+            timelapseResult = await setup.NightTimelapse.run(client || setup.OpenRouterClient, {
+                onRoundCommitted: function (roundCommit) {
+                    const presentation = splitPresentation(roundCommit && roundCommit.entries || []);
+                    emitCommittedPresentation(options, presentation, {
+                        phase: "timelapse-round",
+                        mode: roundCommit && roundCommit.mode || "overnight",
+                        round: roundCommit && roundCommit.round || null,
+                        totalRounds: roundCommit && roundCommit.totalRounds || null
+                    });
+                }
+            });
             extraHiddenEntries = clone(timelapseResult.hiddenNarrativeEntries || []);
             waveResult = {
-                ok: true,
+                ok: Boolean(timelapseResult.ok),
                 timelapse: true,
                 processedCount: 0,
                 reactedCharacterIds: [],
                 results: [],
                 remainingQueue: setup.AITurnScheduler.getQueueView()
             };
+            if (!timelapseResult.ok) {
+                const partialEntries = submittedPresentation.entries.concat(extraHiddenEntries);
+                const partialPresentation = splitPresentation(partialEntries);
+                return {
+                    ok: false,
+                    error: clone(timelapseResult.error),
+                    actorId: actorId,
+                    turnConsumed: true,
+                    intentResult: clone(intentResult),
+                    waveResult: clone(waveResult),
+                    timelapseResult: clone(timelapseResult),
+                    narrativeFragments: partialPresentation.visible,
+                    rawNarrativeFragments: partialPresentation.visible,
+                    narratedNarrativeFragments: [],
+                    narrator: { attempted: false, used: false, fallbackUsed: false, error: null },
+                    hiddenNarrativeEntries: partialPresentation.hidden,
+                    historyEntries: partialPresentation.entries,
+                    destinationId: null
+                };
+            }
         } else {
-            waveResult = await setup.AITurnScheduler.processAfterSubmit(client || setup.OpenRouterClient);
+            waveResult = await setup.AITurnScheduler.processAfterSubmit(client || setup.OpenRouterClient, {
+                onCommittedResult: function (aiResult) {
+                    const described = describeAIResult(aiResult, actorId);
+                    emitCommittedPresentation(options, described, { phase: "ai-reaction", actorId: aiResult.actorId || null });
+                }
+            });
         }
         const wavePresentation = describeWave(waveResult, actorId);
         const entries = submittedPresentation.entries.concat(wavePresentation.entries).concat(extraHiddenEntries);
@@ -286,9 +334,15 @@
         };
     }
 
-    async function pass(client) {
+    async function pass(client, options) {
+        options = options && typeof options === "object" ? options : {};
         const actorId = setup.Game.getHumanCharacterId();
-        const waveResult = await setup.AITurnScheduler.processWave(client || setup.OpenRouterClient);
+        const waveResult = await setup.AITurnScheduler.processWave(client || setup.OpenRouterClient, {
+            onCommittedResult: function (aiResult) {
+                const described = describeAIResult(aiResult, actorId);
+                emitCommittedPresentation(options, described, { phase: "ai-reaction", actorId: aiResult.actorId || null });
+            }
+        });
         const presentation = describeWave(waveResult, actorId);
         const narration = await narratePresentation(presentation, actorId);
         return {

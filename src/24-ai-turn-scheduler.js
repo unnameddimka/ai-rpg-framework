@@ -335,7 +335,14 @@
         return setup.AIController.takeQueuedTurn(next.entry.characterId, client || setup.OpenRouterClient);
     }
 
-    async function processWave(client) {
+    function emitCommittedResult(options, result) {
+        if (!options || typeof options.onCommittedResult !== "function" || !result || !result.ok) return;
+        try { options.onCommittedResult(clone(result)); }
+        catch (error) { /* Presentation callbacks do not affect canonical scheduling. */ }
+    }
+
+    async function processWave(client, options) {
+        options = options && typeof options === "object" ? options : {};
         if (waveInFlight || setup.AIController.isInFlight()) {
             return { ok: false, error: { code: "AI_WAVE_IN_FLIGHT", message: "An AI reaction wave is already in progress." } };
         }
@@ -389,6 +396,7 @@
                     };
                 }
                 reacted.add(next.entry.characterId);
+                emitCommittedResult(options, result);
             }
 
             const unreacted = orderedQueueEntries(reacted);
@@ -421,7 +429,7 @@
         }
     }
 
-    async function processAfterSubmit(client) {
+    async function processAfterSubmit(client, options) {
         if (readAutoProcessingPaused()) {
             return {
                 ok: true,
@@ -432,7 +440,7 @@
                 remainingQueue: getQueueView()
             };
         }
-        return processWave(client);
+        return processWave(client, options);
     }
 
     setup.AITurnScheduler = {

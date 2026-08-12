@@ -49,7 +49,10 @@
         }
 
         const messages = setup.AIProtocol.memoryConsolidationMessages(plan.context);
-        const result = await setup.AIRequestExecutor.executeCustom({
+        const executeCustom = options.parallel === true && setup.AIRequestExecutor.executeCustomConcurrent
+            ? setup.AIRequestExecutor.executeCustomConcurrent
+            : setup.AIRequestExecutor.executeCustom;
+        const result = await executeCustom({
             actorId: characterId,
             purpose: "memory-consolidation",
             stage: "memory-consolidation",
