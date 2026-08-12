@@ -205,6 +205,15 @@
     async function submitHumanIntent(input, client) {
         const actorId = setup.Game.getHumanCharacterId();
         input = input && typeof input === "object" ? input : {};
+        const startsNightTimelapse = Boolean(input.action && input.action.type === "sleep");
+        if (startsNightTimelapse && setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
+            return {
+                ok: false,
+                error: { code: "AI_KEY_MISSING", message: "Enter an OpenRouter API key before sleeping until morning." },
+                actorId: actorId,
+                turnConsumed: false
+            };
+        }
         if (input.action) {
             const actionValidation = setup.CharacterAPI.validateActionRequest(actorId, input.action);
             if (!actionValidation.ok) {
@@ -217,13 +226,39 @@
             }
         }
 
+        const beforeIntent = startsNightTimelapse ? clone(setup.Game.getWorld()) : null;
         const intentResult = setup.CharacterAPI.submitIntent(actorId, input);
         if (!intentResult.ok) return intentResult;
 
         const submittedPresentation = describeSubmittedIntent(actorId, input, intentResult);
-        const waveResult = await setup.AITurnScheduler.processAfterSubmit(client || setup.OpenRouterClient);
+        let waveResult;
+        let timelapseResult = null;
+        let extraHiddenEntries = [];
+        if (startsNightTimelapse && intentResult.actionResult && intentResult.actionResult.ok) {
+            timelapseResult = await setup.NightTimelapse.run(client || setup.OpenRouterClient);
+            if (!timelapseResult.ok) {
+                State.variables.world = beforeIntent;
+                return {
+                    ok: false,
+                    error: clone(timelapseResult.error),
+                    actorId: actorId,
+                    turnConsumed: false
+                };
+            }
+            extraHiddenEntries = clone(timelapseResult.hiddenNarrativeEntries || []);
+            waveResult = {
+                ok: true,
+                timelapse: true,
+                processedCount: 0,
+                reactedCharacterIds: [],
+                results: [],
+                remainingQueue: setup.AITurnScheduler.getQueueView()
+            };
+        } else {
+            waveResult = await setup.AITurnScheduler.processAfterSubmit(client || setup.OpenRouterClient);
+        }
         const wavePresentation = describeWave(waveResult, actorId);
-        const entries = submittedPresentation.entries.concat(wavePresentation.entries);
+        const entries = submittedPresentation.entries.concat(wavePresentation.entries).concat(extraHiddenEntries);
         const presentation = splitPresentation(entries);
         const narration = await narratePresentation(presentation, actorId);
 
@@ -233,6 +268,7 @@
             turnConsumed: true,
             intentResult: clone(intentResult),
             waveResult: clone(waveResult),
+            timelapseResult: timelapseResult ? clone(timelapseResult) : null,
             narrativeFragments: narration.used ? narration.narratedFragments : narration.rawFragments,
             rawNarrativeFragments: narration.rawFragments,
             narratedNarrativeFragments: narration.narratedFragments,

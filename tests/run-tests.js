@@ -70,9 +70,13 @@ assert(world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return 
     "Mara, Garrick, and Nell should begin with authored local facts about Mara's home and social status");
 assert(!world.entities.captainPrice.mind.knownFacts.some(function (fact) { return String(fact.id || "").startsWith("mara_"); }),
     "Captain Price should receive no authored local Mara knowledge");
-assert(world.inventories.inventory_captainPrice.itemIds.length === 1 &&
-    world.entities[world.inventories.inventory_captainPrice.itemIds[0]].definitionId === "mugOfAle",
-    "Price should start with one concrete mug of ale in his inventory");
+const priceStartingItems = world.inventories.inventory_captainPrice.itemIds.map(function (id) { return world.entities[id]; });
+assert(priceStartingItems.some(function (item) { return item.definitionId === "mugOfAle"; }) &&
+    priceStartingItems.some(function (item) {
+        const definition = world.itemDefinitions[item.definitionId];
+        return definition && definition.keyLockId === "lock_guest_room_1";
+    }),
+    "Price should start with one concrete mug of ale and the key to Guest Room 1");
 assert(["priceAle_2", "priceAle_3", "priceAle_4"].every(function (id) {
     return world.inventories.inventory_commonRoomTableTwo.itemIds.includes(id) && world.entities[id].definitionId === "mugOfAle";
 }), "three concrete mugs of ale should start on Price's table");
@@ -184,33 +188,30 @@ assert(priceUpstairsView.available_actions.move.options.destination_ids.includes
 
 const innkeeperKeyItems = world.inventories.inventory_innkeeper.itemIds.map(function (id) { return world.entities[id]; })
     .filter(function (item) { const definition = world.itemDefinitions[item.definitionId]; return definition && definition.keyLockId; });
-assert(innkeeperKeyItems.length === 5 && innkeeperKeyItems.every(function (item) {
+assert(innkeeperKeyItems.length === 4 && innkeeperKeyItems.every(function (item) {
     const definition = world.itemDefinitions[item.definitionId];
-    return !definition.consumeAction && !definition.fillAction;
-}), "Garrick should start with five ordinary non-consumable room keys");
-perform("innkeeper", { type: "move", destination_id: "commonRoom" }, "innkeeper walks from bar to common room");
-perform("innkeeper", { type: "move", destination_id: "upstairsCorridor" }, "innkeeper climbs upstairs with keys");
-let innkeeperUpstairsView = setup.CharacterAPI.getView("innkeeper");
-assert(innkeeperUpstairsView.available_actions.unlock &&
-    innkeeperUpstairsView.available_actions.unlock.options.destination_ids.includes("guestRoom1") &&
-    !innkeeperUpstairsView.available_actions.lock,
-    "a matching key should directly grant unlock for a locked adjacent passage");
-perform("innkeeper", { type: "unlock", destination_id: "guestRoom1" }, "innkeeper unlocks guest room one");
+    return definition.keyLockId !== "lock_guest_room_1" && !definition.consumeAction && !definition.fillAction;
+}), "Garrick should start with four ordinary non-consumable room keys and no Guest Room 1 key");
+assert(priceUpstairsView.available_actions.unlock &&
+    priceUpstairsView.available_actions.unlock.options.destination_ids.includes("guestRoom1") &&
+    !priceUpstairsView.available_actions.lock,
+    "Price's matching key should directly grant unlock for his locked guest-room passage");
+perform("captainPrice", { type: "unlock", destination_id: "guestRoom1" }, "Price unlocks Guest Room 1");
 assert(world.entities.upstairsCorridor.exits.guestRoom1.locked === false &&
     world.entities.guestRoom1.exits.upstairsCorridor.locked === false,
     "unlock should synchronize only the two sides of the operated passage");
 assert(world.entities.upstairsCorridor.exits.guestRoom2.locked === true,
     "unlocking one passage must not unlock another passage");
-perform("innkeeper", { type: "move", destination_id: "guestRoom1" }, "innkeeper enters unlocked guest room one");
-let innkeeperInsideView = setup.CharacterAPI.getView("innkeeper");
-assert(innkeeperInsideView.available_actions.lock &&
-    innkeeperInsideView.available_actions.lock.options.destination_ids.includes("upstairsCorridor"),
-    "the matching key should grant lock from the room side");
-perform("innkeeper", { type: "lock", destination_id: "upstairsCorridor" }, "innkeeper locks the room from inside");
-assertFails(setup.CharacterAPI.perform("innkeeper", { type: "move", destination_id: "upstairsCorridor" }),
+perform("captainPrice", { type: "move", destination_id: "guestRoom1" }, "Price enters his unlocked guest room");
+let priceInsideView = setup.CharacterAPI.getView("captainPrice");
+assert(priceInsideView.available_actions.lock &&
+    priceInsideView.available_actions.lock.options.destination_ids.includes("upstairsCorridor"),
+    "Price's matching key should grant lock from the room side");
+perform("captainPrice", { type: "lock", destination_id: "upstairsCorridor" }, "Price locks his room from inside");
+assertFails(setup.CharacterAPI.perform("captainPrice", { type: "move", destination_id: "upstairsCorridor" }),
     "TRANSITION_BLOCKED", "locked movement should still be a grounded in-world failure from inside the room");
-perform("innkeeper", { type: "unlock", destination_id: "upstairsCorridor" }, "innkeeper unlocks the room from inside");
-perform("innkeeper", { type: "move", destination_id: "upstairsCorridor" }, "innkeeper leaves after unlocking");
+perform("captainPrice", { type: "unlock", destination_id: "upstairsCorridor" }, "Price unlocks his room from inside");
+perform("captainPrice", { type: "move", destination_id: "upstairsCorridor" }, "Price leaves after unlocking");
 setup.Game.resetWorld();
 world = setup.Game.getWorld();
 for (const characterId of ["player", "innkeeper", "hoodedWoman"]) {
@@ -480,8 +481,8 @@ assert(JSON.stringify(auraResults.map(function (item) { return item.characterId;
     "scan targets should come from current perception, include all visible others, and exclude self");
 assert(auraResults.find(function (item) { return item.characterId === "player"; }).aura === world.entities.player.engineFacts.aura,
     "aura scan should use the visible target's grounded hidden aura only");
-assert(auraResults.find(function (item) { return item.characterId === "innkeeper"; }).aura === "You perceive nothing unusual.",
-    "an empty Hidden aura should produce the neutral grounded result");
+assert(auraResults.find(function (item) { return item.characterId === "innkeeper"; }).aura === world.entities.innkeeper.engineFacts.aura,
+    "aura scan should preserve the innkeeper's authored hidden aura");
 assert(world.events.length === eventCountBeforeAura &&
     JSON.stringify(positionsBeforeAura) === JSON.stringify([world.entities.player.locationId, world.entities.hoodedWoman.locationId, world.entities.innkeeper.locationId]),
     "aura scan should not mutate physical state or create a public event");

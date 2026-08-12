@@ -15,10 +15,11 @@ const defaults = {
 
 const knownActions = new Set([
     "move", "move_within_location", "take_item", "drop_item", "give_item",
-    "give_money", "place_item", "fill", "consume", "lock", "unlock", "read_aura"
+    "give_money", "place_item", "fill", "consume", "lock", "unlock", "read_aura", "sleep"
 ]);
 const knownEnvironmentCapabilities = new Set(["ale_source"]);
 const knownItemEffects = new Set(["report_memory_counts"]);
+const knownTimelapseEffects = new Set(["collect_mugs_to_storage"]);
 const controllers = new Set(["human", "dummy", "ai"]);
 const confidences = new Set(["low", "medium", "high"]);
 
@@ -184,6 +185,20 @@ function validateWorld(document) {
             }
         }
 
+        const timelapseActions = location.timelapseActions === undefined ? [] : location.timelapseActions;
+        requireCondition(Array.isArray(timelapseActions), `Location ${id} timelapseActions must be an array.`);
+        const timelapseActionIds = new Set();
+        for (const action of timelapseActions) {
+            requireCondition(isObject(action) && nonBlank(action.id) && nonBlank(action.label) &&
+                nonBlank(action.description) && nonBlank(action.effectId) && isObject(action.effectParams),
+            `Location ${id} has an invalid timelapseAction.`);
+            requireCondition(!timelapseActionIds.has(action.id),
+                `Location ${id} has duplicate timelapseAction ID '${action.id}'.`);
+            timelapseActionIds.add(action.id);
+            requireCondition(knownTimelapseEffects.has(action.effectId),
+                `Location ${id} timelapseAction '${action.id}' references unknown effect '${action.effectId}'.`);
+        }
+
         requireCondition(isObject(location.sublocations) && own(location.sublocations, String(location.defaultSublocationId || "")),
             `Location ${id} has an invalid default sublocation.`);
         for (const [sublocationId, sublocation] of entries(location.sublocations)) {
@@ -305,6 +320,21 @@ function validateWorld(document) {
             const targetId = String((relationship && relationship.targetCharacterId) || "");
             requireCondition(own(document.characters, targetId) && targetId !== id,
                 `Character ${id} has an invalid relationship target '${targetId}'.`);
+        }
+    }
+
+    for (const [locationId, location] of entries(document.locations)) {
+        for (const action of (location.timelapseActions || [])) {
+            if (action.effectId === "collect_mugs_to_storage") {
+                const params = action.effectParams || {};
+                requireCondition(nonBlank(params.itemFamilyId) && nonBlank(params.emptyDefinitionId) &&
+                    nonBlank(params.destinationInventoryId),
+                `Location ${locationId} timelapseAction '${action.id}' has invalid collect_mugs_to_storage parameters.`);
+                requireCondition(own(document.itemDefinitions, params.emptyDefinitionId),
+                    `Location ${locationId} timelapseAction '${action.id}' references missing empty definition '${params.emptyDefinitionId}'.`);
+                requireCondition(inventoryOwners.has(params.destinationInventoryId),
+                    `Location ${locationId} timelapseAction '${action.id}' references missing destination inventory '${params.destinationInventoryId}'.`);
+            }
         }
     }
 

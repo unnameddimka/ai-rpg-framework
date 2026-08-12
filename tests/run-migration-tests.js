@@ -141,9 +141,9 @@ assert(world.entities.hoodedWoman.wallet === 19 && world.control.assignments.hoo
     "valid saved wallet and HumanController assignment should survive");
 assert(world.entities.hoodedWoman.mind.pendingObservations.length === 0 && world.ai.turnQueue.length === 0 && world.events.length === 0,
     "transient observations, scheduler queue, and event execution journal should be discarded");
-assert(world.entities.captainPrice.mind.knownFacts.length === 0 &&
+assert(world.entities.captainPrice.mind.knownFacts.some(function (fact) { return fact.id === "price_lodging"; }) &&
     world.entities.captainPrice.mind.recentMemories.some(function (memory) { return memory.id === "price_memory"; }),
-    "Price should receive no retroactive local authored facts while keeping what he actually remembered");
+    "Price should receive the current authored lodging fact while keeping what he actually remembered");
 assert(world.entities.guestRoom1Key.containerId === "inventory_hoodedWoman" &&
     world.inventories.inventory_hoodedWoman.itemIds.includes("guestRoom1Key"),
     "saved key placement should override its fresh authored starting placement");

@@ -41,6 +41,24 @@
   Later characters see grounded events produced by earlier reactions. New observations for an
   already-reacted character, including its own action result, remain pending for a later tick.
   Off-screen pending observations remain eligible; there are no idle model calls.
+- Beds now expose grounded sleep capability through the shared action contract. AI sleep sets a
+  canonical `sleeping` state without self-scheduling a continuation; any later formal action or
+  non-empty speech/narrative wakes the actor, while observation receipt alone does not. Human sleep
+  from a bed starts a dedicated user-triggered overnight timelapse rather than a normal reaction wave.
+- Overnight timelapse runs exactly five abstract rounds. Each awake AI independently plans coarse
+  `(location, action)` steps over rooms reachable through the canonical graph with existing lock/key
+  ownership. Travel is implicit in the round; actions are free `narrate`, concrete-bed `sleep`, or
+  authored location `timelapseActions` backed by allowlisted deterministic effects. Co-located awake
+  characters are resolved as one group encounter using private per-character intents plus one public
+  compressed resolver, then affected characters replan only the remaining rounds. After round five,
+  every AI receives private end-of-day reflection followed by the existing memory consolidator.
+- The tavern common room now authors a timelapse-only cleanup macro that empties unattended mugs and
+  returns them to Garrick's mug cabinet without touching mugs held by characters. In ordinary world-tick
+  play, mug cleanup remains atomic and must be performed one mug at a time.
+- Captain Price now starts with the Guest Room 1 key and authored lodging knowledge. Garrick, Nell,
+  Traveler, and Price know the agreed lodging fact while Mara does not; normal sleeping-place and
+  residence facts are authored for the relevant characters. Nell's nook now contains a concrete cot
+  sublocation so sleep always targets an actual bed ID.
 - A live AI reaction uses one model request returning optional narrative, optional speech,
   one nullable model-owned `continuation`, bounded memory updates, and at most one formal action.
   Continuation is private working state outside durable `mind`; the framework stores and returns
@@ -85,9 +103,10 @@
   derives its action catalog directly from the view already present in the request message.
 - The API key remains in transient memory, with optional expiring 24-hour `localStorage`
   persistence and a forget control. Storage failures degrade safely to memory-only operation.
-- One shared `AIRequestExecutor` serializes game, repair, and prompt-lab traffic. It leaves at
-  least one second between live transport calls, honors `Retry-After` after HTTP 429, exposes
-  transient busy/cooldown status, and performs no automatic rate-limit retry.
+- One shared `AIRequestExecutor` serializes game, repair, prompt-lab, and overnight-timelapse traffic.
+  It leaves at least one second between live transport calls, honors `Retry-After` after HTTP 429,
+  exposes transient busy/cooldown status, performs no automatic rate-limit retry, and retains the most
+  recent 100 sanitized AI interaction records for debugging/export.
 - The local JSON-only protocol rejects arbitrary fields and permits at most one repair request
   for malformed or schema-invalid JSON. Option-validation errors expose the allowed values, and decision
   repairs receive a compact deterministic copy of the current action types, semantic descriptions, and
@@ -141,9 +160,11 @@
   advances a world tick.
 - The current loudness control distinguishes normal/public delivery from quiet/private
   delivery. Shouts and propagation into neighboring locations are not implemented.
-- One submitted intent may contain at most one formal action. Multi-step behavior is model-driven
-  across later reactions through one opaque `continuation`; there is no plan array, goal stack,
-  workflow engine, multi-action ordering, or partial multi-action commit.
+- In ordinary world-tick gameplay, one submitted intent may contain at most one formal action. Multi-step
+  behavior there is model-driven across later reactions through one opaque `continuation`; there is no
+  normal-tick plan array, goal stack, workflow engine, multi-action ordering, or partial multi-action commit.
+  The overnight timelapse is a separate coarse five-round planning mode and does not relax ordinary
+  atomic action semantics.
 - The **Latest turn** output is deterministic concatenation of existing narrative and grounded
   fragments; there is no separate literary narrator or summarizer model.
 - A paused movement Submit commits and renders the destination without first draining AI
@@ -151,8 +172,9 @@
 - The provider is fixed to OpenRouter and streaming is disabled. Model choice is limited to
   the authored catalog; there is no arbitrary model entry or provider selector.
 - Browser `file://` network/CORS and localStorage behavior depends on the browser.
-- There is no memory compression, token budgeting, local token counting, embeddings, or
-  retrieval. Usage/cost is shown only when OpenRouter reports it.
+- Transactional recent-to-long-term memory consolidation exists, including overnight consolidation, but
+  there is still no retrieval-based old-memory selection, token budgeting, local token counting, or
+  embeddings. Usage/cost is shown only when OpenRouter reports it.
 - Editable ability effects, arbitrary author code, combat, economy, equipment, quests, and
   dialogue trees remain out of scope.
 - The village temple and crystal-sphere laboratory are temporary development scaffolding.

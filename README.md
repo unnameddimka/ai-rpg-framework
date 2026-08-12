@@ -268,6 +268,16 @@ There is no free-running autonomous NPC timer loop.
 
 Formal-action targets receive the strongest scheduler priority, speech targets receive secondary priority, and remaining eligible AI characters use deterministic scheduler order.
 
+### Sleeping and overnight timelapse
+
+Beds expose a grounded `sleep` action. AI characters can fall asleep during ordinary world-tick play; any later formal action or non-empty speech/narrative wakes the acting character, while merely receiving an observation does not.
+
+When the HumanController sleeps while lying on a bed, the game runs one user-triggered overnight timelapse instead of an ordinary AI reaction wave. The night contains five abstract rounds. Each awake AI privately plans coarse `(location, action)` steps, where travel to a reachable room is implicit in the same round. Timelapse actions are `narrate`, `sleep` on a concrete bed, or an authored location-specific deterministic macro. Reachability uses the canonical location graph and existing lock/key ownership.
+
+Awake AI characters that finish a round in the same major room form one compressed group encounter. Each participant produces a private interaction intent; one shared resolver receives only public room context plus those intents and returns a compressed interaction summary. Encounter participants then replan only the remaining rounds. After round five, every AI character receives a private end-of-day reflection and then the existing memory-consolidation operation runs. The HumanController wakes after completion; AI characters are not automatically forced awake.
+
+Only committed overnight facts are added to the optional invisible presentation. Plans, intents, replanning scaffolding, reflection internals, and model traces remain in the AI interaction diagnostics rather than the scene narrative.
+
 ### `continuation`
 
 `continuation` is a private model-authored working intention, for example an unfinished purpose such as fetching something for a patron.
@@ -325,7 +335,7 @@ Runtime character state contains separate partitions for things such as:
 
 Pending observations are grounded inputs delivered by the deterministic engine. Character models may decide what is worth remembering or updating.
 
-The current implementation does **not** yet perform automatic context summarization, memory compression, embeddings, or retrieval-based old-memory selection. Long-running characters can therefore accumulate increasingly large memory context.
+The implementation has an explicit transactional memory-consolidation operation that preserves the newest ten recent memories while compressing older recent material into long-term memory. Overnight sleep runs that consolidator after each character's end-of-day reflection. The framework still does **not** perform retrieval-based old-memory selection, embeddings, local token budgeting, or general automatic context summarization, so long-running characters can still accumulate increasingly large long-term context.
 
 Game saves store canonical world/character state needed to continue the game. The detailed AI request/response exchange log is runtime debugging data and is **not** stored in saves.
 
@@ -407,7 +417,7 @@ Character and Narrator requests share the same serialized request executor and b
 
 The in-memory exchange log records recent AI requests and responses for debugging. It includes character and Narrator exchanges, request purpose/stage, model IDs, usage information, parser traces, and sanitized provider details.
 
-The exchange history is bounded in memory and can be exported manually for debugging. It is not part of the normal game save.
+The exchange history retains the most recent 100 entries in memory and can be exported manually for debugging. It is not part of the normal game save.
 
 The temporary crystal-sphere prompt lab in the Village temple provides additional AI debugging facilities such as request inspection, dry runs, scheduler state, and exchange-log import/export.
 

@@ -384,6 +384,10 @@
             });
         });
 
+        if (view.available_actions.sleep) {
+            groups.here.push({ kind: "action", label: view.self.controller_id === "human" ? "Sleep till morning" : "Sleep", action: { type: "sleep" } });
+        }
+
         discoverAvailableAbilities(view).forEach(function (ability) {
             groups.here.push({ kind: "action", label: ability.name, action: { type: ability.actionType } });
         });
@@ -1555,6 +1559,8 @@
             uiState.locationStatus = `Intent submitted, but AI processing stopped: ${result.waveResult.error.message}`;
         } else if (result.waveResult && result.waveResult.truncated) {
             uiState.locationStatus = result.waveResult.warning || "Turn complete, but the AI world tick hit its emergency limit.";
+        } else if (result.timelapseResult && result.timelapseResult.ok) {
+            uiState.locationStatus = "Morning. The overnight timelapse is complete.";
         } else {
             const count = result.waveResult ? result.waveResult.processedCount : 0;
             uiState.locationStatus = `Turn complete. ${count} AI character(s) reacted.`;
@@ -1650,7 +1656,7 @@
         const lockIds = view.available_actions.lock ? view.available_actions.lock.options.destination_ids : [];
         const unlockDestinations = moveOptions.filter(function (destination) { return unlockIds.includes(destination.id); });
         const lockDestinations = moveOptions.filter(function (destination) { return lockIds.includes(destination.id); });
-        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume", "use_item"]);
+        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume", "use_item", "sleep"]);
         const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
             return !knownActionTypes.has(entry[0]) && isZeroInputAbilityAction(entry[1]);
         });
@@ -1681,7 +1687,8 @@
             radioField("place_item", "Place item", `<select id="action-place-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-place-inventory"${disabledAttribute}>${optionMarkup(placementInventories, "No accessible surface")}</select>`, ownedItems.length === 0 || placementInventories.length === 0),
             radioField("fill", "Fill item", `<select id="action-fill-item"${disabledAttribute}>${itemActionOptionMarkup(fillItems, "No fillable item here")}</select>`, fillItems.length === 0),
             radioField("consume", "Consume item", `<select id="action-consume-item"${disabledAttribute}>${itemActionOptionMarkup(consumableItems, "No consumable item")}</select>`, consumableItems.length === 0),
-            radioField("use_item", "Use item", `<select id="action-use-item"${disabledAttribute}>${itemActionOptionMarkup(usableItems, "No usable item")}</select>`, usableItems.length === 0)
+            radioField("use_item", "Use item", `<select id="action-use-item"${disabledAttribute}>${itemActionOptionMarkup(usableItems, "No usable item")}</select>`, usableItems.length === 0),
+            radioField("sleep", "Sleep till morning", "<p>No parameters.</p>", !view.available_actions.sleep)
         ].concat(zeroInputExtras.map(function (entry) {
             return radioField(entry[0], entry[1].description || entry[0], "<p>No parameters.</p>", false);
         })).join("");

@@ -191,7 +191,8 @@
           "capacity": 1,
           "reachableSublocationIds": [
             "underStairsNook",
-            "commonRoomFloor"
+            "commonRoomFloor",
+            "underStairsBed"
           ]
         },
         "commonRoomTableThree": {
@@ -212,8 +213,39 @@
             "commonRoomTableThree",
             "commonRoomFloor"
           ]
+        },
+        "underStairsBed": {
+          "id": "underStairsBed",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Nell’s cot",
+          "publicText": "A narrow cot fills most of the curtained nook beneath the stairs.",
+          "enterLabel": "Lie down on the cot",
+          "selfText": "You are lying on the narrow cot beneath the stairs.",
+          "occupantTemplate": "{name} is lying on the narrow cot beneath the stairs.",
+          "capacity": 4,
+          "capabilities": [
+            "sleep"
+          ],
+          "reachableSublocationIds": [
+            "underStairsBed",
+            "underStairsNook"
+          ]
         }
-      }
+      },
+      "timelapseActions": [
+        {
+          "id": "clean_common_room",
+          "label": "Clean the common room",
+          "description": "Collect unattended mugs around the common room, empty them, and return them to the mug cabinet.",
+          "effectId": "collect_mugs_to_storage",
+          "effectParams": {
+            "itemFamilyId": "mug",
+            "emptyDefinitionId": "emptyMug",
+            "destinationInventoryId": "inventory_barMugCabinet"
+          }
+        }
+      ]
     },
     "street": {
       "id": "street",
@@ -384,6 +416,9 @@
           "reachableSublocationIds": [
             "innkeeperRoomBed",
             "innkeeperRoomFloor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -434,6 +469,9 @@
           "reachableSublocationIds": [
             "guestRoom1Bed",
             "guestRoom1Floor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -484,6 +522,9 @@
           "reachableSublocationIds": [
             "guestRoom2Bed",
             "guestRoom2Floor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -534,6 +575,9 @@
           "reachableSublocationIds": [
             "guestRoom3Bed",
             "guestRoom3Floor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -584,6 +628,9 @@
           "reachableSublocationIds": [
             "guestRoom4Bed",
             "guestRoom4Floor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -680,6 +727,9 @@
           "reachableSublocationIds": [
             "maraCottageBed",
             "maraCottageFloor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         },
         "maraCottageTable": {
@@ -743,7 +793,12 @@
         "aura": "Beneath the aura of an ordinary human, there is a faint second presence — something impossible to place, as though part of him exists beyond the boundaries of this world. It does not feel corrupt or hostile, only profoundly out of place."
       },
       "initialMind": {
-        "knownFacts": [],
+        "knownFacts": [
+          {
+            "id": "price_lodging",
+            "text": "Captain Price is staying in the first guest room at the tavern."
+          }
+        ],
         "beliefs": [],
         "relationships": [],
         "recentMemories": [],
@@ -789,6 +844,18 @@
           {
             "id": "mara_open_secret",
             "text": "People broadly know that villagers come to me for help, but individuals often avoid admitting publicly that they themselves do so."
+          },
+          {
+            "id": "mara_sleeping_place",
+            "text": "I normally sleep in the bed in my cottage."
+          },
+          {
+            "id": "garrick_home",
+            "text": "Garrick lives at the tavern he owns and runs."
+          },
+          {
+            "id": "nell_home",
+            "text": "Nell lives at the tavern and sleeps in the nook beneath the stairs."
           }
         ],
         "beliefs": [],
@@ -850,6 +917,14 @@
           {
             "id": "mara_open_secret",
             "text": "Villagers quietly go to Mara for remedies and advice despite that unease; everyone broadly knows this, though people rarely admit their own visits openly."
+          },
+          {
+            "id": "price_lodging",
+            "text": "Captain Price is renting Guest Room 1 at my tavern, normally sleeps there while he stays here, and has the room key."
+          },
+          {
+            "id": "garrick_sleeping_place",
+            "text": "I live at the tavern and normally sleep in the bed in my private room upstairs."
           }
         ],
         "beliefs": [],
@@ -880,7 +955,12 @@
         "aura": "His aura is entirely human and firmly rooted in this world, yet it carries a faint residue of somewhere else — like the lingering scent of smoke on a coat long after the fire is gone. Whatever place once marked him is distant now, but the trace remains."
       },
       "initialMind": {
-        "knownFacts": [],
+        "knownFacts": [
+          {
+            "id": "price_lodging",
+            "text": "I am renting Guest Room 1 at the tavern while I stay here; it is where I normally sleep, and I have the key to the room."
+          }
+        ],
         "beliefs": [],
         "relationships": [],
         "recentMemories": [],
@@ -948,6 +1028,14 @@
           {
             "id": "mara_open_secret",
             "text": "People in the village quietly seek Mara for remedies and advice, and everyone broadly knows it, but individuals often avoid admitting openly that they themselves visit her."
+          },
+          {
+            "id": "price_lodging",
+            "text": "Captain Price is staying in Guest Room 1 at the tavern and normally sleeps there while he is here."
+          },
+          {
+            "id": "nell_sleeping_place",
+            "text": "I live at the tavern and normally sleep on the narrow cot in my nook beneath the stairs."
           }
         ],
         "beliefs": [],
@@ -1187,7 +1275,7 @@
     "guestRoom1Key": {
       "id": "guestRoom1Key",
       "definitionId": "guestRoom1KeyType",
-      "inventoryId": "inventory_innkeeper"
+      "inventoryId": "inventory_captainPrice"
     },
     "guestRoom2Key": {
       "id": "guestRoom2Key",

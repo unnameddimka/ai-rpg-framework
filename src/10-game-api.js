@@ -2,8 +2,8 @@
     "use strict";
 
     const LEGACY_WORLD_VERSION = 6;
-    const WORLD_SCHEMA_VERSION = 7;
-    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, WORLD_SCHEMA_VERSION]);
+    const WORLD_SCHEMA_VERSION = 8;
+    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, WORLD_SCHEMA_VERSION]);
     let migrationInFlight = false;
     let lastMigrationReport = null;
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
@@ -81,6 +81,7 @@
             character.mind = clone(character.initialMind || {});
             delete character.initialMind;
             character.mind.pendingObservations = [];
+            character.sleeping = character.sleeping === true;
             world.entities[characterId] = character;
             if (world.inventories[character.inventoryId]) {
                 throw new Error(`Duplicate inventory ID ${character.inventoryId}.`);
@@ -736,6 +737,9 @@
             if (!Number.isInteger(character.wallet) || character.wallet < 0) {
                 return fail("CHARACTER_WALLET_INVALID", `Character ${character.id} has an invalid wallet.`);
             }
+            if (typeof character.sleeping !== "boolean") {
+                return fail("CHARACTER_SLEEPING_INVALID", `Character ${character.id} sleeping must be Boolean.`);
+            }
             if (!CONTROLLER_IDS.has(character.defaultControllerId) || character.defaultControllerId === "human") {
                 return fail("DEFAULT_CONTROLLER_INVALID", `Character ${character.id} has an invalid default controller.`);
             }
@@ -961,6 +965,7 @@
                 character.mind.recentMemories = migrationArray(savedCharacter, "recentMemories");
                 character.mind.longTermMemories = migrationArray(savedCharacter, "longTermMemories");
                 character.mind.pendingObservations = [];
+                character.sleeping = savedCharacter.sleeping === true;
                 report.beliefsPreserved += character.mind.beliefs.length;
                 report.relationshipsPreserved += character.mind.relationships.length;
                 report.memoriesPreserved += character.mind.recentMemories.length + character.mind.longTermMemories.length;
@@ -1413,6 +1418,201 @@
             }
         }
     };
+
+    const TimelapseEffectRegistry = {
+        collect_mugs_to_storage: {
+            execute: function (actor, location, actionDefinition, world) {
+                const params = actionDefinition.effectParams || {};
+                const destination = world.inventories[params.destinationInventoryId];
+                const emptyDefinition = world.itemDefinitions[params.emptyDefinitionId];
+                if (!destination || !emptyDefinition) {
+                    return fail("TIMELAPSE_EFFECT_INVALID", "The cleanup destination or empty mug definition is missing.");
+                }
+
+                const sourceInventoryIds = [location.inventoryId];
+                getSublocations(location.id, world).forEach(function (sublocation) {
+                    if (sublocation.inventoryId) sourceInventoryIds.push(sublocation.inventoryId);
+                });
+
+                const eligible = [];
+                sourceInventoryIds.forEach(function (inventoryId) {
+                    const inventory = world.inventories[inventoryId];
+                    if (!inventory) return;
+                    inventory.itemIds.slice().forEach(function (itemId) {
+                        const item = world.entities[itemId];
+                        const definition = getItemDefinition(item, world);
+                        if (item && definition && definition.familyId === params.itemFamilyId) {
+                            eligible.push({ item: item, source: inventory });
+                        }
+                    });
+                });
+
+                eligible.forEach(function (entry) {
+                    transformItem(entry.item, params.emptyDefinitionId, world);
+                    transferItem(entry.item.id, entry.source, destination, world);
+                });
+
+                const count = eligible.length;
+                return ok({
+                    text: count > 0
+                        ? `${actor.name} cleaned ${location.name}, emptied ${count} mug${count === 1 ? "" : "s"}, and returned ${count === 1 ? "it" : "them"} to ${destination.name || "storage"}.`
+                        : `${actor.name} cleaned ${location.name}, but there were no unattended mugs to put away.`,
+                    affectedItemIds: eligible.map(function (entry) { return entry.item.id; })
+                });
+            }
+        }
+    };
+
+    function timelapseActionDefinitions(location) {
+        return Array.isArray(location && location.timelapseActions) ? location.timelapseActions : [];
+    }
+
+    function bedSublocations(locationId, world) {
+        return getSublocations(locationId, world).filter(function (sublocation) {
+            return Array.isArray(sublocation.capabilities) && sublocation.capabilities.includes("sleep");
+        });
+    }
+
+    function canTraverseTimelapseTransition(actor, transition, world) {
+        if (!transition || !transition.destinationId || transition.blocked) return false;
+        if (!transition.lockId || !transition.locked) return true;
+        return matchingKeyItems(actor, transition.lockId, world).length > 0;
+    }
+
+    function timelapseRoute(actor, destinationId, world) {
+        if (!actor || !getLocation(destinationId, world)) return null;
+        const startId = actor.locationId;
+        const queue = [startId];
+        const previous = new Map([[startId, null]]);
+        while (queue.length > 0) {
+            const locationId = queue.shift();
+            if (locationId === destinationId) break;
+            const location = getLocation(locationId, world);
+            locationExitEntries(location).forEach(function (transition) {
+                const nextId = transition.destinationId;
+                if (!nextId || previous.has(nextId) || !canTraverseTimelapseTransition(actor, transition, world)) return;
+                previous.set(nextId, locationId);
+                queue.push(nextId);
+            });
+        }
+        if (!previous.has(destinationId)) return null;
+        const path = [];
+        let cursor = destinationId;
+        while (cursor !== null) {
+            path.push(cursor);
+            cursor = previous.get(cursor);
+        }
+        path.reverse();
+        return path;
+    }
+
+    function getTimelapseReachableCatalog(actorId) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        return Object.values(world.entities).filter(function (entity) {
+            return entity && entity.type === "location";
+        }).map(function (location) {
+            const route = timelapseRoute(actor, location.id, world);
+            if (!route) return null;
+            return {
+                id: location.id,
+                name: location.name,
+                route: route,
+                beds: bedSublocations(location.id, world).map(function (bed) {
+                    return { id: bed.id, name: bed.name };
+                }),
+                timelapseActions: timelapseActionDefinitions(location).map(function (action) {
+                    return { id: action.id, label: action.label, description: action.description };
+                })
+            };
+        }).filter(Boolean);
+    }
+
+    function moveTimelapseActor(actorId, destinationId) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        const destination = getLocation(destinationId, world);
+        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        if (!destination) return fail("DESTINATION_NOT_FOUND", "Timelapse destination does not exist.");
+        const route = timelapseRoute(actor, destinationId, world);
+        if (!route) return fail("TIMELAPSE_ROUTE_BLOCKED", "The planned destination is no longer reachable.");
+        const fromLocationId = actor.locationId;
+        if (fromLocationId === destinationId) {
+            return ok({ actorId: actorId, fromLocationId: fromLocationId, toLocationId: destinationId, route: route, moved: false, text: "" });
+        }
+        const targetSublocation = getSublocation(destination.defaultSublocationId, world);
+        if (!targetSublocation) return fail("DESTINATION_SUBLOCATION_INVALID", "Destination has no valid default position.");
+        if (sublocationOccupants(targetSublocation.id, world, actor.id).length >= targetSublocation.capacity) {
+            return fail("SUBLOCATION_FULL", "The destination's default position is full.");
+        }
+        actor.locationId = destinationId;
+        actor.sublocationId = targetSublocation.id;
+        const validation = validateWorld(world);
+        if (!validation.ok) return validation;
+        return ok({
+            actorId: actorId,
+            fromLocationId: fromLocationId,
+            toLocationId: destinationId,
+            route: route,
+            moved: true,
+            text: `${actor.name} moved from ${getLocation(fromLocationId, world).name} to ${destination.name}.`
+        });
+    }
+
+    function executeTimelapseAction(actorId, locationId, action) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        const location = getLocation(locationId, world);
+        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        if (!location || actor.locationId !== locationId) return fail("TIMELAPSE_LOCATION_MISMATCH", "Actor is not in the selected timelapse location.");
+        if (!action || typeof action !== "object" || Array.isArray(action) || typeof action.type !== "string") {
+            return fail("TIMELAPSE_ACTION_INVALID", "Timelapse action must be an object with a type.");
+        }
+
+        if (action.type === "narrate") {
+            const text = typeof action.text === "string" ? action.text.trim() : "";
+            if (!text || text.length > 2000) return fail("TIMELAPSE_NARRATIVE_INVALID", "Timelapse narration must contain 1 to 2000 characters.");
+            return ok({ actorId: actorId, locationId: locationId, type: "narrate", text: `${actor.name}: ${text}` });
+        }
+
+        if (action.type === "sleep") {
+            const bed = getSublocation(action.bedId, world);
+            if (!bed || bed.locationId !== locationId || !(bed.capabilities || []).includes("sleep")) {
+                return fail("TIMELAPSE_BED_INVALID", "The selected bed is not available in this room.");
+            }
+            if (sublocationOccupants(bed.id, world, actor.id).length >= bed.capacity) {
+                return fail("SUBLOCATION_FULL", "The selected bed is full.");
+            }
+            actor.sublocationId = bed.id;
+            actor.sleeping = true;
+            const validation = validateWorld(world);
+            if (!validation.ok) return validation;
+            return ok({ actorId: actorId, locationId: locationId, type: "sleep", bedId: bed.id, text: `${actor.name} went to sleep in ${location.name}.` });
+        }
+
+        if (action.type === "timelapse_action") {
+            const definition = timelapseActionDefinitions(location).find(function (candidate) { return candidate.id === action.actionId; });
+            if (!definition) return fail("TIMELAPSE_ACTION_UNAVAILABLE", "The selected timelapse action is not available in this room.");
+            const effect = TimelapseEffectRegistry[definition.effectId];
+            if (!effect) return fail("TIMELAPSE_EFFECT_UNKNOWN", "The selected timelapse effect is not supported by the engine.");
+            const result = effect.execute(actor, location, definition, world);
+            if (!result || !result.ok) return result || fail("TIMELAPSE_EFFECT_FAILED", "The timelapse action failed.");
+            const validation = validateWorld(world);
+            if (!validation.ok) return validation;
+            return ok({
+                actorId: actorId,
+                locationId: locationId,
+                type: "timelapse_action",
+                actionId: definition.id,
+                effectId: definition.effectId,
+                text: result.text || `${actor.name} completed ${definition.label}.`,
+                affectedItemIds: clone(result.affectedItemIds || [])
+            });
+        }
+
+        return fail("TIMELAPSE_ACTION_INVALID", `Unknown timelapse action type: ${String(action.type)}.`);
+    }
 
     const ActionRegistry = {
         move: {
@@ -2083,6 +2283,34 @@
             }
         },
 
+        sleep: {
+            description: "Fall asleep while lying on a bed.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "sleep" } },
+                required: ["type"],
+                additionalProperties: false
+            },
+            getOptions: function () { return {}; },
+            validate: function (actor, action, world) {
+                const sublocation = getSublocation(actor.sublocationId, world);
+                if (!sublocation || !(sublocation.capabilities || []).includes("sleep")) {
+                    return fail("BED_REQUIRED", "You must be lying on a bed before sleeping.");
+                }
+                return ok();
+            },
+            execute: function (actor) {
+                actor.sleeping = true;
+                return [{
+                    type: "character_slept",
+                    actorId: actor.id,
+                    locationId: actor.locationId,
+                    sublocationId: actor.sublocationId,
+                    text: `${actor.name} went to sleep.`
+                }];
+            }
+        },
+
         read_aura: {
             description: "Read every currently perceivable character's aura.",
             schema: {
@@ -2232,6 +2460,7 @@
                 controller_id: world.control.assignments[actor.id],
                 location_id: actor.locationId,
                 sublocation_id: actor.sublocationId,
+                sleeping: actor.sleeping === true,
                 position_text: getSublocation(actor.sublocationId, world).selfText,
                 wallet: actor.wallet,
                 inventory: inventoryItems(actor.inventoryId, world),
@@ -2352,6 +2581,7 @@
         const world = ensureWorld();
         const actor = getCharacter(actorId, world);
         if (!actor) return { ok: false, action: clone(action || {}), events: [], feedback: [], error: { code: "ACTOR_NOT_FOUND", message: "Actor character does not exist." } };
+        if (actor.sleeping === true) actor.sleeping = false;
         const normalizedError = {
             code: errorData && errorData.code || "ACTION_FAILED",
             message: errorData && errorData.message || "The formal action could not be completed."
@@ -2398,6 +2628,8 @@
             return result;
         }
 
+        if (actor.sleeping === true) actor.sleeping = false;
+
         const validation = definition.validate(actor, action, world);
         if (!validation.ok) {
             const feedback = [{
@@ -2428,7 +2660,7 @@
                 return emitEvent(enriched, world);
             });
             routeFeedback(feedback, action, world, metadata);
-            if (world.control.assignments[actor.id] === "ai") {
+            if (world.control.assignments[actor.id] === "ai" && action.type !== "sleep") {
                 enqueueObservation(actor.id, {
                     kind: "action_result",
                     actionType: action.type,
@@ -2486,6 +2718,8 @@
         const noticeability = SPEECH_LOUDNESS_VALUES.includes(input.noticeability)
             ? input.noticeability
             : "noticeable";
+
+        if (actor.sleeping === true) actor.sleeping = false;
 
         const event = emitEvent({
             type: "narrative_input",
@@ -2905,6 +3139,7 @@
         WORLD_SCHEMA_VERSION: WORLD_SCHEMA_VERSION,
         ActionRegistry: ActionRegistry,
         ItemEffectRegistry: ItemEffectRegistry,
+        TimelapseEffectRegistry: TimelapseEffectRegistry,
         createInitialWorld: createInitialWorld,
         bootstrap: function () {
             if (!State.variables.world) {
@@ -2978,6 +3213,15 @@
     setup.AIWorkingState = {
         getContinuation: getAIContinuation,
         setContinuation: setAIContinuation
+    };
+
+    setup.TimelapseAPI = {
+        getReachableCatalog: getTimelapseReachableCatalog,
+        moveToLocation: moveTimelapseActor,
+        executeAction: executeTimelapseAction,
+        getBeds: function (locationId) {
+            return bedSublocations(locationId, ensureWorld()).map(function (bed) { return { id: bed.id, name: bed.name }; });
+        }
     };
 
     setup.CharacterAPI = {

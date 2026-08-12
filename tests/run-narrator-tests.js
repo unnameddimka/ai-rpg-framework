@@ -194,9 +194,9 @@ async function testRuntimeTransportBudgetsHotSwitchingAndLogging() {
         };
     }
     await context.setup.OpenRouterClient.chat([{ role: "user", content: "Character turn." }], fakeCharacterFetch);
-    assert(capturedCharacterBody.model === characterModelId && capturedCharacterBody.max_tokens === 3000 &&
+    assert(capturedCharacterBody.model === characterModelId && capturedCharacterBody.max_tokens === 6000 &&
         capturedCharacterBody.reasoning && capturedCharacterBody.reasoning.max_tokens === 1500,
-        "existing character transport should keep its independent 3000/1500 defaults after narrator model switching");
+        "existing character transport should keep its independent 6000/1500 defaults after narrator model switching");
 }
 
 async function testTolerantDynamicJsonRecovery() {

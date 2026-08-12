@@ -194,7 +194,8 @@
           "capacity": 1,
           "reachableSublocationIds": [
             "underStairsNook",
-            "commonRoomFloor"
+            "commonRoomFloor",
+            "underStairsBed"
           ]
         },
         "commonRoomTableThree": {
@@ -215,8 +216,39 @@
             "commonRoomTableThree",
             "commonRoomFloor"
           ]
+        },
+        "underStairsBed": {
+          "id": "underStairsBed",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Nell’s cot",
+          "publicText": "A narrow cot fills most of the curtained nook beneath the stairs.",
+          "enterLabel": "Lie down on the cot",
+          "selfText": "You are lying on the narrow cot beneath the stairs.",
+          "occupantTemplate": "{name} is lying on the narrow cot beneath the stairs.",
+          "capacity": 4,
+          "capabilities": [
+            "sleep"
+          ],
+          "reachableSublocationIds": [
+            "underStairsBed",
+            "underStairsNook"
+          ]
         }
-      }
+      },
+      "timelapseActions": [
+        {
+          "id": "clean_common_room",
+          "label": "Clean the common room",
+          "description": "Collect unattended mugs around the common room, empty them, and return them to the mug cabinet.",
+          "effectId": "collect_mugs_to_storage",
+          "effectParams": {
+            "itemFamilyId": "mug",
+            "emptyDefinitionId": "emptyMug",
+            "destinationInventoryId": "inventory_barMugCabinet"
+          }
+        }
+      ]
     },
     "street": {
       "id": "street",
@@ -387,6 +419,9 @@
           "reachableSublocationIds": [
             "innkeeperRoomBed",
             "innkeeperRoomFloor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -437,6 +472,9 @@
           "reachableSublocationIds": [
             "guestRoom1Bed",
             "guestRoom1Floor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -487,6 +525,9 @@
           "reachableSublocationIds": [
             "guestRoom2Bed",
             "guestRoom2Floor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -537,6 +578,9 @@
           "reachableSublocationIds": [
             "guestRoom3Bed",
             "guestRoom3Floor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -587,6 +631,9 @@
           "reachableSublocationIds": [
             "guestRoom4Bed",
             "guestRoom4Floor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         }
       }
@@ -683,6 +730,9 @@
           "reachableSublocationIds": [
             "maraCottageBed",
             "maraCottageFloor"
+          ],
+          "capabilities": [
+            "sleep"
           ]
         },
         "maraCottageTable": {
@@ -743,10 +793,15 @@
       "defaultControllerId": "ai",
       "abilityIds": [],
       "engineFacts": {
-        "aura": "A faint current of unrealized potential surrounds the traveller."
+        "aura": "Beneath the aura of an ordinary human, there is a faint second presence — something impossible to place, as though part of him exists beyond the boundaries of this world. It does not feel corrupt or hostile, only profoundly out of place."
       },
       "initialMind": {
-        "knownFacts": [],
+        "knownFacts": [
+          {
+            "id": "price_lodging",
+            "text": "Captain Price is staying in the first guest room at the tavern."
+          }
+        ],
         "beliefs": [],
         "relationships": [],
         "recentMemories": [],
@@ -756,7 +811,7 @@
     "hoodedWoman": {
       "id": "hoodedWoman",
       "name": "Hooded woman",
-      "playerDescription": "A hooded woman watches the room from beneath the edge of her hood.",
+      "playerDescription": "A hooded woman watches from beneath the edge of her hood.",
       "interactionLabel": "Speak with the hooded woman",
       "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority. You know a great deal about alchemy and medicine, but your magical abilities are limited and you never had an academic magical education. You are quite beautiful, so people sometimes accuse you of cooperating with demons, but that is false. You live alone in a secluded cottage beyond the edge of the village, surrounded by forest. You grow herbs and mushrooms around the cottage and work there as a hedge witch, preparing medicines, remedies, simple alchemical mixtures, and potions for people who seek your help.",
       "locationId": "commonRoom",
@@ -792,6 +847,18 @@
           {
             "id": "mara_open_secret",
             "text": "People broadly know that villagers come to me for help, but individuals often avoid admitting publicly that they themselves do so."
+          },
+          {
+            "id": "mara_sleeping_place",
+            "text": "I normally sleep in the bed in my cottage."
+          },
+          {
+            "id": "garrick_home",
+            "text": "Garrick lives at the tavern he owns and runs."
+          },
+          {
+            "id": "nell_home",
+            "text": "Nell lives at the tavern and sleeps in the nook beneath the stairs."
           }
         ],
         "beliefs": [],
@@ -813,7 +880,9 @@
       "initialControllerId": "ai",
       "defaultControllerId": "ai",
       "abilityIds": [],
-      "engineFacts": {},
+      "engineFacts": {
+        "aura": "His aura is entirely ordinary, but unusually steady — dense, warm, and settled, like a hearth that has burned in the same place for many years. There is little turbulence in it; what he feels tends to sink deep rather than flare brightly."
+      },
       "initialMind": {
         "knownFacts": [
           {
@@ -851,6 +920,14 @@
           {
             "id": "mara_open_secret",
             "text": "Villagers quietly go to Mara for remedies and advice despite that unease; everyone broadly knows this, though people rarely admit their own visits openly."
+          },
+          {
+            "id": "price_lodging",
+            "text": "Captain Price is renting Guest Room 1 at my tavern, normally sleeps there while he stays here, and has the room key."
+          },
+          {
+            "id": "garrick_sleeping_place",
+            "text": "I live at the tavern and normally sleep in the bed in my private room upstairs."
           }
         ],
         "beliefs": [],
@@ -877,9 +954,16 @@
       "initialControllerId": "ai",
       "defaultControllerId": "ai",
       "abilityIds": [],
-      "engineFacts": {},
+      "engineFacts": {
+        "aura": "His aura is entirely human and firmly rooted in this world, yet it carries a faint residue of somewhere else — like the lingering scent of smoke on a coat long after the fire is gone. Whatever place once marked him is distant now, but the trace remains."
+      },
       "initialMind": {
-        "knownFacts": [],
+        "knownFacts": [
+          {
+            "id": "price_lodging",
+            "text": "I am renting Guest Room 1 at the tavern while I stay here; it is where I normally sleep, and I have the key to the room."
+          }
+        ],
         "beliefs": [],
         "relationships": [],
         "recentMemories": [],
@@ -899,7 +983,9 @@
       "initialControllerId": "ai",
       "defaultControllerId": "ai",
       "abilityIds": [],
-      "engineFacts": {},
+      "engineFacts": {
+        "aura": "Her aura is wholly of this world, but unusually vivid and quick to change — warm currents shifting through it with every passing thought and emotion, like candlelight disturbed by a nearby breath. Nothing about it feels supernatural; she simply seems more intensely present than most people."
+      },
       "initialMind": {
         "knownFacts": [
           {
@@ -945,6 +1031,14 @@
           {
             "id": "mara_open_secret",
             "text": "People in the village quietly seek Mara for remedies and advice, and everyone broadly knows it, but individuals often avoid admitting openly that they themselves visit her."
+          },
+          {
+            "id": "price_lodging",
+            "text": "Captain Price is staying in Guest Room 1 at the tavern and normally sleeps there while he is here."
+          },
+          {
+            "id": "nell_sleeping_place",
+            "text": "I live at the tavern and normally sleep on the narrow cot in my nook beneath the stairs."
           }
         ],
         "beliefs": [],
@@ -1184,7 +1278,7 @@
     "guestRoom1Key": {
       "id": "guestRoom1Key",
       "definitionId": "guestRoom1KeyType",
-      "inventoryId": "inventory_innkeeper"
+      "inventoryId": "inventory_captainPrice"
     },
     "guestRoom2Key": {
       "id": "guestRoom2Key",
@@ -1207,6 +1301,6 @@
       "inventoryId": "inventory_villageTemple"
     }
   },
-  "authoringRevision": "4edead95371c15bb56213fcd53090cb79658bedab561b1c3deb6b93605ee92e0"
+  "authoringRevision": "462096bd083be6009de9d91f474d1c54a11f83f79f2b08b2dfc44a529ec7b18d"
 };
 }());

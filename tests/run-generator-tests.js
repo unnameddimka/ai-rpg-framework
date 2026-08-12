@@ -40,6 +40,8 @@ rejects(function (doc) { doc.itemDefinitions.emptyMug.fillAction.resultDefinitio
 rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.effectId = "execute_arbitrary_code"; }, "invalid useAction");
 rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.feedbackText = ""; }, "invalid useAction");
 rejects(function (doc) { doc.itemDefinitions.memoryStone.description = 42; }, "description must be text");
+rejects(function (doc) { doc.locations.commonRoom.timelapseActions[0].effectId = "execute_arbitrary_code"; }, "references unknown effect");
+rejects(function (doc) { doc.locations.commonRoom.timelapseActions[0].effectParams.destinationInventoryId = "inventory_missing"; }, "references missing destination inventory");
 rejects(function (doc) {
     doc.itemDefinitions.cleaningRag = clone(doc.itemDefinitions.cleaningRagType);
     doc.itemDefinitions.cleaningRag.id = "cleaningRag";

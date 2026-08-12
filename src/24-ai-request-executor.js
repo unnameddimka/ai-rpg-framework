@@ -3,7 +3,7 @@
 
     const MIN_INTERVAL_MS = 1000;
     const DEFAULT_RATE_LIMIT_MS = 10000;
-    const MAX_EXCHANGE_HISTORY = 50;
+    const MAX_EXCHANGE_HISTORY = 100;
     let chain = Promise.resolve();
     let queuedExecutions = 0;
     let activeExecutions = 0;
