@@ -2,7 +2,7 @@
     "use strict";
 
     const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-    const MAX_TOKENS = 3000;
+    const MAX_TOKENS = 6000;
     const REASONING_MAX_TOKENS = 1500;
     const TEMPERATURE = 0.4;
 

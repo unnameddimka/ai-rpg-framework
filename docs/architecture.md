@@ -302,6 +302,7 @@ give_item               base
 place_item              granted by a table sublocation
 fill                    granted by an owned fillable item when the current environment supplies its required capability
 consume                 granted by an owned consumable item
+use_item                granted by an owned item definition with a valid authored useAction
 read_aura               granted by the actor's assigned readAura ability
 ```
 
@@ -309,6 +310,14 @@ The bar does not create mugs from nothing. `barBehindCounter` exposes the enviro
 capability `ale_source` and an accessible `inventory_barMugCabinet`. An empty-mug instance
 grants `fill` only while owned at that source. Filling changes the instance definition from
 `emptyMug` to `mugOfAle`; consuming it changes the same instance back to `emptyMug`.
+
+An item definition may also declare one generic `useAction`. The authored record contains only
+its interaction label, an allowlisted `effectId`, and grounded public/private text templates.
+It never contains JavaScript. An owned item with a valid `useAction` grants `use_item`; the
+concrete `item_id` remains part of the canonical action contract. Engine-owned item effects live
+in a deterministic allowlist/registry. The first effect is `report_memory_counts`, which reads the
+actor's own `recentMemories.length` and `longTermMemories.length`, emits the physical use as a
+public event, and returns the counts only as private grounded actor feedback.
 
 `getAvailableActions(actorId)` returns a deduplicated map with source metadata:
 
@@ -442,7 +451,7 @@ The UI must never test for a specific character ID or assume that `readAura` bel
 
 The debug formal-action panel remains available, but it is not the only interface for assigned abilities.
 
-This milestone does not add arbitrary JavaScript, editable effect scripts, a general target picker, or a universal form generator. Future data-driven effects will be designed separately.
+Authored item effects are data-driven only at the configuration boundary: world data may select an engine-owned allowlisted `effectId` and provide text templates, but it never supplies executable JavaScript. This milestone still does not add editable effect scripts, a general target picker, or a universal form generator.
 
 ## 13. Events and observation routing
 
@@ -574,6 +583,8 @@ Main sections:
 Locations
 Characters
 Abilities
+Item types
+Items
 ```
 
 ### Character form
@@ -611,6 +622,19 @@ Expose:
 - engine action type selected from a known allowlist.
 
 The editor does not define action code.
+
+### Item type form
+
+Expose ordinary item-definition metadata, including the optional grounded description and the
+existing fill/consume transformations. A type may also configure one generic Use interaction:
+
+- action label;
+- allowlisted engine effect ID;
+- public physical-action text template;
+- private feedback text template.
+
+The editor may select effect IDs only from its known allowlist and never stores executable code.
+Concrete item instances remain separate records with stable IDs and authored starting inventories.
 
 ## 18. Hardening rules
 

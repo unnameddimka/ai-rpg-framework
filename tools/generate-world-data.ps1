@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 $knownActions = @("move","move_within_location","take_item","drop_item","give_item","give_money","place_item","fill","consume","read_aura")
 $knownEnvironmentCapabilities = @("ale_source")
+$knownItemEffects = @("report_memory_counts")
 $controllers = @("human","dummy","ai")
 $confidences = @("low","medium","high")
 
@@ -101,6 +102,16 @@ foreach ($dp in $document.itemDefinitions.PSObject.Properties) {
     }
     if ($null -ne $definition.consumeAction) {
         Require (-not [string]::IsNullOrWhiteSpace([string]$definition.consumeAction.actionLabel) -and $definition.consumeAction.resultType -eq "transform" -and -not [string]::IsNullOrWhiteSpace([string]$definition.consumeAction.resultDefinitionId)) "Item definition $id has an invalid consumeAction."
+    }
+    if ($null -ne $definition.PSObject.Properties["description"]) {
+        Require ($definition.description -is [string]) "Item definition $id description must be text."
+    }
+    if ($null -ne $definition.useAction) {
+        Require (-not [string]::IsNullOrWhiteSpace([string]$definition.useAction.actionLabel) -and
+            -not [string]::IsNullOrWhiteSpace([string]$definition.useAction.effectId) -and
+            ($knownItemEffects -contains [string]$definition.useAction.effectId) -and
+            -not [string]::IsNullOrWhiteSpace([string]$definition.useAction.publicText) -and
+            -not [string]::IsNullOrWhiteSpace([string]$definition.useAction.feedbackText)) "Item definition $id has an invalid useAction."
     }
 }
 

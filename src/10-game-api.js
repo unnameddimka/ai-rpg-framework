@@ -390,6 +390,7 @@
             name: definition ? definition.name : item.name,
             definition_id: definition ? definition.id : item.definitionId,
             family_id: definition ? definition.familyId : "",
+            description: definition && typeof definition.description === "string" ? definition.description : "",
             tags: definition ? clone(definition.tags || []) : [],
             consumable: Boolean(definition && definition.consumable),
             equippable: Boolean(definition && definition.equippable),
@@ -556,6 +557,18 @@
                         "ITEM_TRANSFORM_TARGET_INVALID",
                         `Item definition ${definitionId} references missing result definition ${action.resultDefinitionId}.`
                     );
+                }
+            }
+            if (definition.description !== undefined && typeof definition.description !== "string") {
+                return fail("ITEM_DESCRIPTION_INVALID", `Item definition ${definitionId} description must be text.`);
+            }
+            if (definition.useAction) {
+                const action = definition.useAction;
+                if (!action || typeof action.actionLabel !== "string" || !action.actionLabel.trim() ||
+                        typeof action.effectId !== "string" || !ItemEffectRegistry[action.effectId] ||
+                        typeof action.publicText !== "string" || !action.publicText.trim() ||
+                        typeof action.feedbackText !== "string" || !action.feedbackText.trim()) {
+                    return fail("ITEM_USE_ACTION_INVALID", `Item definition ${definitionId} has an invalid useAction.`);
                 }
             }
         }
@@ -1360,6 +1373,47 @@
         return event;
     }
 
+    function renderItemActionText(template, values) {
+        const replacements = values || {};
+        return String(template || "").replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, function (match, key) {
+            return Object.prototype.hasOwnProperty.call(replacements, key)
+                ? String(replacements[key])
+                : match;
+        });
+    }
+
+    const ItemEffectRegistry = {
+        report_memory_counts: {
+            execute: function (actor, item, definition, useAction) {
+                const recentCount = actor.mind && Array.isArray(actor.mind.recentMemories)
+                    ? actor.mind.recentMemories.length
+                    : 0;
+                const longTermCount = actor.mind && Array.isArray(actor.mind.longTermMemories)
+                    ? actor.mind.longTermMemories.length
+                    : 0;
+                return {
+                    feedback: [{
+                        recipientId: actor.id,
+                        kind: "observation",
+                        code: "MEMORY_COUNTS_REPORTED",
+                        text: renderItemActionText(useAction.feedbackText, {
+                            actorName: actor.name,
+                            itemName: definition.name,
+                            shortTermCount: recentCount,
+                            shortTermEntryWord: recentCount === 1 ? "entry" : "entries",
+                            longTermCount: longTermCount,
+                            longTermEntryWord: longTermCount === 1 ? "entry" : "entries"
+                        }),
+                        data: {
+                            itemId: item.id,
+                            effectId: useAction.effectId
+                        }
+                    }]
+                };
+            }
+        }
+    };
+
     const ActionRegistry = {
         move: {
             description: "Leave the current location and enter another directly connected location. destination_id must be one of this action's listed location IDs.",
@@ -1962,6 +2016,73 @@
             }
         },
 
+        use_item: {
+            description: "Use an owned item through its authored interaction. item_id must be one of this action's listed item IDs.",
+            schema: {
+                type: "object",
+                properties: {
+                    type: { const: "use_item" },
+                    item_id: { type: "string" }
+                },
+                required: ["type", "item_id"]
+            },
+            getOptions: function (actor, world) {
+                const inventory = world.inventories[actor.inventoryId];
+                const items = (inventory ? inventory.itemIds : []).map(function (itemId) {
+                    const item = world.entities[itemId];
+                    const definition = getItemDefinition(item, world);
+                    const useAction = definition && definition.useAction;
+                    if (!useAction || !ItemEffectRegistry[useAction.effectId]) return null;
+                    return {
+                        id: item.id,
+                        name: definition.name,
+                        action_label: useAction.actionLabel,
+                        effect_id: useAction.effectId
+                    };
+                }).filter(Boolean);
+                return { item_ids: items.map(function (item) { return item.id; }), items: items };
+            },
+            validate: function (actor, action, world) {
+                const inventory = world.inventories[actor.inventoryId];
+                if (!inventory || !inventory.itemIds.includes(action.item_id)) {
+                    return fail("ITEM_NOT_OWNED", "Actor does not possess this item.");
+                }
+                const item = world.entities[action.item_id];
+                const definition = getItemDefinition(item, world);
+                const useAction = definition && definition.useAction;
+                if (!useAction) {
+                    return fail("ITEM_NOT_USABLE", "This item has no authored use interaction.");
+                }
+                if (!ItemEffectRegistry[useAction.effectId]) {
+                    return fail("ITEM_EFFECT_UNKNOWN", "The configured item effect is not supported by the engine.");
+                }
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const item = world.entities[action.item_id];
+                const definition = getItemDefinition(item, world);
+                const useAction = definition.useAction;
+                const effect = ItemEffectRegistry[useAction.effectId];
+                const effectResult = effect.execute(actor, item, definition, useAction, world) || {};
+                return {
+                    events: [{
+                        type: "item_used",
+                        actorId: actor.id,
+                        itemId: item.id,
+                        actionType: "use_item",
+                        effectId: useAction.effectId,
+                        locationId: actor.locationId,
+                        sublocationId: actor.sublocationId,
+                        text: renderItemActionText(useAction.publicText, {
+                            actorName: actor.name,
+                            itemName: definition.name
+                        })
+                    }],
+                    feedback: clone(effectResult.feedback || [])
+                };
+            }
+        },
+
         read_aura: {
             description: "Read every currently perceivable character's aura.",
             schema: {
@@ -2032,6 +2153,15 @@
                     id: item.id,
                     definitionId: definition.id,
                     name: definition.name
+                });
+            }
+            if (definition.useAction && ItemEffectRegistry[definition.useAction.effectId]) {
+                grant("use_item", {
+                    kind: "item",
+                    id: item.id,
+                    definitionId: definition.id,
+                    name: definition.name,
+                    effectId: definition.useAction.effectId
                 });
             }
         }
@@ -2774,6 +2904,7 @@
         WORLD_VERSION: WORLD_SCHEMA_VERSION,
         WORLD_SCHEMA_VERSION: WORLD_SCHEMA_VERSION,
         ActionRegistry: ActionRegistry,
+        ItemEffectRegistry: ItemEffectRegistry,
         createInitialWorld: createInitialWorld,
         bootstrap: function () {
             if (!State.variables.world) {

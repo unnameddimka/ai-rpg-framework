@@ -37,6 +37,9 @@ rejects(function (doc) { doc.items.emptyMug_1.definitionId = "missing"; }, "refe
 rejects(function (doc) { doc.items.emptyMug_1.inventoryId = "inventory_missing"; }, "missing inventory");
 rejects(function (doc) { doc.itemDefinitions.mugOfAle.consumeAction.resultDefinitionId = "missing"; }, "references missing result definition");
 rejects(function (doc) { doc.itemDefinitions.emptyMug.fillAction.resultDefinitionId = "missing"; }, "references missing result definition");
+rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.effectId = "execute_arbitrary_code"; }, "invalid useAction");
+rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.feedbackText = ""; }, "invalid useAction");
+rejects(function (doc) { doc.itemDefinitions.memoryStone.description = 42; }, "description must be text");
 rejects(function (doc) {
     doc.itemDefinitions.cleaningRag = clone(doc.itemDefinitions.cleaningRagType);
     doc.itemDefinitions.cleaningRag.id = "cleaningRag";

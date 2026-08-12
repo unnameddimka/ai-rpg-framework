@@ -247,7 +247,7 @@ async function main() {
     const requestBody = JSON.parse(captured.options.body);
     assert(clientOk.ok && captured.url === setup.OpenRouterClient.ENDPOINT && captured.options.headers.Authorization === `Bearer ${sentinel}` &&
         requestBody.model === euryaleId && setup.OpenRouterClient.MODEL === euryaleId && requestBody.stream === false &&
-        requestBody.max_tokens === 3000 && requestBody.reasoning && requestBody.reasoning.max_tokens === 1500,
+        requestBody.max_tokens === 6000 && requestBody.reasoning && requestBody.reasoning.max_tokens === 1500,
         "client should use the selected model, Bearer key, non-streaming transport, and explicit completion/reasoning headroom");
     async function statusFetch(status) { return { ok: false, status: status, json: async function () { return {}; } }; }
     for (const pair of [[401,"AUTHENTICATION_FAILED"],[402,"INSUFFICIENT_CREDITS"],[429,"RATE_LIMITED"],[503,"PROVIDER_UNAVAILABLE"]]) {
@@ -419,7 +419,8 @@ async function main() {
         give_money: { schema: { properties: { type: {}, target_id: {}, amount: { type: "integer", minimum: 1 } }, required: ["type", "target_id", "amount"] }, options: { target_ids: ["player"], maximum_amount: 3 } },
         place_item: { schema: { properties: { type: {}, item_id: {}, target_inventory_id: {} }, required: ["type", "item_id", "target_inventory_id"] }, options: { item_ids: ["mug"], target_inventory_ids: ["table"] } },
         fill: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["mug"] } },
-        consume: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["ale"] } }
+        consume: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["ale"] } },
+        use_item: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["memoryStone_01"] } }
     };
     function optionDecision(action) {
         return setup.AIProtocol.validateDecision(decisionFixture({ action: action, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), optionCatalog);
@@ -433,6 +434,8 @@ async function main() {
         !optionDecision({ type: "place_item", item_id: "mug", target_inventory_id: "missing" }).ok &&
         !optionDecision({ type: "fill", item_id: "missing" }).ok &&
         !optionDecision({ type: "consume", item_id: "missing" }).ok &&
+        !optionDecision({ type: "use_item", item_id: "missing" }).ok &&
+        optionDecision({ type: "use_item", item_id: "memoryStone_01" }).ok &&
         optionDecision({ type: "give_item", target_id: "player", item_id: "mug" }).ok,
         "current action options should constrain item, target, destination, inventory, and amount parameters");
     assert(setup.AIProtocol.validateDecision(decisionFixture({

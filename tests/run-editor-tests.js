@@ -54,10 +54,13 @@ assert(html.includes("Characters") && html.includes("Abilities") && html.include
     html.includes("Items") && html.includes("Consumable") && html.includes("Fillable") &&
     html.includes("Location inventory") && html.includes("Items in this container") && html.includes("renderEmbeddedInventory") &&
     html.includes("Generic blocked transition") && html.includes("Lock ID") && html.includes("Key lock ID") &&
+    html.includes("Generic use interaction") && html.includes("Engine effect") && html.includes("Public action text") &&
     html.includes("Locked failure text") && html.includes("localStorage.setItem"),
     "editor should expose character, ability, item-type, global item-instance, and embedded inventory workflows");
 assert(!/[А-Яа-яЁё]/.test(html), "visible editor source introduced by this task should remain English-only");
-assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura") && core.KNOWN_ACTIONS.includes("lock") && core.KNOWN_ACTIONS.includes("unlock"), "editor should embed schema 2 and known actions");
+assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura") && core.KNOWN_ACTIONS.includes("lock") && core.KNOWN_ACTIONS.includes("unlock") &&
+    core.KNOWN_ITEM_EFFECTS.includes("report_memory_counts"),
+    "editor should embed schema 2, known actions, and the allowlisted generic item effects");
 assert(core.validateWorldDocument(validDocument()).length === 0, "valid schema 2 document should validate");
 const blockedExitDocument = validDocument();
 blockedExitDocument.locations.other = clone(blockedExitDocument.locations.room);
@@ -82,6 +85,19 @@ assert(core.validateWorldDocument(lockDocument).length === 0 &&
     core.exitRecord(lockDocument.locations.room.exits.other).lockId === "room_lock" &&
     core.exitRecord(lockDocument.locations.room.exits.other).locked === true,
     "editor should validate reciprocal passage locks and key-to-lock definitions");
+const useActionDocument = validDocument();
+useActionDocument.itemDefinitions.memoryStone = {
+    id: "memoryStone", name: "Memory Stone", description: "A smooth dark stone.", familyId: "memory_stone", tags: ["magical"],
+    consumable: false, equippable: false, fillable: false,
+    useAction: { actionLabel: "Squeeze in hand", effectId: "report_memory_counts",
+        publicText: "{actorName} squeezes the memory stone.",
+        feedbackText: "Short-term memory: {shortTermCount} {shortTermEntryWord}. Long-term memory: {longTermCount} {longTermEntryWord}." }
+};
+useActionDocument.items.memoryStone_01 = { id: "memoryStone_01", definitionId: "memoryStone", inventoryId: "inventory_room" };
+assert(core.validateWorldDocument(useActionDocument).length === 0,
+    "editor should validate an authored generic item-use action using an allowlisted deterministic effect");
+const badUseEffect = clone(useActionDocument); badUseEffect.itemDefinitions.memoryStone.useAction.effectId = "execute_code";
+assert(hasError(badUseEffect, "invalid use action"), "editor must reject unknown item effect IDs");
 const mismatchedLock = clone(lockDocument); mismatchedLock.locations.other.exits.room.locked = false;
 assert(hasError(mismatchedLock, "inconsistent reciprocal lock"), "reciprocal passage lock states must match");
 const badKeyLock = clone(lockDocument); badKeyLock.itemDefinitions.roomKey.keyLockId = "missing_lock";
@@ -102,12 +118,17 @@ const edited = validDocument();
 edited.characters.hero.playerDescription = "Edited public description.";
 edited.abilities.readAura.aiDescription = "Edited private instructions.";
 edited.itemDefinitions.emptyMug.fillAction.actionLabel = "Fill this mug";
+edited.itemDefinitions.emptyMug.description = "A plain wooden mug.";
+edited.itemDefinitions.emptyMug.useAction = { actionLabel: "Inspect memory", effectId: "report_memory_counts",
+    publicText: "{actorName} holds {itemName}.", feedbackText: "Short-term memory: {shortTermCount} {shortTermEntryWord}. Long-term memory: {longTermCount} {longTermEntryWord}." };
 edited.items.mug1.inventoryId = "inventory_room";
 const roundTrip = JSON.parse(core.serializeWorldDocument(edited));
 assert(roundTrip.characters.hero.playerDescription === "Edited public description.", "character edits should export");
 assert(roundTrip.abilities.readAura.aiDescription === "Edited private instructions.", "ability edits should export");
 assert(roundTrip.itemDefinitions.emptyMug.fillAction.actionLabel === "Fill this mug" &&
-    roundTrip.items.mug1.inventoryId === "inventory_room", "item edits should export");
+    roundTrip.itemDefinitions.emptyMug.description === "A plain wooden mug." &&
+    roundTrip.itemDefinitions.emptyMug.useAction.effectId === "report_memory_counts" &&
+    roundTrip.items.mug1.inventoryId === "inventory_room", "item edits including generic use effects should export");
 assert(roundTrip.futureTopLevel.retained && roundTrip.locations.room.futureLocationField === "keep" &&
     roundTrip.locations.room.sublocations.roomFloor.futureSublocationField === 42 &&
     roundTrip.characters.hero.futureCharacterField && roundTrip.characters.hero.initialMind.knownFacts[0].futureFact === 1 &&

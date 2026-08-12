@@ -56,6 +56,10 @@ delete legacy.inventories.inventory_maraCottageTable;
 delete legacy.inventories.inventory_maraCottageShelves;
 if (legacy.entities.street && legacy.entities.street.exits) delete legacy.entities.street.exits.villageEdge;
 
+// Simulate a save created before the Memory Stone authored instance existed at all.
+removeFromAllInventories(legacy, "memoryStone_01");
+delete legacy.entities.memoryStone_01;
+
 // Saved lives: authored knownFacts are stale, but memories/beliefs/relationships/continuation are valuable.
 legacy.entities.hoodedWoman.mind.knownFacts = [{ id: "old_mara_fact", text: "Old authored fact that must not survive." }];
 legacy.entities.hoodedWoman.mind.beliefs = [{ id: "traveler_keeps_word", text: "Traveler seems likely to keep promises.", confidence: "medium" }];
@@ -117,6 +121,10 @@ assert(world.schemaVersion === setup.Game.WORLD_SCHEMA_VERSION && world.authorin
     "migration should commit the current schema and authoring revision");
 assert(world.entities.villageEdge && world.entities.secludedCottage && world.entities.street.exits.villageEdge === "villageEdge",
     "fresh authored village edge and Mara cottage should appear in the migrated playthrough");
+assert(world.entities.memoryStone_01 && world.entities.memoryStone_01.definitionId === "memoryStone" &&
+    world.entities.memoryStone_01.containerId === "inventory_villageTemple" &&
+    world.inventories.inventory_villageTemple.itemIds.filter(function (id) { return id === "memoryStone_01"; }).length === 1,
+    "a newly authored stable Memory Stone ID absent from the old save should remain in its fresh authored temple placement");
 assert(world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.id === "memory_ai_41"; }) &&
     world.entities.hoodedWoman.mind.longTermMemories.some(function (memory) { return memory.id === "mara_old_memory"; }),
     "Mara's saved recent and long-term memories should survive");
@@ -158,6 +166,23 @@ assert(migrated.report.status === "success_with_warnings" && migrated.report.cha
     migrated.report.itemInstancesRemoved >= 1 && migrated.report.itemInstancesRepositioned >= 1 &&
     migrated.report.characterPositionFallbacks >= 1,
     "migration report should expose recoverable fallbacks and removals");
+
+// If the stable authored ID already exists in a compatible save, saved runtime placement wins.
+const savedStoneWorld = clone(current);
+savedStoneWorld.authoringRevision = "0000000000000000000000000000000000000000000000000000000000000000";
+place(savedStoneWorld, "memoryStone_01", "inventory_player");
+State.variables.world = savedStoneWorld;
+const migratedExistingStone = setup.SaveMigration.migrate();
+assert(migratedExistingStone.ok && migratedExistingStone.migrated,
+    "an authored-revision change should reconcile a save that already contains the Memory Stone");
+assert(State.variables.world.entities.memoryStone_01.containerId === "inventory_player" &&
+    State.variables.world.inventories.inventory_player.itemIds.filter(function (id) { return id === "memoryStone_01"; }).length === 1 &&
+    !State.variables.world.inventories.inventory_villageTemple.itemIds.includes("memoryStone_01"),
+    "saved Memory Stone placement should replace the fresh authored starting placement without duplication");
+const noSecondMigration = setup.SaveMigration.migrate();
+assert(noSecondMigration.ok && !noSecondMigration.migrated &&
+    Object.values(State.variables.world.entities).filter(function (entity) { return entity && entity.id === "memoryStone_01"; }).length === 1,
+    "repeated migration checks must remain idempotent for the stable Memory Stone instance");
 
 // Migration must be transactional: corrupt persistent memory cannot partially replace the active restored save.
 const broken = clone(current);

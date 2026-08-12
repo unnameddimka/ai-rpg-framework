@@ -18,6 +18,7 @@ const knownActions = new Set([
     "give_money", "place_item", "fill", "consume", "lock", "unlock", "read_aura"
 ]);
 const knownEnvironmentCapabilities = new Set(["ale_source"]);
+const knownItemEffects = new Set(["report_memory_counts"]);
 const controllers = new Set(["human", "dummy", "ai"]);
 const confidences = new Set(["low", "medium", "high"]);
 
@@ -230,6 +231,18 @@ function validateWorld(document) {
                 definition.consumeAction.resultType === "transform" &&
                 nonBlank(definition.consumeAction.resultDefinitionId),
             `Item definition ${id} has an invalid consumeAction.`);
+        }
+        if (definition.description !== undefined) {
+            requireCondition(typeof definition.description === "string",
+                `Item definition ${id} description must be text.`);
+        }
+        if (definition.useAction) {
+            requireCondition(nonBlank(definition.useAction.actionLabel) &&
+                nonBlank(definition.useAction.effectId) &&
+                knownItemEffects.has(definition.useAction.effectId) &&
+                nonBlank(definition.useAction.publicText) &&
+                nonBlank(definition.useAction.feedbackText),
+            `Item definition ${id} has an invalid useAction.`);
         }
     }
 

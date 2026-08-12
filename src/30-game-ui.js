@@ -214,10 +214,11 @@
         if (action.type === "give_item") return `Give ${item ? item.name : action.item_id} to ${target ? target.name : action.target_id}`;
         if (action.type === "give_money") return `Give ${action.amount} gold to ${target ? target.name : action.target_id}`;
         if (action.type === "place_item") return `Place ${item ? item.name : action.item_id} on ${inventory ? inventory.name : action.target_inventory_id}`;
-        if (action.type === "fill" || action.type === "consume") {
+        if (action.type === "fill" || action.type === "consume" || action.type === "use_item") {
             const options = view.available_actions[action.type] && view.available_actions[action.type].options && view.available_actions[action.type].options.items || [];
             const option = options.find(function (candidate) { return candidate.id === action.item_id; });
-            return option && option.action_label || `${action.type === "fill" ? "Fill" : "Consume"} ${item ? item.name : action.item_id}`;
+            const fallbackVerb = action.type === "fill" ? "Fill" : (action.type === "consume" ? "Consume" : "Use");
+            return option && option.action_label || `${fallbackVerb} ${item ? item.name : action.item_id}`;
         }
         const ability = view.self.abilities.find(function (candidate) { return candidate.actionType === action.type; });
         const record = view.available_actions[action.type];
@@ -235,7 +236,7 @@
         if (action.type === "give_item") return (options.item_ids || []).includes(action.item_id) && (options.target_ids || []).includes(action.target_id);
         if (action.type === "give_money") return (options.target_ids || []).includes(action.target_id) && Number.isFinite(Number(action.amount)) && Number(action.amount) > 0 && Number(action.amount) <= Number(options.maximum_amount || 0);
         if (action.type === "place_item") return (options.item_ids || []).includes(action.item_id) && (options.target_inventory_ids || []).includes(action.target_inventory_id);
-        if (action.type === "fill" || action.type === "consume") return (options.item_ids || []).includes(action.item_id);
+        if (action.type === "fill" || action.type === "consume" || action.type === "use_item") return (options.item_ids || []).includes(action.item_id);
         return isZeroInputAbilityAction(view.available_actions[action.type]);
     }
 
@@ -332,6 +333,7 @@
         }
         if (selected.type === "fill") setControlValue("action-fill-item", selected.item_id);
         if (selected.type === "consume") setControlValue("action-consume-item", selected.item_id);
+        if (selected.type === "use_item") setControlValue("action-use-item", selected.item_id);
     }
 
     function buildContextualActionGroups(view) {
@@ -375,7 +377,7 @@
             });
         });
 
-        ["fill", "consume"].forEach(function (actionType) {
+        ["fill", "consume", "use_item"].forEach(function (actionType) {
             const record = view.available_actions[actionType];
             (record && record.options.items || []).forEach(function (item) {
                 groups.here.push({ kind: "action", label: item.action_label || record.description, action: { type: actionType, item_id: item.id } });
@@ -1217,7 +1219,10 @@
                 <section class="framework-character-inventory">
                     <h3>Inventory</h3>
                     ${inventory.length
-                        ? `<ul>${inventory.map(function (item) { return `<li>${escapeHtml(item.name)}</li>`; }).join("")}</ul>`
+                        ? `<ul>${inventory.map(function (item) {
+                            const description = String(item.description || "").trim();
+                            return `<li><strong>${escapeHtml(item.name)}</strong>${description ? ` — ${escapeHtml(description)}` : ""}</li>`;
+                        }).join("")}</ul>`
                         : `<p>Empty</p>`}
                 </section>
                 <div id="framework-character-status" class="framework-status"></div>
@@ -1640,11 +1645,12 @@
         const placementInventories = view.accessible_inventories.filter(function (inventory) { return placementInventoryIds.includes(inventory.id); });
         const fillItems = view.available_actions.fill ? view.available_actions.fill.options.items : [];
         const consumableItems = view.available_actions.consume ? view.available_actions.consume.options.items : [];
+        const usableItems = view.available_actions.use_item ? view.available_actions.use_item.options.items : [];
         const unlockIds = view.available_actions.unlock ? view.available_actions.unlock.options.destination_ids : [];
         const lockIds = view.available_actions.lock ? view.available_actions.lock.options.destination_ids : [];
         const unlockDestinations = moveOptions.filter(function (destination) { return unlockIds.includes(destination.id); });
         const lockDestinations = moveOptions.filter(function (destination) { return lockIds.includes(destination.id); });
-        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume"]);
+        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume", "use_item"]);
         const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
             return !knownActionTypes.has(entry[0]) && isZeroInputAbilityAction(entry[1]);
         });
@@ -1674,7 +1680,8 @@
             radioField("give_money", "Give money", `<input id="action-money-amount" type="number" min="1" step="1" value="1"${disabledAttribute}><select id="action-money-target"${disabledAttribute}>${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, reachableTargets.length === 0),
             radioField("place_item", "Place item", `<select id="action-place-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-place-inventory"${disabledAttribute}>${optionMarkup(placementInventories, "No accessible surface")}</select>`, ownedItems.length === 0 || placementInventories.length === 0),
             radioField("fill", "Fill item", `<select id="action-fill-item"${disabledAttribute}>${itemActionOptionMarkup(fillItems, "No fillable item here")}</select>`, fillItems.length === 0),
-            radioField("consume", "Consume item", `<select id="action-consume-item"${disabledAttribute}>${itemActionOptionMarkup(consumableItems, "No consumable item")}</select>`, consumableItems.length === 0)
+            radioField("consume", "Consume item", `<select id="action-consume-item"${disabledAttribute}>${itemActionOptionMarkup(consumableItems, "No consumable item")}</select>`, consumableItems.length === 0),
+            radioField("use_item", "Use item", `<select id="action-use-item"${disabledAttribute}>${itemActionOptionMarkup(usableItems, "No usable item")}</select>`, usableItems.length === 0)
         ].concat(zeroInputExtras.map(function (entry) {
             return radioField(entry[0], entry[1].description || entry[0], "<p>No parameters.</p>", false);
         })).join("");
@@ -1738,6 +1745,7 @@
             if (type === "place_item") return { type: type, item_id: $("#action-place-item").val(), target_inventory_id: $("#action-place-inventory").val() };
             if (type === "fill") return { type: type, item_id: $("#action-fill-item").val() };
             if (type === "consume") return { type: type, item_id: $("#action-consume-item").val() };
+            if (type === "use_item") return { type: type, item_id: $("#action-use-item").val() };
             return { type: type };
         }
 

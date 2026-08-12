@@ -162,7 +162,7 @@ const contextualView = {
     self: {
         id: "player",
         name: "Traveler",
-        inventory: [{ id: "mug", name: "Empty mug" }],
+        inventory: [{ id: "mug", name: "Empty mug" }, { id: "memoryStone_01", name: "Memory Stone", description: "A smooth dark stone." }],
         abilities: [{ id: "readAura", name: "Read aura", playerDescription: "Sense auras.", actionType: "read_aura" }]
     },
     location: {
@@ -177,6 +177,7 @@ const contextualView = {
         take_item: { options: { item_ids: ["cabinetMug"] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
         drop_item: { options: { item_ids: ["mug"] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
         place_item: { options: { item_ids: ["mug"], target_inventory_ids: ["cabinet"] }, schema: { properties: { type: {}, item_id: {}, target_inventory_id: {} }, required: ["type", "item_id", "target_inventory_id"] } },
+        use_item: { description: "Use an owned item.", options: { item_ids: ["memoryStone_01"], items: [{ id: "memoryStone_01", name: "Memory Stone", action_label: "Squeeze in hand", effect_id: "report_memory_counts" }] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
         read_aura: {
             description: "Read nearby auras.",
             options: {},
@@ -189,11 +190,15 @@ const groups = gameUIModel.buildContextualActionGroups(contextualView);
 assert(groups.characters.length === 1 && groups.characters[0].label === "Talk to Bartender" &&
     groups.here.some(function (entry) { return entry.label === "Stand behind the bar"; }) &&
     groups.here.some(function (entry) { return entry.label === "Take Empty mug"; }) &&
+    groups.here.some(function (entry) { return entry.label === "Squeeze in hand" && entry.action.type === "use_item" && entry.action.item_id === "memoryStone_01"; }) &&
     groups.here.some(function (entry) { return entry.label === "Read aura"; }) &&
     groups.travel.length === 1 && groups.travel[0].label === "Go to Village Street",
     "contextual shortcuts should be grouped into Characters, Here, and Travel from the canonical view");
 assert(gameUIModel.actionAvailableInView({ type: "move", destination_id: "street" }, contextualView) &&
     !gameUIModel.actionAvailableInView({ type: "move", destination_id: "missing" }, contextualView) &&
+    gameUIModel.actionAvailableInView({ type: "use_item", item_id: "memoryStone_01" }, contextualView) &&
+    !gameUIModel.actionAvailableInView({ type: "use_item", item_id: "mug" }, contextualView) &&
+    gameUIModel.actionLabel({ type: "use_item", item_id: "memoryStone_01" }, contextualView) === "Squeeze in hand" &&
     gameUIModel.actionLabel({ type: "take_item", item_id: "cabinetMug" }, contextualView) === "Take Empty mug",
     "selected actions should be validated and labeled from the current canonical view");
 const conversationState = { interactionTargetId: "innkeeper", narrativeNoticeability: "hidden" };
@@ -208,6 +213,7 @@ gameUIModel.resizeNarrativeTextarea(fakeTextarea);
 assert(fakeTextarea.style.height === "72px" && fakeTextarea.style.overflowY === "auto",
     "auto-growing narrative input should size itself from content and allow overflow only beyond its visible height");
 assert(uiSource.includes("framework-contextual-actions") && uiSource.includes('title: "Characters"') &&
+    uiSource.includes('radioField("use_item", "Use item"') && uiSource.includes('item.description || ""') &&
     uiSource.includes('title: "Here"') && uiSource.includes('title: "Travel"') &&
     !uiSource.includes("setup.CharacterAPI.perform") &&
     !uiSource.includes("Use the narrative or formal-action controls below") &&
@@ -283,8 +289,8 @@ assert(uiSource.includes('id="action-submit"') && uiSource.includes('id="action-
     !uiSource.includes("Your turn &mdash;") && !uiSource.includes("Framework debug"),
     "turn UI should stay minimal, auto-grow narrative input, preserve conversation settings, and submit one shared action or Pass");
 assert(uiSource.includes('id="action-fill-item"') && uiSource.includes('id="action-consume-item"') &&
-    uiSource.includes('["fill", "consume"]') && !uiSource.includes("pour_ale"),
-    "human controls should derive fill and consume from item actions and expose no source-less pour action");
+    uiSource.includes('id="action-use-item"') && uiSource.includes('["fill", "consume", "use_item"]') && !uiSource.includes("pour_ale"),
+    "human controls should derive fill, consume, and generic use interactions from item actions and expose no source-less pour action");
 assert(!uiSource.includes('<button id="action-narrate"') && !uiSource.includes('<button id="action-give-money"') &&
     !uiSource.includes('<button id="action-move"'),
     "formal debug actions should no longer execute through independent buttons");

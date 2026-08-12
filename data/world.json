@@ -740,7 +740,7 @@
       "defaultControllerId": "ai",
       "abilityIds": [],
       "engineFacts": {
-        "aura": "A faint current of unrealized potential surrounds the traveller."
+        "aura": "Beneath the aura of an ordinary human, there is a faint second presence — something impossible to place, as though part of him exists beyond the boundaries of this world. It does not feel corrupt or hostile, only profoundly out of place."
       },
       "initialMind": {
         "knownFacts": [],
@@ -753,7 +753,7 @@
     "hoodedWoman": {
       "id": "hoodedWoman",
       "name": "Hooded woman",
-      "playerDescription": "A hooded woman watches the room from beneath the edge of her hood.",
+      "playerDescription": "A hooded woman watches from beneath the edge of her hood.",
       "interactionLabel": "Speak with the hooded woman",
       "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority. You know a great deal about alchemy and medicine, but your magical abilities are limited and you never had an academic magical education. You are quite beautiful, so people sometimes accuse you of cooperating with demons, but that is false. You live alone in a secluded cottage beyond the edge of the village, surrounded by forest. You grow herbs and mushrooms around the cottage and work there as a hedge witch, preparing medicines, remedies, simple alchemical mixtures, and potions for people who seek your help.",
       "locationId": "commonRoom",
@@ -810,7 +810,9 @@
       "initialControllerId": "ai",
       "defaultControllerId": "ai",
       "abilityIds": [],
-      "engineFacts": {},
+      "engineFacts": {
+        "aura": "His aura is entirely ordinary, but unusually steady — dense, warm, and settled, like a hearth that has burned in the same place for many years. There is little turbulence in it; what he feels tends to sink deep rather than flare brightly."
+      },
       "initialMind": {
         "knownFacts": [
           {
@@ -874,7 +876,9 @@
       "initialControllerId": "ai",
       "defaultControllerId": "ai",
       "abilityIds": [],
-      "engineFacts": {},
+      "engineFacts": {
+        "aura": "His aura is entirely human and firmly rooted in this world, yet it carries a faint residue of somewhere else — like the lingering scent of smoke on a coat long after the fire is gone. Whatever place once marked him is distant now, but the trace remains."
+      },
       "initialMind": {
         "knownFacts": [],
         "beliefs": [],
@@ -896,7 +900,9 @@
       "initialControllerId": "ai",
       "defaultControllerId": "ai",
       "abilityIds": [],
-      "engineFacts": {},
+      "engineFacts": {
+        "aura": "Her aura is wholly of this world, but unusually vivid and quick to change — warm currents shifting through it with every passing thought and emotion, like candlelight disturbed by a nearby breath. Nothing about it feels supernatural; she simply seems more intensely present than most people."
+      },
       "initialMind": {
         "knownFacts": [
           {
@@ -1075,6 +1081,26 @@
       "equippable": false,
       "fillable": false,
       "keyLockId": "lock_guest_room_4"
+    },
+    "memoryStone": {
+      "id": "memoryStone",
+      "name": "Memory Stone",
+      "description": "A smooth, dark stone veined with faint silvery threads. It feels slightly warmer than the air around it and fits comfortably in a closed hand.",
+      "familyId": "memory_stone",
+      "tags": [
+        "tool",
+        "memory",
+        "magical"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "useAction": {
+        "actionLabel": "Squeeze in hand",
+        "effectId": "report_memory_counts",
+        "publicText": "{actorName} squeezes the memory stone in one hand.",
+        "feedbackText": "The stone grows faintly warm in your hand. Short-term memory: {shortTermCount} {shortTermEntryWord}. Long-term memory: {longTermCount} {longTermEntryWord}."
+      }
     }
   },
   "items": {
@@ -1177,6 +1203,11 @@
       "id": "guestRoom4Key",
       "definitionId": "guestRoom4KeyType",
       "inventoryId": "inventory_innkeeper"
+    },
+    "memoryStone_01": {
+      "id": "memoryStone_01",
+      "definitionId": "memoryStone",
+      "inventoryId": "inventory_villageTemple"
     }
   }
 }

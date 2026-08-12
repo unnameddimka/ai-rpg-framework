@@ -82,6 +82,90 @@ assert(world.entities.upstairsCorridor && ["innkeeperRoom", "guestRoom1", "guest
     return world.entities[id] && world.entities[id].type === "location";
 }), "the upstairs corridor and five rooms should exist as authored locations");
 
+assert(world.itemDefinitions.memoryStone && world.entities.memoryStone_01 &&
+    world.entities.memoryStone_01.definitionId === "memoryStone" &&
+    world.entities.memoryStone_01.containerId === "inventory_villageTemple" &&
+    world.inventories.inventory_villageTemple.itemIds.includes("memoryStone_01"),
+    "one stable authored Memory Stone instance should start in the Village temple beside the sphere");
+assert(world.itemDefinitions.memoryStone.description && world.itemDefinitions.memoryStone.useAction &&
+    world.itemDefinitions.memoryStone.useAction.effectId === "report_memory_counts" &&
+    world.itemDefinitions.memoryStone.useAction.actionLabel === "Squeeze in hand",
+    "Memory Stone authoring should use a grounded description and the generic memory-count effect");
+assert(!setup.CharacterAPI.getView("player").available_actions.use_item,
+    "Memory Stone use should not be available before the actor owns the stone");
+perform("player", { type: "move", destination_id: "street" }, "memory-stone fixture walks to the village street");
+perform("player", { type: "move", destination_id: "villageTemple" }, "memory-stone fixture enters the temple");
+const templeViewBeforeStone = setup.CharacterAPI.getView("player");
+assert(templeViewBeforeStone.accessible_inventories.some(function (inventory) {
+    return inventory.id === "inventory_villageTemple" && inventory.items.some(function (item) {
+        return item.id === "memoryStone_01" && item.description && item.description.includes("silvery threads");
+    });
+}), "the canonical view should expose the authored Memory Stone and its grounded description in the temple");
+perform("player", { type: "take_item", item_id: "memoryStone_01" }, "player should take the Memory Stone");
+let memoryStoneActions = setup.CharacterAPI.getView("player").available_actions.use_item;
+assert(memoryStoneActions && memoryStoneActions.options.item_ids.includes("memoryStone_01") &&
+    memoryStoneActions.options.items.some(function (item) {
+        return item.id === "memoryStone_01" && item.action_label === "Squeeze in hand" && item.effect_id === "report_memory_counts";
+    }), "an owned Memory Stone should grant the generic use_item action through the canonical view");
+assertFails(setup.CharacterAPI.perform("innkeeper", { type: "use_item", item_id: "memoryStone_01" }),
+    "ACTION_NOT_AVAILABLE", "a character who does not own the Memory Stone must not be able to use it");
+world.entities.player.mind.recentMemories = [
+    { id: "stone_recent_1", summary: "First recent memory.", importance: 0.4, protected: false },
+    { id: "stone_recent_2", summary: "Second recent memory.", importance: 0.5, protected: false }
+];
+world.entities.player.mind.longTermMemories = [
+    { id: "stone_long_1", summary: "One long-term memory.", importance: 0.8, protected: true }
+];
+perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "Mara leaves the common room for the Memory Stone visibility fixture");
+perform("hoodedWoman", { type: "move", destination_id: "street" }, "Mara walks to the village street for the Memory Stone visibility fixture");
+perform("hoodedWoman", { type: "move", destination_id: "villageTemple" }, "Mara enters the temple for the Memory Stone visibility fixture");
+const maraInboxBeforeStone = world.entities.hoodedWoman.mind.pendingObservations.length;
+const playerPendingBeforeStone = world.entities.player.mind.pendingObservations.length;
+const memoryReport = perform("player", { type: "use_item", item_id: "memoryStone_01" },
+    "HumanController actor should squeeze the Memory Stone through the normal formal-action path");
+assert(memoryReport.events.length === 1 && memoryReport.events[0].type === "item_used" &&
+    memoryReport.events[0].text === "Traveler squeezes the memory stone in one hand." &&
+    !memoryReport.events[0].text.includes("Short-term") && !memoryReport.events[0].text.includes("Long-term"),
+    "Memory Stone use should publicly expose only the physical squeeze action");
+assert(memoryReport.feedback.length === 1 && memoryReport.feedback[0].recipientId === "player" &&
+    memoryReport.feedback[0].code === "MEMORY_COUNTS_REPORTED" &&
+    memoryReport.feedback[0].text === "The stone grows faintly warm in your hand. Short-term memory: 2 entries. Long-term memory: 1 entry." &&
+    !Object.prototype.hasOwnProperty.call(memoryReport.feedback[0].data, "shortTermCount") &&
+    !Object.prototype.hasOwnProperty.call(memoryReport.feedback[0].data, "longTermCount"),
+    "memory counts should be natural private prose without redundant debug-style count fields");
+assert(world.entities.player.mind.recentMemories.length === 2 && world.entities.player.mind.longTermMemories.length === 1,
+    "report_memory_counts must not mutate the actor's existing recent or long-term memories");
+assert(world.entities.player.mind.pendingObservations.length === playerPendingBeforeStone + 1 &&
+    world.entities.player.mind.pendingObservations.some(function (item) {
+        return item.kind === "action_feedback" && item.code === "MEMORY_COUNTS_REPORTED" &&
+            item.text.includes("Short-term memory: 2 entries") && item.text.includes("Long-term memory: 1 entry");
+    }), "the Human-controlled actor should receive the same private grounded observation in its character inbox");
+const maraStoneObservations = world.entities.hoodedWoman.mind.pendingObservations.slice(maraInboxBeforeStone);
+assert(maraStoneObservations.some(function (item) {
+    return item.kind === "event" && item.text === "Traveler squeezes the memory stone in one hand.";
+}) && !maraStoneObservations.some(function (item) {
+    return String(item.text || "").includes("Short-term memory") || String(item.text || "").includes("Long-term memory");
+}), "a nearby bystander should perceive the physical squeeze but never receive the private memory counts");
+perform("player", { type: "give_item", target_id: "hoodedWoman", item_id: "memoryStone_01" },
+    "player should hand the Memory Stone to the AI-controlled Mara");
+world.entities.hoodedWoman.mind.recentMemories = [
+    { id: "mara_stone_recent", summary: "A recent memory.", importance: 0.5, protected: false }
+];
+world.entities.hoodedWoman.mind.longTermMemories = [
+    { id: "mara_stone_long_1", summary: "Long memory one.", importance: 0.7, protected: false },
+    { id: "mara_stone_long_2", summary: "Long memory two.", importance: 0.7, protected: false },
+    { id: "mara_stone_long_3", summary: "Long memory three.", importance: 0.7, protected: false }
+];
+const maraMemoryReport = perform("hoodedWoman", { type: "use_item", item_id: "memoryStone_01" },
+    "AIController actor should use the same Memory Stone action contract");
+assert(maraMemoryReport.feedback[0].recipientId === "hoodedWoman" &&
+    maraMemoryReport.feedback[0].text.includes("Short-term memory: 1 entry") &&
+    maraMemoryReport.feedback[0].text.includes("Long-term memory: 3 entries"),
+    "AIController should receive the same controller-agnostic private memory-count feedback");
+
+setup.Game.resetWorld();
+world = setup.Game.getWorld();
+
 perform("player", { type: "move", destination_id: "commonRoom" }, "blocked-transition fixture enters common room");
 perform("player", { type: "move", destination_id: "upstairsCorridor" }, "blocked-transition fixture climbs upstairs");
 let upstairsView = setup.CharacterAPI.getView("player");
