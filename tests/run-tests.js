@@ -40,6 +40,9 @@ function perform(actorId, action, message) {
 
 load("src/generated/world-data.js");
 load("src/10-game-api.js");
+load("src/11-save-migration.js");
+load("src/12-character-context.js");
+load("src/13-character-memory.js");
 load("src/20-controllers.js");
 
 assertOk(setup.Game.bootstrap(), "bootstrap should produce a valid world");
@@ -85,6 +88,45 @@ assert(world.entities.underStairsNook && world.entities.underStairsNook.location
 assert(world.entities.upstairsCorridor && ["innkeeperRoom", "guestRoom1", "guestRoom2", "guestRoom3", "guestRoom4"].every(function (id) {
     return world.entities[id] && world.entities[id].type === "location";
 }), "the upstairs corridor and five rooms should exist as authored locations");
+
+assert(world.itemDefinitions.arcaneKnowledgeSlab && world.entities.arcaneKnowledgeSlab_01 &&
+    world.entities.arcaneKnowledgeSlab_01.definitionId === "arcaneKnowledgeSlab" &&
+    world.entities.arcaneKnowledgeSlab_01.containerId === "inventory_maraCottageTable" &&
+    world.inventories.inventory_maraCottageTable.itemIds.includes("arcaneKnowledgeSlab_01"),
+    "one stable Slab of Full Arcane Knowledge should be authored on Mara's work table");
+assert(world.itemDefinitions.arcaneKnowledgeSlab.useAction &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.effectId === "narrative_feedback" &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.actionLabel === "Consult slab" &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.aiInstructions.includes("Choose what to investigate") &&
+    !Object.prototype.hasOwnProperty.call(world.entities.arcaneKnowledgeSlab_01, "migrationObservation"),
+    "the slab should expose deep narrative-only consultation guidance without story-specific migration metadata");
+perform("player", { type: "move", destination_id: "street" }, "arcane-slab fixture walks to the village street");
+perform("player", { type: "move", destination_id: "villageEdge" }, "arcane-slab fixture walks to the village edge");
+perform("player", { type: "move", destination_id: "secludedCottage" }, "arcane-slab fixture enters Mara's cottage garden");
+perform("player", { type: "move_within_location", destination_id: "maraCottageFloor" }, "arcane-slab fixture steps inside Mara's cottage");
+perform("player", { type: "move_within_location", destination_id: "maraCottageTable" }, "arcane-slab fixture sits at Mara's work table");
+const slabTableView = setup.CharacterAPI.getView("player");
+assert(slabTableView.accessible_inventories.some(function (inventory) {
+    return inventory.id === "inventory_maraCottageTable" && inventory.items.some(function (item) {
+        return item.id === "arcaneKnowledgeSlab_01" && item.description.includes("library too large");
+    });
+}), "the slab should be visible as a grounded item on Mara's accessible work table");
+perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }, "arcane-slab fixture takes the slab");
+const slabUseView = setup.CharacterAPI.getView("player").available_actions.use_item;
+assert(slabUseView && slabUseView.options.items.some(function (item) {
+    return item.id === "arcaneKnowledgeSlab_01" && item.action_label === "Consult slab" &&
+        item.effect_id === "narrative_feedback" && item.instructions.includes("repeated study");
+}), "owned slab should expose its narrative consultation guidance through canonical use_item options");
+const slabUseResult = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01" },
+    "arcane-slab fixture consults the slab through the ordinary item-use path");
+assert(slabUseResult.events.length === 1 && slabUseResult.events[0].type === "item_used" &&
+    slabUseResult.feedback.length === 1 && slabUseResult.feedback[0].code === "ITEM_NARRATIVE_FEEDBACK" &&
+    slabUseResult.feedback[0].text.includes("searchable and cross-referenced archive") &&
+    world.entities.arcaneKnowledgeSlab_01.definitionId === "arcaneKnowledgeSlab",
+    "consulting the slab should emit grounded narrative feedback without transforming the item or creating a new mechanical subsystem");
+
+setup.Game.resetWorld();
+world = setup.Game.getWorld();
 
 assert(world.itemDefinitions.memoryStone && world.entities.memoryStone_01 &&
     world.entities.memoryStone_01.definitionId === "memoryStone" &&

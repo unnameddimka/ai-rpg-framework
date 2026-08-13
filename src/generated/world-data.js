@@ -1192,6 +1192,28 @@
         "publicText": "{actorName} squeezes the memory stone in one hand.",
         "feedbackText": "The stone grows faintly warm in your hand. Short-term memory: {shortTermCount} {shortTermEntryWord}. Long-term memory: {longTermCount} {longTermEntryWord}."
       }
+    },
+    "arcaneKnowledgeSlab": {
+      "id": "arcaneKnowledgeSlab",
+      "name": "Slab of Full Arcane Knowledge",
+      "description": "A thin, dark slab with a perfectly smooth face and no visible writing, hinge, clasp, or seam. When touched with intent, pale symbols and diagrams can appear across its surface with unnatural clarity. It feels less like a book than an entrance into a library too large to fit inside any building. Its archive covers magical theory, practice, history, creatures, artifacts, rituals, alchemy, auras, souls, competing schools, and countless cross-referenced subjects, but it is an encyclopedia rather than an oracle: it does not reveal current hidden facts or the future, and access to knowledge does not grant instant mastery.",
+      "familyId": "arcane_knowledge_slab",
+      "tags": [
+        "magical",
+        "knowledge",
+        "artifact",
+        "tool"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "useAction": {
+        "actionLabel": "Consult slab",
+        "effectId": "narrative_feedback",
+        "publicText": "{actorName} touches the surface of the arcane knowledge slab and pale symbols awaken across it.",
+        "feedbackText": "The slab opens into a vast searchable and cross-referenced archive of arcane knowledge. You may search a question or subject, browse related entries, compare competing theories, follow references, or spend extended time studying. It provides information rather than mastery, and it is not an oracle for current hidden events or the future.",
+        "aiInstructions": "Choose what to investigate from the character's own curiosity, memories, questions, and circumstances. The archive is deep enough for repeated study over hours or days; entries can lead to prerequisites, related subjects, practical methods, historical disputes, and competing theories. Do not treat consulting it as instant mastery or as access to current hidden facts or the future."
+      }
     }
   },
   "items": {
@@ -1299,8 +1321,13 @@
       "id": "memoryStone_01",
       "definitionId": "memoryStone",
       "inventoryId": "inventory_villageTemple"
+    },
+    "arcaneKnowledgeSlab_01": {
+      "id": "arcaneKnowledgeSlab_01",
+      "definitionId": "arcaneKnowledgeSlab",
+      "inventoryId": "inventory_maraCottageTable"
     }
   },
-  "authoringRevision": "9c275b2eed502c91a73c55fb0215ad65d9d36e82366dc9d640e931a3b623e1c2"
+  "authoringRevision": "38f1ec4c31b47dc18970781fe578b59c0fee9e22fe34927761c7654f5d5cff45"
 };
 }());

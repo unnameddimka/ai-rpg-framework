@@ -1289,6 +1289,11 @@
             const defaultLabel = model.id === aiSettings.defaultNarratorModelId ? " (narrator default)" : "";
             return `<option value="${escapeHtml(model.id)}"${selected}>${escapeHtml(model.name + defaultLabel)}</option>`;
         }).join("");
+        const utilityModelOptions = aiSettings.models.map(function (model) {
+            const selected = model.id === aiSettings.selectedUtilityModelId ? " selected" : "";
+            const defaultLabel = model.id === aiSettings.defaultUtilityModelId ? " (utility default)" : "";
+            return `<option value="${escapeHtml(model.id)}"${selected}>${escapeHtml(model.name + defaultLabel)}</option>`;
+        }).join("");
         const narratorEnabled = isNarratorEnabled();
         const queueText = aiQueue.head
             ? `Next recipient: ${escapeHtml(aiQueue.head.recipientName)}<br>` +
@@ -1331,6 +1336,10 @@
                     <select id="openrouter-model-select"${aiBusy ? " disabled" : ""}>${modelOptions}</select>
                 </label><br>
                 <span class="framework-model-id framework-character-model-id">${escapeHtml(aiSettings.selectedModelId)}</span><br>
+                <label>Utility model
+                    <select id="openrouter-utility-model-select"${aiBusy ? " disabled" : ""}>${utilityModelOptions}</select>
+                </label><br>
+                <span class="framework-model-id framework-utility-model-id">${escapeHtml(aiSettings.selectedUtilityModelId)}</span><br>
                 <label>Narrator model
                     <select id="openrouter-narrator-model-select"${aiBusy ? " disabled" : ""}>${narratorModelOptions}</select>
                 </label><br>
@@ -1447,6 +1456,16 @@
             }
             $("#ai-settings-status").text(result.warning || `Model selected: ${result.model.name}.`);
             $(".framework-character-model-id").text(result.model.id);
+        });
+
+        $("#openrouter-utility-model-select").on("change", function () {
+            const result = setup.AIRuntimeSettings.selectUtilityModel($(this).val());
+            if (!result.ok) {
+                $("#ai-settings-status").text(result.error.message);
+                $(this).val(setup.AIRuntimeSettings.getSelectedUtilityModelId());
+                return;
+            }
+            renderSidebar();
         });
 
         $("#openrouter-narrator-model-select").on("change", function () {

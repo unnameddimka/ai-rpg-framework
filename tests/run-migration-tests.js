@@ -28,6 +28,9 @@ function place(world, itemId, inventoryId) {
 
 load("src/generated/world-data.js");
 load("src/10-game-api.js");
+load("src/11-save-migration.js");
+load("src/12-character-context.js");
+load("src/13-character-memory.js");
 
 assert(typeof setup.GeneratedWorldData.authoringRevision === "string" && setup.GeneratedWorldData.authoringRevision.length === 64,
     "generated world data should carry a deterministic authoring revision");
@@ -66,13 +69,15 @@ legacy.entities.hoodedWoman.mind.beliefs = [{ id: "traveler_keeps_word", text: "
 legacy.entities.hoodedWoman.mind.relationships = [{ targetCharacterId: "player", summary: "I cautiously trust the Traveler after our conversation." }];
 legacy.entities.hoodedWoman.mind.recentMemories = [{ id: "memory_ai_41", summary: "Traveler offered me a secluded cottage and left to build it.", importance: 0.9, protected: false }];
 legacy.entities.hoodedWoman.mind.longTermMemories = [{ id: "mara_old_memory", summary: "I have long made remedies for villagers who prefer discretion.", importance: 0.7, protected: true }];
-legacy.entities.hoodedWoman.mind.pendingObservations = [{ id: 777, kind: "event", text: "Transient observation" }];
+legacy.entities.hoodedWoman.mind.pendingObservations = [{ id: 777, kind: "external_story", text: "A thin dark slab now rests on your work table.", data: { itemId: "arcaneKnowledgeSlab_01" } }];
 legacy.ai.continuations.hoodedWoman = "Wait for the Traveler to show me where the promised cottage stands.";
 legacy.entities.hoodedWoman.wallet = 19;
 legacy.control.assignments.hoodedWoman = "human";
 legacy.control.assignments.player = "ai";
 legacy.ai.turnQueue = [{ characterId: "innkeeper", reason: "old transient queue" }];
-legacy.events = [{ id: 99, type: "old_event", recipients: [], pendingFor: [], processedBy: [] }];
+legacy.events = [{ id: 99, type: "old_event", actorId: "player", recipients: ["hoodedWoman"], pendingFor: ["hoodedWoman"], processedBy: [] }];
+legacy.nextEventId = 100;
+legacy.nextObservationId = 778;
 
 // Dynamic passage lock state is runtime state and must survive fresh-world migration.
 legacy.entities.upstairsCorridor.exits.guestRoom2.locked = false;
@@ -128,6 +133,9 @@ assert(world.schemaVersion === setup.Game.WORLD_SCHEMA_VERSION && world.authorin
     "migration should commit the current schema and authoring revision");
 assert(world.entities.villageEdge && world.entities.secludedCottage && world.entities.street.exits.villageEdge === "villageEdge",
     "fresh authored village edge and Mara cottage should appear in the migrated playthrough");
+assert(world.entities.arcaneKnowledgeSlab_01 && world.entities.arcaneKnowledgeSlab_01.definitionId === "arcaneKnowledgeSlab" &&
+    world.entities.arcaneKnowledgeSlab_01.containerId === "inventory_maraCottageTable",
+    "a newly authored arcane slab absent from the old save should appear on Mara's current authored work table");
 assert(world.entities.memoryStone_01 && world.entities.memoryStone_01.definitionId === "memoryStone" &&
     world.entities.memoryStone_01.containerId === "inventory_villageTemple" &&
     world.inventories.inventory_villageTemple.itemIds.filter(function (id) { return id === "memoryStone_01"; }).length === 1,
@@ -146,8 +154,14 @@ assert(world.ai.continuations.hoodedWoman === legacy.ai.continuations.hoodedWoma
     "Mara's model-authored continuation should survive migration unchanged");
 assert(world.entities.hoodedWoman.wallet === 19 && world.control.assignments.hoodedWoman === "human" && world.control.assignments.player === "ai",
     "valid saved wallet and HumanController assignment should survive");
-assert(world.entities.hoodedWoman.mind.pendingObservations.length === 0 && world.ai.turnQueue.length === 0 && world.events.length === 0,
-    "transient observations, scheduler queue, and event execution journal should be discarded");
+assert(world.entities.hoodedWoman.mind.pendingObservations.some(function (observation) {
+        return observation.id === 777 && observation.kind === "external_story" && observation.data.itemId === "arcaneKnowledgeSlab_01";
+    }) && world.events.some(function (event) { return event.id === 99; }),
+    "compatible runtime observations and event journal state should survive fresh-world migration");
+assert(!world.ai.turnQueue.some(function (entry) { return entry.characterId === "hoodedWoman"; }),
+    "a restored pending observation must not enqueue a character currently controlled by HumanController");
+assert(world.nextObservationId >= 778 && world.nextEventId >= 100,
+    "migration should preserve/reconstruct runtime observation and event counters beyond injected IDs");
 assert(world.entities.captainPrice.mind.knownFacts.some(function (fact) { return fact.id === "price_lodging"; }) &&
     world.entities.captainPrice.mind.recentMemories.some(function (memory) { return memory.id === "price_memory"; }),
     "Price should receive the current authored lodging fact while keeping what he actually remembered");
@@ -198,6 +212,53 @@ const noSecondMigration = setup.SaveMigration.migrate();
 assert(noSecondMigration.ok && !noSecondMigration.migrated &&
     Object.values(State.variables.world.entities).filter(function (entity) { return entity && entity.id === "memoryStone_01"; }).length === 1,
     "repeated migration checks must remain idempotent for the stable Memory Stone instance");
+
+// The same externally patched observation must also become eligible when no authored migration is
+// required (for example, editing a save produced by the current build and loading it again).
+const currentRevisionInjectedWorld = clone(current);
+currentRevisionInjectedWorld.entities.hoodedWoman.mind.pendingObservations = [{
+    id: 4001,
+    kind: "external_story",
+    actorId: null,
+    targetId: "hoodedWoman",
+    text: "A thin dark slab now rests on your work table.",
+    data: { itemId: "arcaneKnowledgeSlab_01" }
+}];
+currentRevisionInjectedWorld.ai.turnQueue = [];
+currentRevisionInjectedWorld.nextObservationId = 4002;
+State.variables.world = currentRevisionInjectedWorld;
+const currentRevisionBootstrap = setup.Game.bootstrap();
+assert(currentRevisionBootstrap.ok && !currentRevisionBootstrap.migrationRequired &&
+    setup.AITurnQueue.getStatus().entries.some(function (entry) { return entry.characterId === "hoodedWoman"; }),
+    "bootstrap should restore missing AI queue eligibility from current-revision saved pending observations");
+assert(State.variables.world.entities.hoodedWoman.mind.pendingObservations[0].id === 4001 &&
+    State.variables.world.nextObservationId === 4002,
+    "current-revision bootstrap should preserve externally injected observation content and counters unchanged");
+
+// A well-formed externally patched runtime observation must survive authored revision migration and
+// make an AI-controlled character eligible even when the save did not manually patch turnQueue.
+const injectedObservationWorld = clone(current);
+injectedObservationWorld.authoringRevision = "2222222222222222222222222222222222222222222222222222222222222222";
+injectedObservationWorld.entities.hoodedWoman.mind.pendingObservations = [{
+    id: 5001,
+    kind: "external_story",
+    actorId: null,
+    targetId: "hoodedWoman",
+    text: "A thin dark slab now rests on your work table.",
+    data: { itemId: "arcaneKnowledgeSlab_01", locationId: "secludedCottage" }
+}];
+injectedObservationWorld.ai.turnQueue = [];
+injectedObservationWorld.nextObservationId = 5002;
+State.variables.world = injectedObservationWorld;
+const migratedInjectedObservation = setup.SaveMigration.migrate();
+assert(migratedInjectedObservation.ok && migratedInjectedObservation.migrated,
+    "externally patched runtime observation save should migrate normally");
+assert(State.variables.world.entities.hoodedWoman.mind.pendingObservations.some(function (observation) {
+        return observation.id === 5001 && observation.kind === "external_story";
+    }) && setup.AITurnQueue.getStatus().entries.some(function (entry) { return entry.characterId === "hoodedWoman"; }),
+    "surviving injected observation should make the AI-controlled recipient normally scheduler-eligible");
+assert(State.variables.world.nextObservationId >= 5002,
+    "observation counter should remain beyond an externally injected observation ID");
 
 // Saved locked state must also override a newer authored unlocked default for the same stable lock.
 const authoredGuestRoom3Hall = setup.GeneratedWorldData.locations.upstairsCorridor.exits.guestRoom3;

@@ -57,6 +57,7 @@
             purpose: "memory-consolidation",
             stage: "memory-consolidation",
             messages: messages,
+            requestOptions: setup.AIRequestProfiles.resolve("memory-consolidation", { actorId: characterId }),
             client: client || setup.OpenRouterClient,
             run: async function (policyClient) {
                 const protocolResult = await setup.AIProtocol.requestValidated(

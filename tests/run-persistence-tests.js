@@ -31,6 +31,9 @@ function saveObjectFromVariables(variables) {
 
 load("src/generated/world-data.js");
 load("src/10-game-api.js");
+load("src/11-save-migration.js");
+load("src/12-character-context.js");
+load("src/13-character-memory.js");
 load("src/09-persistence.js");
 
 assert(saveHandlers.length === 1, "persistence layer should register exactly one SugarCube onSave synchronization hook");

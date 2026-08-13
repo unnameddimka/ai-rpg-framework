@@ -39,6 +39,7 @@ rejects(function (doc) { doc.itemDefinitions.mugOfAle.consumeAction.resultDefini
 rejects(function (doc) { doc.itemDefinitions.emptyMug.fillAction.resultDefinitionId = "missing"; }, "references missing result definition");
 rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.effectId = "execute_arbitrary_code"; }, "invalid useAction");
 rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.feedbackText = ""; }, "invalid useAction");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.aiInstructions = ""; }, "aiInstructions");
 rejects(function (doc) { doc.itemDefinitions.memoryStone.description = 42; }, "description must be text");
 rejects(function (doc) { doc.locations.commonRoom.timelapseActions[0].effectId = "execute_arbitrary_code"; }, "references unknown effect");
 rejects(function (doc) { doc.locations.commonRoom.timelapseActions[0].effectParams.destinationInventoryId = "inventory_missing"; }, "references missing destination inventory");
@@ -67,6 +68,7 @@ function rejectsModelList(mutator, expected) {
 }
 rejectsModelList(function (doc) { doc.defaultModelId = "missing/model"; }, "not present in models");
 rejectsModelList(function (doc) { doc.defaultNarratorModelId = "missing/narrator"; }, "defaultNarratorModelId");
+rejectsModelList(function (doc) { doc.defaultUtilityModelId = "missing/utility"; }, "defaultUtilityModelId");
 rejectsModelList(function (doc) { doc.models.push(clone(doc.models[0])); }, "Duplicate model ID");
 rejectsModelList(function (doc) { doc.models[0].name = ""; }, "name must be a non-empty string");
 console.log("All world and model-list generator tests passed.");

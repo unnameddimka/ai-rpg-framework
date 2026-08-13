@@ -368,16 +368,13 @@
     }
 
     function narratorTransport(stage, modelId) {
-        const maxTokens = stage === "location" ? STATIC_MAX_TOKENS : DYNAMIC_MAX_TOKENS;
+        const profileName = stage === "location" ? "presentation-location" : "presentation-tick";
         return {
             enforceRequestTiming: true,
             chat: function (messages) {
-                return setup.OpenRouterClient.chatWithOptions(messages, {
-                    modelId: modelId,
-                    maxTokens: maxTokens,
-                    reasoningMaxTokens: 0,
-                    temperature: NARRATOR_TEMPERATURE
-                });
+                const options = setup.AIRequestProfiles.resolve(profileName, { actorId: null });
+                options.modelId = modelId;
+                return setup.OpenRouterClient.chatWithOptions(messages, options);
             }
         };
     }

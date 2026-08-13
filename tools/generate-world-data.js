@@ -18,7 +18,7 @@ const knownActions = new Set([
     "give_money", "place_item", "fill", "consume", "lock", "unlock", "read_aura", "sleep"
 ]);
 const knownEnvironmentCapabilities = new Set(["ale_source"]);
-const knownItemEffects = new Set(["report_memory_counts"]);
+const knownItemEffects = new Set(["report_memory_counts", "narrative_feedback"]);
 const knownTimelapseEffects = new Set(["collect_mugs_to_storage"]);
 const controllers = new Set(["human", "dummy", "ai"]);
 const confidences = new Set(["low", "medium", "high"]);
@@ -258,6 +258,10 @@ function validateWorld(document) {
                 nonBlank(definition.useAction.publicText) &&
                 nonBlank(definition.useAction.feedbackText),
             `Item definition ${id} has an invalid useAction.`);
+            if (definition.useAction.aiInstructions !== undefined) {
+                requireCondition(typeof definition.useAction.aiInstructions === "string" && nonBlank(definition.useAction.aiInstructions),
+                    `Item definition ${id} useAction.aiInstructions must be non-empty text when present.`);
+            }
         }
     }
 

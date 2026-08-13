@@ -4,8 +4,6 @@
     const LEGACY_WORLD_VERSION = 6;
     const WORLD_SCHEMA_VERSION = 8;
     const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, WORLD_SCHEMA_VERSION]);
-    let migrationInFlight = false;
-    let lastMigrationReport = null;
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
     const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden"]);
@@ -13,6 +11,15 @@
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value));
+    }
+
+    function createInferenceSessionId() {
+        try {
+            if (typeof crypto !== "undefined" && crypto && typeof crypto.randomUUID === "function") {
+                return `ai-rpg-${crypto.randomUUID()}`;
+            }
+        } catch (error) { /* Fall through to a non-secret local identifier. */ }
+        return `ai-rpg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
     }
 
     function ok(extra) {
@@ -136,7 +143,7 @@
             nextMemoryId: 1,
             nextGeneratedItemId: 1,
             nextIntentId: 1,
-            ai: { turnQueue: [], continuations: {} },
+            ai: { turnQueue: [], continuations: {}, inferenceSessionId: createInferenceSessionId() },
 
             debug: {
                 lastActionResult: null,
@@ -213,6 +220,19 @@
                 characterId: characterId,
                 reason: typeof entry === "object" && typeof entry.reason === "string" ? entry.reason : "observation"
             };
+        });
+        return world.ai.turnQueue;
+    }
+
+    function hydrateAIQueueFromPendingObservations(world) {
+        repairAIQueue(world);
+        const queued = new Set(world.ai.turnQueue.map(function (entry) { return entry.characterId; }));
+        getCharacters(world).forEach(function (character) {
+            if (world.control.assignments[character.id] !== "ai" ||
+                    !character.mind || !Array.isArray(character.mind.pendingObservations) ||
+                    character.mind.pendingObservations.length === 0 || queued.has(character.id)) return;
+            world.ai.turnQueue.push({ characterId: character.id, reason: "restored_observation" });
+            queued.add(character.id);
         });
         return world.ai.turnQueue;
     }
@@ -811,317 +831,6 @@
         return typeof revision === "string" ? revision : "";
     }
 
-    function persistedSchemaVersion(world) {
-        if (!world || typeof world !== "object") return null;
-        if (Number.isInteger(world.schemaVersion)) return world.schemaVersion;
-        if (world.version === LEGACY_WORLD_VERSION) return LEGACY_WORLD_VERSION;
-        return null;
-    }
-
-    function getMigrationStatus(world) {
-        const currentRevision = currentAuthoringRevision();
-        if (!world) {
-            return {
-                required: false,
-                supported: true,
-                fresh: true,
-                fromSchemaVersion: null,
-                toSchemaVersion: WORLD_SCHEMA_VERSION,
-                fromAuthoringRevision: null,
-                toAuthoringRevision: currentRevision
-            };
-        }
-        const fromSchemaVersion = persistedSchemaVersion(world);
-        const fromAuthoringRevision = typeof world.authoringRevision === "string" ? world.authoringRevision : null;
-        const supported = SUPPORTED_MIGRATION_SCHEMA_VERSIONS.has(fromSchemaVersion) && fromSchemaVersion <= WORLD_SCHEMA_VERSION;
-        return {
-            required: Boolean(supported && (fromSchemaVersion !== WORLD_SCHEMA_VERSION || fromAuthoringRevision !== currentRevision)),
-            supported: supported,
-            fresh: false,
-            fromSchemaVersion: fromSchemaVersion,
-            toSchemaVersion: WORLD_SCHEMA_VERSION,
-            fromAuthoringRevision: fromAuthoringRevision,
-            toAuthoringRevision: currentRevision
-        };
-    }
-
-    function migrationFailure(status, message) {
-        return fail("SAVE_MIGRATION_UNSUPPORTED", message || "This save uses an unsupported world schema and cannot be migrated automatically.", {
-            migration: clone(status)
-        });
-    }
-
-    function migrationArray(savedCharacter, partition) {
-        if (!savedCharacter || !savedCharacter.mind || !Array.isArray(savedCharacter.mind[partition])) {
-            throw new Error(`Character ${savedCharacter && savedCharacter.id || "unknown"} has invalid saved mind.${partition}.`);
-        }
-        return clone(savedCharacter.mind[partition]);
-    }
-
-    function candidateInventoryForSavedContainer(savedWorld, candidate, savedContainerId) {
-        if (savedContainerId && candidate.inventories[savedContainerId]) return savedContainerId;
-        const savedInventory = savedContainerId && savedWorld.inventories && savedWorld.inventories[savedContainerId];
-        const ownerId = savedInventory && savedInventory.ownerId;
-        if (!ownerId) return null;
-        const candidateOwner = candidate.entities[ownerId];
-        if (candidateOwner) {
-            const candidateInventoryId = candidateOwner.inventoryId;
-            if (candidateInventoryId && candidate.inventories[candidateInventoryId]) return candidateInventoryId;
-        }
-        const savedOwner = savedWorld.entities && savedWorld.entities[ownerId];
-        if (savedOwner && savedOwner.type === "sublocation" && savedOwner.locationId) {
-            const candidateLocation = getLocation(savedOwner.locationId, candidate);
-            if (candidateLocation && candidate.inventories[candidateLocation.inventoryId]) return candidateLocation.inventoryId;
-        }
-        return null;
-    }
-
-    function removeItemFromCandidate(candidate, itemId) {
-        Object.values(candidate.inventories).forEach(function (inventory) {
-            inventory.itemIds = inventory.itemIds.filter(function (candidateId) { return candidateId !== itemId; });
-        });
-        if (candidate.entities[itemId] && candidate.entities[itemId].type === "item") {
-            delete candidate.entities[itemId];
-        }
-    }
-
-    function restoreSavedPassageLocks(candidate, savedWorld, report) {
-        const savedStates = new Map();
-        const conflictingLockIds = new Set();
-
-        Object.values(savedWorld.entities || {}).forEach(function (entity) {
-            if (!entity || entity.type !== "location") return;
-            locationExitEntries(entity).forEach(function (transition) {
-                if (!transition.lockId) return;
-                if (!savedStates.has(transition.lockId)) {
-                    savedStates.set(transition.lockId, transition.locked === true);
-                    return;
-                }
-                if (savedStates.get(transition.lockId) !== (transition.locked === true)) {
-                    conflictingLockIds.add(transition.lockId);
-                }
-            });
-        });
-
-        conflictingLockIds.forEach(function (lockId) {
-            savedStates.delete(lockId);
-            report.warnings.push(`Saved lock ${lockId} had inconsistent reciprocal state; current authored default was used.`);
-        });
-
-        const candidateTransitionsByLockId = new Map();
-        Object.values(candidate.entities || {}).forEach(function (entity) {
-            if (!entity || entity.type !== "location") return;
-            locationExitEntries(entity).forEach(function (transition) {
-                if (!transition.lockId) return;
-                if (!candidateTransitionsByLockId.has(transition.lockId)) candidateTransitionsByLockId.set(transition.lockId, []);
-                candidateTransitionsByLockId.get(transition.lockId).push({ location: entity, transition: transition });
-            });
-        });
-
-        savedStates.forEach(function (locked, lockId) {
-            const matches = candidateTransitionsByLockId.get(lockId);
-            if (!matches || matches.length < 2) return;
-            matches.forEach(function (match) {
-                const raw = match.location.exits[match.transition.key];
-                if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
-                raw.locked = locked;
-            });
-            report.passageLocksPreserved += 1;
-        });
-    }
-
-    function reconstructPersistentCounters(candidate, savedWorld) {
-        let nextMemoryId = Number.isInteger(savedWorld.nextMemoryId) && savedWorld.nextMemoryId > 0
-            ? savedWorld.nextMemoryId
-            : 1;
-        getCharacters(candidate).forEach(function (character) {
-            ["recentMemories", "longTermMemories"].forEach(function (partition) {
-                (character.mind[partition] || []).forEach(function (memory) {
-                    const match = memory && typeof memory.id === "string" && memory.id.match(/^memory_ai_(\d+)$/);
-                    if (match) nextMemoryId = Math.max(nextMemoryId, Number(match[1]) + 1);
-                });
-            });
-        });
-        candidate.nextMemoryId = nextMemoryId;
-        candidate.nextGeneratedItemId = Number.isInteger(savedWorld.nextGeneratedItemId) && savedWorld.nextGeneratedItemId > 0
-            ? Math.max(candidate.nextGeneratedItemId, savedWorld.nextGeneratedItemId)
-            : candidate.nextGeneratedItemId;
-        candidate.nextEventId = 1;
-        candidate.nextObservationId = 1;
-        candidate.nextIntentId = 1;
-    }
-
-    function migrateSavedWorld(savedWorld) {
-        const status = getMigrationStatus(savedWorld);
-        if (!status.supported) return migrationFailure(status);
-        if (!status.required) return ok({ migrated: false, report: null });
-        if (migrationInFlight) return fail("SAVE_MIGRATION_IN_FLIGHT", "A save migration is already in progress.");
-
-        migrationInFlight = true;
-        const report = {
-            fromSchemaVersion: status.fromSchemaVersion,
-            toSchemaVersion: status.toSchemaVersion,
-            fromAuthoringRevision: status.fromAuthoringRevision,
-            toAuthoringRevision: status.toAuthoringRevision,
-            status: "running",
-            charactersPreserved: 0,
-            charactersRemoved: 0,
-            characterPositionFallbacks: 0,
-            passageLocksPreserved: 0,
-            itemInstancesPreserved: 0,
-            itemInstancesRemoved: 0,
-            itemInstancesRepositioned: 0,
-            authoredKnownFactsLoaded: 0,
-            memoriesPreserved: 0,
-            relationshipsPreserved: 0,
-            beliefsPreserved: 0,
-            warnings: [],
-            errors: []
-        };
-
-        try {
-            const source = clone(savedWorld);
-            const candidate = createInitialWorld();
-            candidate.events = [];
-            candidate.ai.turnQueue = [];
-            candidate.ai.continuations = {};
-            candidate.debug = {
-                lastActionResult: null,
-                controllerLog: [],
-                repairs: [],
-                migrationReports: []
-            };
-
-            const savedCharacters = Object.values(source.entities || {}).filter(function (entity) {
-                return entity && entity.type === "character";
-            });
-            const candidateCharacterIds = new Set(getCharacters(candidate).map(function (character) { return character.id; }));
-            report.charactersRemoved = savedCharacters.filter(function (character) {
-                return !candidateCharacterIds.has(character.id);
-            }).length;
-
-            getCharacters(candidate).forEach(function (character) {
-                report.authoredKnownFactsLoaded += Array.isArray(character.mind.knownFacts) ? character.mind.knownFacts.length : 0;
-                const savedCharacter = source.entities && source.entities[character.id];
-                if (!savedCharacter || savedCharacter.type !== "character") return;
-
-                report.charactersPreserved += 1;
-                character.mind.beliefs = migrationArray(savedCharacter, "beliefs");
-                character.mind.relationships = migrationArray(savedCharacter, "relationships");
-                character.mind.recentMemories = migrationArray(savedCharacter, "recentMemories");
-                character.mind.longTermMemories = migrationArray(savedCharacter, "longTermMemories");
-                character.mind.pendingObservations = [];
-                character.sleeping = savedCharacter.sleeping === true;
-                report.beliefsPreserved += character.mind.beliefs.length;
-                report.relationshipsPreserved += character.mind.relationships.length;
-                report.memoriesPreserved += character.mind.recentMemories.length + character.mind.longTermMemories.length;
-
-                if (Number.isInteger(savedCharacter.wallet) && savedCharacter.wallet >= 0) {
-                    character.wallet = savedCharacter.wallet;
-                } else {
-                    report.warnings.push(`Character ${character.id} had an invalid saved wallet; current authored wallet was used.`);
-                }
-
-                const savedLocation = getLocation(savedCharacter.locationId, candidate);
-                if (!savedLocation) {
-                    const fallbackLocation = getLocation(candidate.startLocationId, candidate);
-                    character.locationId = fallbackLocation.id;
-                    character.sublocationId = fallbackLocation.defaultSublocationId;
-                    report.characterPositionFallbacks += 1;
-                    report.warnings.push(`Character ${character.id} was moved to the start location because saved location ${String(savedCharacter.locationId)} no longer exists.`);
-                } else {
-                    character.locationId = savedLocation.id;
-                    const savedSublocation = getSublocation(savedCharacter.sublocationId, candidate);
-                    if (savedSublocation && savedSublocation.locationId === savedLocation.id) {
-                        character.sublocationId = savedSublocation.id;
-                    } else {
-                        character.sublocationId = savedLocation.defaultSublocationId;
-                        report.characterPositionFallbacks += 1;
-                        report.warnings.push(`Character ${character.id} was moved to ${savedLocation.defaultSublocationId} because saved sublocation ${String(savedCharacter.sublocationId)} no longer exists there.`);
-                    }
-                }
-
-                const savedControllerId = source.control && source.control.assignments && source.control.assignments[character.id];
-                if (CONTROLLER_IDS.has(savedControllerId)) {
-                    candidate.control.assignments[character.id] = savedControllerId;
-                }
-                const continuation = source.ai && source.ai.continuations && source.ai.continuations[character.id];
-                if (typeof continuation === "string" && continuation.length <= 2000) {
-                    candidate.ai.continuations[character.id] = continuation;
-                }
-            });
-
-            const controlValidation = validateControlAssignments(candidate.control.assignments, candidate);
-            if (!controlValidation.ok) {
-                report.warnings.push(`Human controller assignment required repair: ${controlValidation.error.message}`);
-                const repaired = repairControlInvariant(candidate, "save migration controller repair");
-                if (!repaired.ok) throw new Error(repaired.error.message);
-            }
-
-            const savedItems = Object.values(source.entities || {}).filter(function (entity) {
-                return entity && entity.type === "item";
-            });
-            savedItems.forEach(function (savedItem) {
-                const definition = candidate.itemDefinitions[savedItem.definitionId];
-                if (!definition) {
-                    removeItemFromCandidate(candidate, savedItem.id);
-                    report.itemInstancesRemoved += 1;
-                    report.warnings.push(`Item ${savedItem.id} was removed because definition ${String(savedItem.definitionId)} no longer exists.`);
-                    return;
-                }
-                const collision = candidate.entities[savedItem.id];
-                if (collision && collision.type !== "item") {
-                    report.itemInstancesRemoved += 1;
-                    report.warnings.push(`Item ${savedItem.id} was removed because its ID now belongs to a non-item authored entity.`);
-                    return;
-                }
-
-                const targetInventoryId = candidateInventoryForSavedContainer(source, candidate, savedItem.containerId);
-                if (!targetInventoryId) {
-                    removeItemFromCandidate(candidate, savedItem.id);
-                    report.itemInstancesRemoved += 1;
-                    report.warnings.push(`Item ${savedItem.id} was removed because saved container ${String(savedItem.containerId)} no longer has a safe destination.`);
-                    return;
-                }
-
-                removeItemFromCandidate(candidate, savedItem.id);
-                const migratedItem = clone(savedItem);
-                migratedItem.id = savedItem.id;
-                migratedItem.type = "item";
-                migratedItem.definitionId = savedItem.definitionId;
-                migratedItem.containerId = targetInventoryId;
-                migratedItem.name = definition.name;
-                candidate.entities[migratedItem.id] = migratedItem;
-                candidate.inventories[targetInventoryId].itemIds.push(migratedItem.id);
-                report.itemInstancesPreserved += 1;
-                if (targetInventoryId !== savedItem.containerId) {
-                    report.itemInstancesRepositioned += 1;
-                    report.warnings.push(`Item ${savedItem.id} moved from missing container ${String(savedItem.containerId)} to ${targetInventoryId}.`);
-                }
-            });
-
-            restoreSavedPassageLocks(candidate, source, report);
-            reconstructPersistentCounters(candidate, source);
-            const validation = validateWorld(candidate);
-            if (!validation.ok) throw new Error(validation.error.message);
-
-            report.status = report.warnings.length > 0 ? "success_with_warnings" : "success";
-            candidate.debug.migrationReports.push(clone(report));
-            State.variables.world = candidate;
-            lastMigrationReport = clone(report);
-            return ok({ migrated: true, report: clone(report) });
-        } catch (error) {
-            report.status = "failed";
-            report.errors.push(error && error.message ? error.message : String(error));
-            lastMigrationReport = clone(report);
-            return fail("SAVE_MIGRATION_FAILED", "Save migration failed. Your original save was not changed.", {
-                migration: clone(report)
-            });
-        } finally {
-            migrationInFlight = false;
-        }
-    }
-
     function prepareCurrentWorld(world) {
         if (!world.debug) {
             world.debug = {
@@ -1142,6 +851,10 @@
             if (!controlResult.ok) repairControlInvariant(world, controlResult.error.message);
         }
         if (!Number.isInteger(world.nextIntentId) || world.nextIntentId < 1) world.nextIntentId = 1;
+        if (!world.ai || typeof world.ai !== "object") world.ai = { turnQueue: [], continuations: {} };
+        if (typeof world.ai.inferenceSessionId !== "string" || !world.ai.inferenceSessionId.trim()) {
+            world.ai.inferenceSessionId = createInferenceSessionId();
+        }
         repairAIQueue(world);
         return world;
     }
@@ -1150,7 +863,7 @@
         if (!State.variables.world) {
             State.variables.world = createInitialWorld();
         }
-        const status = getMigrationStatus(State.variables.world);
+        const status = setup.SaveMigration.getStatusForWorld(State.variables.world);
         if (!status.supported) {
             throw new Error("This save uses an unsupported world schema and cannot be migrated automatically.");
         }
@@ -1460,6 +1173,22 @@
                             itemId: item.id,
                             effectId: useAction.effectId
                         }
+                    }]
+                };
+            }
+        },
+        narrative_feedback: {
+            execute: function (actor, item, definition, useAction) {
+                return {
+                    feedback: [{
+                        recipientId: actor.id,
+                        kind: "observation",
+                        code: "ITEM_NARRATIVE_FEEDBACK",
+                        text: renderItemActionText(useAction.feedbackText, {
+                            actorName: actor.name,
+                            itemName: definition.name
+                        }),
+                        data: { itemId: item.id, effectId: useAction.effectId }
                     }]
                 };
             }
@@ -2284,7 +2013,8 @@
                         id: item.id,
                         name: definition.name,
                         action_label: useAction.actionLabel,
-                        effect_id: useAction.effectId
+                        effect_id: useAction.effectId,
+                        instructions: typeof useAction.aiInstructions === "string" ? useAction.aiInstructions : ""
                     };
                 }).filter(Boolean);
                 return { item_ids: items.map(function (item) { return item.id; }), items: items };
@@ -2843,80 +2573,6 @@
         });
     }
 
-    function buildPrivateCharacterContext(actor, world) {
-        const abilityInstructions = {};
-        (actor.abilityIds || []).forEach(function (abilityId) {
-            const ability = world.abilities[abilityId];
-            if (ability && typeof ability.aiDescription === "string" && ability.aiDescription.trim()) {
-                abilityInstructions[abilityId] = ability.aiDescription.trim();
-            }
-        });
-        const context = {
-            aiDescription: typeof actor.aiDescription === "string" ? actor.aiDescription : ""
-        };
-        if (Object.keys(abilityInstructions).length > 0) {
-            context.abilityInstructions = abilityInstructions;
-        }
-        return context;
-    }
-
-    function buildAIMindContext(actor) {
-        const mind = actor.mind || {};
-        return {
-            knownFacts: clone(mind.knownFacts || []),
-            beliefs: clone(mind.beliefs || []),
-            relationships: clone(mind.relationships || []),
-            recentMemories: clone(mind.recentMemories || []),
-            longTermMemories: clone(mind.longTermMemories || [])
-        };
-    }
-
-    function buildContext(actorId, options) {
-        const world = ensureWorld();
-        const actor = getCharacter(actorId, world);
-        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
-        options = options && typeof options === "object" ? options : {};
-        const preparedObservations = Array.isArray(options.pendingObservations)
-            ? clone(options.pendingObservations)
-            : [];
-        const view = getCharacterView(actorId);
-        ensureAIState(world);
-        return clone({
-            schemaVersion: 1,
-            view: view,
-            character: buildPrivateCharacterContext(actor, world),
-            mind: buildAIMindContext(actor),
-            continuation: Object.prototype.hasOwnProperty.call(world.ai.continuations, actorId)
-                ? world.ai.continuations[actorId]
-                : null,
-            pendingObservations: preparedObservations
-        });
-    }
-
-    function setAIContinuation(actorId, continuation) {
-        const world = ensureWorld();
-        if (!getCharacter(actorId, world)) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
-        if (continuation !== null && typeof continuation !== "string") {
-            return fail("AI_CONTINUATION_INVALID", "AI continuation must be a string or null.");
-        }
-        if (typeof continuation === "string" && continuation.length > 2000) {
-            return fail("AI_CONTINUATION_INVALID", "AI continuation must not exceed 2000 characters.");
-        }
-        ensureAIState(world);
-        if (continuation === null) delete world.ai.continuations[actorId];
-        else world.ai.continuations[actorId] = continuation;
-        return ok({ actorId: actorId, continuation: continuation });
-    }
-
-    function getAIContinuation(actorId) {
-        const world = ensureWorld();
-        if (!getCharacter(actorId, world)) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
-        ensureAIState(world);
-        return Object.prototype.hasOwnProperty.call(world.ai.continuations, actorId)
-            ? world.ai.continuations[actorId]
-            : null;
-    }
-
     function updateCharacterProfile(characterId, input) {
         const world = ensureWorld();
         const character = getCharacter(characterId, world);
@@ -2942,244 +2598,31 @@
         });
     }
 
-    function applyAIMemoryUpdates(actorId, updates) {
-        const world = ensureWorld();
-        const actor = getCharacter(actorId, world);
-        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
-        updates = updates || {};
-        const memories = updates.recentMemoriesToAdd || [];
-        const beliefs = updates.beliefsToUpsert || [];
-        const relationships = updates.relationshipsToUpsert || [];
-        if (!Array.isArray(memories) || !Array.isArray(beliefs) || !Array.isArray(relationships) ||
-            memories.length > 5 || beliefs.length > 5 || relationships.length > 5) {
-            return fail("MEMORY_UPDATE_INVALID", "Memory updates exceed the allowed record limits.");
-        }
-        function validText(value) { return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 500; }
-        for (const memory of memories) if (!memory || !validText(memory.summary) ||
-            typeof memory.importance !== "number" || !Number.isFinite(memory.importance) || memory.importance < 0 || memory.importance > 1) {
-            return fail("MEMORY_UPDATE_INVALID", "A recent memory update is invalid.");
-        }
-        for (const belief of beliefs) if (!belief || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(belief.id || "") ||
-            !validText(belief.text) || !["low", "medium", "high"].includes(belief.confidence)) {
-            return fail("MEMORY_UPDATE_INVALID", "A belief update is invalid.");
-        }
-        for (const relationship of relationships) if (!relationship || relationship.targetCharacterId === actorId ||
-            !getCharacter(relationship.targetCharacterId, world) || !validText(relationship.summary)) {
-            return fail("MEMORY_UPDATE_INVALID", "A relationship update is invalid.");
-        }
-        for (const memory of memories) {
-            let memoryId;
-            const existingMemoryIds = new Set(actor.mind.recentMemories.concat(actor.mind.longTermMemories).map(function (item) { return item.id; }));
-            do { memoryId = `memory_ai_${world.nextMemoryId++}`; } while (existingMemoryIds.has(memoryId));
-            actor.mind.recentMemories.push({
-                id: memoryId, summary: memory.summary.trim(), importance: memory.importance, protected: false
-            });
-        }
-        for (const belief of beliefs) {
-            const record = { id: belief.id, text: belief.text.trim(), confidence: belief.confidence };
-            const index = actor.mind.beliefs.findIndex(function (item) { return item.id === belief.id; });
-            if (index < 0) actor.mind.beliefs.push(record); else actor.mind.beliefs[index] = record;
-        }
-        for (const relationship of relationships) {
-            const record = { targetCharacterId: relationship.targetCharacterId, summary: relationship.summary.trim() };
-            const index = actor.mind.relationships.findIndex(function (item) { return item.targetCharacterId === relationship.targetCharacterId; });
-            if (index < 0) actor.mind.relationships.push(record); else actor.mind.relationships[index] = record;
-        }
-        return ok();
-    }
-
-
-    function prepareMemoryConsolidation(actorId, retainRecentCount) {
-        const world = ensureWorld();
-        const actor = getCharacter(actorId, world);
-        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
-        const retainCount = Number.isInteger(retainRecentCount) && retainRecentCount >= 0
-            ? retainRecentCount
-            : 10;
-        if (!actor.mind || !Array.isArray(actor.mind.recentMemories) || !Array.isArray(actor.mind.longTermMemories)) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Character memory state is invalid.");
-        }
-
-        const recentMemories = clone(actor.mind.recentMemories);
-        const longTermMemories = clone(actor.mind.longTermMemories);
-        const splitIndex = Math.max(0, recentMemories.length - retainCount);
-        const memoriesToConsolidate = recentMemories.slice(0, splitIndex);
-        const retainedRecentMemories = recentMemories.slice(splitIndex);
-        const summary = {
-            consolidatedRecentCount: memoriesToConsolidate.length,
-            retainedRecentCount: retainedRecentMemories.length,
-            existingLongTermCount: longTermMemories.length
-        };
-
-        if (memoriesToConsolidate.length === 0) {
-            return ok({
-                actorId: actorId,
-                nothingToCompress: true,
-                summary: summary
-            });
-        }
-
-        return ok({
-            actorId: actorId,
-            nothingToCompress: false,
-            summary: summary,
-            context: {
-                character: {
-                    id: actor.id,
-                    name: actor.name,
-                    aiDescription: typeof actor.aiDescription === "string" ? actor.aiDescription : ""
-                },
-                mindContext: {
-                    knownFacts: clone(actor.mind.knownFacts || []),
-                    beliefs: clone(actor.mind.beliefs || []),
-                    relationships: clone(actor.mind.relationships || [])
-                },
-                existingLongTermMemories: longTermMemories,
-                memoriesToConsolidate: memoriesToConsolidate
-            },
-            sourceState: {
-                recentMemories: recentMemories,
-                longTermMemories: longTermMemories,
-                memoriesToConsolidate: memoriesToConsolidate,
-                retainedRecentMemories: retainedRecentMemories
-            }
-        });
-    }
-
-    function validateMemoryConsolidationChanges(actor, changes) {
-        if (!changes || typeof changes !== "object" || Array.isArray(changes)) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Memory consolidation result must be an object.");
-        }
-        const allowedTopKeys = ["longTermMemoriesToUpsert", "longTermMemoriesToAdd"];
-        const topKeys = Object.keys(changes);
-        if (topKeys.length !== allowedTopKeys.length || topKeys.some(function (key) { return !allowedTopKeys.includes(key); })) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Memory consolidation result has invalid fields.");
-        }
-        const upserts = changes.longTermMemoriesToUpsert;
-        const additions = changes.longTermMemoriesToAdd;
-        if (!Array.isArray(upserts) || !Array.isArray(additions)) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Memory consolidation updates must be arrays.");
-        }
-
-        function validSummary(value) {
-            return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 2000;
-        }
-        function validImportance(value) {
-            return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
-        }
-        function exactKeys(record, keys) {
-            if (!record || typeof record !== "object" || Array.isArray(record)) return false;
-            const actual = Object.keys(record);
-            return actual.length === keys.length && actual.every(function (key) { return keys.includes(key); });
-        }
-
-        const existingIds = new Set((actor.mind.longTermMemories || []).map(function (memory) { return memory.id; }));
-        const seenUpsertIds = new Set();
-        for (const record of upserts) {
-            if (!exactKeys(record, ["id", "summary", "importance"]) ||
-                    typeof record.id !== "string" || !existingIds.has(record.id) ||
-                    seenUpsertIds.has(record.id) || !validSummary(record.summary) || !validImportance(record.importance)) {
-                return fail("MEMORY_CONSOLIDATION_INVALID", "A long-term memory upsert is invalid.");
-            }
-            seenUpsertIds.add(record.id);
-        }
-        for (const record of additions) {
-            if (!exactKeys(record, ["summary", "importance"]) ||
-                    !validSummary(record.summary) || !validImportance(record.importance)) {
-                return fail("MEMORY_CONSOLIDATION_INVALID", "A new long-term memory is invalid.");
-            }
-        }
-        return ok();
-    }
-
-    function commitMemoryConsolidation(actorId, sourceState, changes) {
-        const world = ensureWorld();
-        const actor = getCharacter(actorId, world);
-        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
-        if (!sourceState || typeof sourceState !== "object" ||
-                !Array.isArray(sourceState.recentMemories) ||
-                !Array.isArray(sourceState.longTermMemories) ||
-                !Array.isArray(sourceState.memoriesToConsolidate) ||
-                !Array.isArray(sourceState.retainedRecentMemories)) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Memory consolidation source snapshot is invalid.");
-        }
-
-        if (JSON.stringify(actor.mind.recentMemories) !== JSON.stringify(sourceState.recentMemories) ||
-                JSON.stringify(actor.mind.longTermMemories) !== JSON.stringify(sourceState.longTermMemories)) {
-            return fail(
-                "MEMORY_CONSOLIDATION_STALE",
-                "Character memory changed while consolidation was in progress; the consolidation result was not applied."
-            );
-        }
-
-        const changeValidation = validateMemoryConsolidationChanges(actor, changes);
-        if (!changeValidation.ok) return changeValidation;
-
-        const candidate = clone(world);
-        const candidateActor = getCharacter(actorId, candidate);
-        const existingMemoryIds = new Set(
-            candidateActor.mind.recentMemories.concat(candidateActor.mind.longTermMemories)
-                .map(function (memory) { return memory.id; })
-        );
-        const longTermById = new Map();
-        candidateActor.mind.longTermMemories.forEach(function (memory, index) {
-            longTermById.set(memory.id, index);
-        });
-
-        changes.longTermMemoriesToUpsert.forEach(function (record) {
-            const index = longTermById.get(record.id);
-            candidateActor.mind.longTermMemories[index] = Object.assign(
-                {},
-                candidateActor.mind.longTermMemories[index],
-                {
-                    summary: record.summary.trim(),
-                    importance: record.importance
-                }
-            );
-        });
-
-        const generatedMemoryIds = [];
-        changes.longTermMemoriesToAdd.forEach(function (record) {
-            let memoryId;
-            do {
-                memoryId = `memory_ai_${candidate.nextMemoryId++}`;
-            } while (existingMemoryIds.has(memoryId));
-            existingMemoryIds.add(memoryId);
-            generatedMemoryIds.push(memoryId);
-            candidateActor.mind.longTermMemories.push({
-                id: memoryId,
-                summary: record.summary.trim(),
-                importance: record.importance,
-                protected: false
-            });
-        });
-
-        candidateActor.mind.recentMemories = clone(sourceState.retainedRecentMemories);
-
-        const validation = validateWorld(candidate);
-        if (!validation.ok) return validation;
-        State.variables.world = candidate;
-
-        return ok({
-            actorId: actorId,
-            consolidatedRecentCount: sourceState.memoriesToConsolidate.length,
-            retainedRecentCount: sourceState.retainedRecentMemories.length,
-            longTermMemoriesUpserted: changes.longTermMemoriesToUpsert.length,
-            longTermMemoriesAdded: changes.longTermMemoriesToAdd.length,
-            generatedMemoryIds: generatedMemoryIds,
-            totalLongTermMemories: candidateActor.mind.longTermMemories.length
-        });
-    }
-
-    function consumeObservations(actorId, observationIds) {
-        const world = ensureWorld();
-        const actor = getCharacter(actorId, world);
-        if (!actor || !Array.isArray(observationIds)) return fail("OBSERVATION_CONSUME_INVALID", "Observation consumption request is invalid.");
-        const ids = new Set(observationIds.filter(Number.isInteger));
-        actor.mind.pendingObservations = actor.mind.pendingObservations.filter(function (item) { return !ids.has(item.id); });
-        repairAIQueue(world);
-        return ok();
-    }
+    setup.GameInternals = {
+        LEGACY_WORLD_VERSION: LEGACY_WORLD_VERSION,
+        WORLD_SCHEMA_VERSION: WORLD_SCHEMA_VERSION,
+        SUPPORTED_MIGRATION_SCHEMA_VERSIONS: Array.from(SUPPORTED_MIGRATION_SCHEMA_VERSIONS),
+        CONTROLLER_IDS: CONTROLLER_IDS,
+        clone: clone,
+        ok: ok,
+        fail: fail,
+        createInitialWorld: createInitialWorld,
+        getCharacters: getCharacters,
+        getCharacter: getCharacter,
+        getLocation: getLocation,
+        getSublocation: getSublocation,
+        locationExitEntries: locationExitEntries,
+        inventoryItems: inventoryItems,
+        positionText: positionText,
+        validateWorld: validateWorld,
+        validateControlAssignments: validateControlAssignments,
+        repairControlInvariant: repairControlInvariant,
+        repairAIQueue: repairAIQueue,
+        hydrateAIQueueFromPendingObservations: hydrateAIQueueFromPendingObservations,
+        currentAuthoringRevision: currentAuthoringRevision,
+        enqueueObservation: enqueueObservation,
+        createInferenceSessionId: createInferenceSessionId
+    };
 
     setup.Game = {
         WORLD_VERSION: WORLD_SCHEMA_VERSION,
@@ -3193,10 +2636,11 @@
                 State.variables.world = createInitialWorld();
                 return ok({ created: true, migrationRequired: false });
             }
-            const migration = getMigrationStatus(State.variables.world);
+            const migration = setup.SaveMigration.getStatusForWorld(State.variables.world);
             if (!migration.supported) return migrationFailure(migration);
             if (migration.required) return ok({ migrationRequired: true, migration: clone(migration) });
             const world = prepareCurrentWorld(State.variables.world);
+            hydrateAIQueueFromPendingObservations(world);
             const validation = validateWorld(world);
             return validation.ok ? ok({ migrationRequired: false }) : validation;
         },
@@ -3235,31 +2679,12 @@
         }
     };
 
-    setup.SaveMigration = {
-        getStatus: function () { return clone(getMigrationStatus(State.variables.world)); },
-        migrate: function () { return migrateSavedWorld(State.variables.world); },
-        isInFlight: function () { return migrationInFlight; },
-        getLastReport: function () { return clone(lastMigrationReport); }
-    };
-
     setup.AITurnQueue = {
         enqueue: function (characterId, reason) { return enqueueAITurn(characterId, reason, ensureWorld()); },
         peek: function () { return getAIQueueStatus(ensureWorld()).head; },
         remove: function (characterId) { const world = ensureWorld(); world.ai.turnQueue = world.ai.turnQueue.filter(function (entry) { return entry.characterId !== characterId; }); return ok(); },
         getStatus: function () { return getAIQueueStatus(ensureWorld()); },
         repair: function () { const world = ensureWorld(); repairAIQueue(world); return getAIQueueStatus(world); }
-    };
-
-    setup.AIMemory = {
-        applyUpdates: applyAIMemoryUpdates,
-        consumeObservations: consumeObservations,
-        prepareConsolidation: prepareMemoryConsolidation,
-        commitConsolidation: commitMemoryConsolidation
-    };
-
-    setup.AIWorkingState = {
-        getContinuation: getAIContinuation,
-        setContinuation: setAIContinuation
     };
 
     setup.TimelapseAPI = {
@@ -3281,5 +2706,4 @@
         submitIntent: submitIntent,
         getSpeechLoudnessValues: function () { return SPEECH_LOUDNESS_VALUES.slice(); }
     };
-    setup.ContextBuilder = { build: buildContext };
 }());

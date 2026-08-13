@@ -35,7 +35,11 @@ function queueHooded() {
     return world;
 }
 
-load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/10-game-api.js"); load("src/21-ai-settings.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/10-game-api.js");
+load("src/11-save-migration.js");
+load("src/12-character-context.js");
+load("src/13-character-memory.js"); load("src/21-ai-settings.js");
+load("src/21-ai-request-profiles.js");
 load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
 
 async function main() {
@@ -251,6 +255,16 @@ async function main() {
     assert(setup.AIRuntimeSettings.getDefaultNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro" &&
         setup.AIRuntimeSettings.getSelectedNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro",
         "narrator model selection should start from its independently authored default");
+    assert(setup.AIRuntimeSettings.getDefaultUtilityModelId() === "deepseek/deepseek-v4-flash" &&
+        setup.AIRuntimeSettings.getSelectedUtilityModelId() === "deepseek/deepseek-v4-flash",
+        "utility model selection should start from the independently authored DeepSeek V4 Flash default");
+    const characterBeforeUtilitySelection = setup.AIRuntimeSettings.getSelectedModelId();
+    const utilitySelection = setup.AIRuntimeSettings.selectUtilityModel("deepseek/deepseek-v4-pro", storage);
+    assert(utilitySelection.ok && utilitySelection.persisted &&
+        storageData[setup.AIRuntimeSettings.UTILITY_MODEL_STORAGE_KEY] === "deepseek/deepseek-v4-pro" &&
+        setup.AIRuntimeSettings.getSelectedModelId() === characterBeforeUtilitySelection,
+        "utility model selection should persist independently without changing the character model");
+    setup.AIRuntimeSettings.selectUtilityModel(setup.AIRuntimeSettings.getDefaultUtilityModelId(), storage);
     const characterModelBeforeNarratorSelection = setup.AIRuntimeSettings.getSelectedModelId();
     const narratorSelection = setup.AIRuntimeSettings.selectNarratorModel("deepseek/deepseek-v4-pro", storage);
     assert(narratorSelection.ok && narratorSelection.persisted &&
@@ -280,8 +294,9 @@ async function main() {
     const requestBody = JSON.parse(captured.options.body);
     assert(clientOk.ok && captured.url === setup.OpenRouterClient.ENDPOINT && captured.options.headers.Authorization === `Bearer ${sentinel}` &&
         requestBody.model === euryaleId && setup.OpenRouterClient.MODEL === euryaleId && requestBody.stream === false &&
-        requestBody.max_tokens === 6000 && requestBody.reasoning && requestBody.reasoning.max_tokens === 1500,
-        "client should use the selected model, Bearer key, non-streaming transport, and explicit completion/reasoning headroom");
+        requestBody.max_tokens === 6000 && requestBody.reasoning && requestBody.reasoning.max_tokens === 1500 &&
+        requestBody.provider && requestBody.provider.sort === "latency" && requestBody.provider.allow_fallbacks === true,
+        "client should use the selected model, Bearer key, non-streaming transport, explicit completion/reasoning headroom, and latency-first provider routing");
     const boundedClientOk = await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "structured" }], {
         maxTokens: 1200, reasoningEffort: "none", temperature: 0.2
     }, fetchOk);
@@ -290,6 +305,16 @@ async function main() {
         boundedRequestBody.reasoning && boundedRequestBody.reasoning.effort === "none" &&
         !Object.prototype.hasOwnProperty.call(boundedRequestBody.reasoning, "max_tokens"),
         "bounded structural requests should be able to disable model reasoning explicitly without changing the normal client defaults");
+    const utilityProfile = setup.AIRequestProfiles.resolve("timelapse-plan", { actorId: "hoodedWoman" });
+    assert(utilityProfile.modelId === setup.AIRuntimeSettings.getSelectedUtilityModelId() &&
+        utilityProfile.reasoningEffort === "none" && utilityProfile.providerSort === "latency" &&
+        typeof utilityProfile.sessionId === "string" && utilityProfile.sessionId.includes("hoodedWoman"),
+        "timelapse request profile should use the utility model, no reasoning, latency routing, and a stable actor-scoped sticky session");
+    await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "profiled" }], utilityProfile, fetchOk);
+    const profiledBody = JSON.parse(captured.options.body);
+    assert(profiledBody.model === setup.AIRuntimeSettings.getSelectedUtilityModelId() &&
+        profiledBody.provider.sort === "latency" && profiledBody.session_id === utilityProfile.sessionId,
+        "profiled OpenRouter requests should carry the resolved utility model, latency provider sort, and session_id");
     async function statusFetch(status) { return { ok: false, status: status, json: async function () { return {}; } }; }
     for (const pair of [[401,"AUTHENTICATION_FAILED"],[402,"INSUFFICIENT_CREDITS"],[429,"RATE_LIMITED"],[503,"PROVIDER_UNAVAILABLE"]]) {
         const result = await setup.OpenRouterClient.chat([], function () { return statusFetch(pair[0]); });

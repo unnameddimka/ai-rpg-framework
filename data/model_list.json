@@ -31,5 +31,6 @@
       "id": "deepseek/deepseek-v4-flash",
       "name": "DeepSeek V4 Flash"
     }
-  ]
+  ],
+  "defaultUtilityModelId": "deepseek/deepseek-v4-flash"
 }

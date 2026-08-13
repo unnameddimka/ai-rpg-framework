@@ -35,6 +35,7 @@ function narratorContext() {
     [
         "src/00-model-list.js",
         "src/21-ai-settings.js",
+        "src/21-ai-request-profiles.js",
         "src/22-openrouter-client.js",
         "src/24-ai-request-executor.js",
         "src/26-presentation-narrator.js"

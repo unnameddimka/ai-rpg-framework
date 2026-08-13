@@ -1,269 +1,144 @@
 # AI RPG Repository Instructions
 
-## Architectural authority
+This file contains hard repository rules for coding agents. `docs/architecture.md` is the canonical design description and `docs/status.md` is the canonical current-status summary.
 
-- The deterministic game engine owns objective world state.
-- Controllers choose intentions; they never mutate world state or character mind directly.
-- All formal actions must pass through `setup.CharacterAPI.perform()`.
-- Human and AI turns may submit one combined intent through `setup.CharacterAPI.submitIntent()`: optional narrative plus at most one formal action. `narrate()` remains the lower-level narrative primitive. Narrative never creates objective facts by itself.
-- `ActionRegistry` is the single source of truth for executable formal action mechanics.
-- A formal action may mutate the world, emit public events, return private actor feedback, do any combination of those, or fail with grounded feedback.
-- Do not split physical and perceptual actions into separate execution systems.
+## 1. Authority and state ownership
 
-## Canonical character view and AI context
+- The deterministic engine owns objective world state.
+- Models/controllers choose intentions; they do not directly mutate canonical mechanics or mind arrays.
+- `data/world.json` is authored/static source data. Generated world files are build products.
+- A save owns compatible runtime state.
+- Save migration is always **fresh current authored world + compatible saved runtime overlay**.
+- Current authored definitions/descriptions/known facts win over stale saved authored copies.
+- Compatible runtime position, inventory/item state, money, sleeping, beliefs, relationships, memories, continuations, dynamic lock state, committed events, pending observations, queue state, and counters survive migration.
+- Generic migration may sanitize references to removed entities, but must not contain story-specific special cases.
+- A well-formed externally patched pending observation is legitimate runtime state and must survive generic migration when its references remain valid.
 
-- `setup.Game.getCharacterView(actorId)` (or its future equivalent) is the canonical public and operational projection for that character.
-- The normal HumanController interface must be built from this view.
-- AIController must receive the same view unchanged as the base of its model context. A model must see the same public situation and the same available controls that a human controlling the character would see.
-- AI context may add only character-private information that is not exposed by the normal UI, including private identity instructions, private self-state, mind records, and prepared pending observations.
-- Never serialize a second copy or alias of information already present in the view. This explicitly forbids pairs such as `view.available_actions` plus `context.availableActions`.
-- Every serialized concept has one source of truth. Do not repeat view data under different casing, names, wrappers, or independently recomputed projections.
-- Validator-only metadata must be derived from the canonical view or retained in a non-serialized application envelope.
-- Build the correct projection at the source. Do not construct an over-complete AI context and then clone/delete duplicate fields at the protocol boundary.
-- When prepared pending observations are supplied, build the AI mind projection without the raw runtime inbox; do not serialize both forms.
+## 2. Formal actions and grounding
 
-## Static authoring data and runtime state
+- All formal character actions go through the canonical `CharacterAPI` path.
+- `ActionRegistry`/current GameAPI action implementation is the single deterministic authority for action mechanics.
+- `view.available_actions` is the only current capability contract exposed to a controller.
+- AI formal actions must be validated against the current action type and that action's current concrete options before execution.
+- Narrative/speech never substitutes for tracked mechanics such as movement, item transfer/transformation, money transfer, locks, sleeping state, or ability results.
+- Model prose belongs to the attempt phase; deterministic engine result is authoritative completion/failure.
+- An impossible request outside the current action contract does not advance the Human world tick.
+- A legitimate available action attempt that fails in-world consumes the turn and emits grounded failure feedback.
 
-- `data/world.json` is the authoritative authoring source for locations, sublocations, characters, initial character minds, and character ability definitions.
-- `data/model_list.json` is the authoritative source for selectable OpenRouter models and `defaultModelId`.
-- `src/00-model-list.js`, `src/generated/world-data.js`, generated physical passages, generated StoryData, and `dist/game.html` are build outputs. Never edit them directly.
-- Authoring data is copied into JSON-serializable runtime state at new-game initialization.
-- Runtime character state, including `mind`, must live inside `State.variables.world` so SugarCube saves restore it with the rest of the world.
-- Never store functions, controller objects, class instances, DOM nodes, promises, API clients, or other non-serializable values in SugarCube state.
+## 3. Canonical view and AI context
 
-## Characters and controllers
+- Ordinary HumanController and AIController use the same canonical restricted character `view` for public/operational truth.
+- AI ordinary-decision context may add private identity instructions, private mind state, continuation, and prepared pending observations, but must not create an alternate public world projection.
+- Do not duplicate large data already present in the view under aliases.
+- Maintenance workflows (timelapse planning, reflection, consolidation, narrator work) are not ordinary controller decisions and may use purpose-specific compact contexts.
+- Do not build a full ordinary character view only to discard most of it for a maintenance request.
 
-The controller types are:
+## 4. Controllers and world ticks
 
-- `human` — receives commands from the browser UI;
-- `dummy` — performs no autonomous actions and may write debug logs;
-- `ai` — uses the browser-side OpenRouter adapter and the currently selected validated catalog model when a user-triggered reaction wave or manual crystal-sphere debug step processes its queue entry.
+- Exactly one character is HumanController-controlled.
+- Switching Human control is atomic and repairs/rejects invalid zero/multiple-Human states.
+- Human Submit creates one world tick.
+- After a valid Human turn, synchronously process AI reactions causally created by that tick.
+- Each eligible AI character reacts at most once per Human world tick.
+- Ordinary AI reactions remain sequential because a later AI may need observations created by an earlier committed reaction.
+- Formal-action targets receive stronger within-tick initiative than speech targets; speech targets outrank normal deterministic queue order.
+- Off-screen AI reactions still execute canonically; presentation depends on the invisible-events debug setting.
 
-### Critical HumanController invariant
+## 5. Continuation
 
-Exactly one character must use `HumanController` at all times.
+- `continuation` is model-authored opaque working intention.
+- The engine stores/returns it but does not interpret, validate, prioritize, or execute its semantic content.
+- Ordinary tick continuation must be re-evaluated against the refreshed canonical view on each reaction.
+- Tick-mode continuation is cut when entering coarse timelapse. Do not pass unfinished granular tick obligations into timelapse planning.
 
-- Never assign `human` by writing into `world.control.assignments` directly.
-- Switch human control only through `setup.Game.takeHumanControl(characterId)`.
-- The switch must be atomic: construct and validate a candidate assignment map, then commit it once.
-- Initial authoring data must specify exactly one initial human-controlled character.
-- A character's persistent `defaultControllerId` must not be `human`. HumanController is only a temporary override. When human control leaves a character, that character must return directly to its authored `defaultControllerId`. Do not store or restore a `controllerBeforeHuman` value.
-- Loading or initialization must validate and repair or reject zero-human and multiple-human states.
-- Never assume the human-controlled character ID is `player`.
-- Do not change `defaultControllerId` during normal play in this milestone. A future scripted controller may remain a character's permanent default for the whole game.
+## 6. Timelapse
 
-## Character descriptions and private data
+- Timelapse is a generic coarse-time framework; only overnight mode is currently exposed.
+- Generic code belongs in `24-timelapse-core.js`; overnight-only entry/exit policy belongs in `24-night-timelapse.js`.
+- Generic prompts must be mode-aware and must not hard-code overnight semantics.
+- Current overnight mode uses five sequential committed rounds.
+- Independent structural requests may run concurrently where explicitly allowed by the timelapse workflow.
+- `narrate` is not a tracked-state mutation channel.
+- Authored timelapse actions are deterministic macros for tracked coarse-time effects.
+- AI characters sleeping at the end of overnight remain sleeping in the morning. HumanController is returned/woken; AI is not auto-woken.
+- Progressive output may reveal already committed results but never speculative plans/thinking.
 
-- `playerDescription` is public player-facing prose. It may be shown to other human-controlled characters.
-- `aiDescription` is private identity/personality/instruction data for a AI controller. It must not appear in normal player-facing UI or another character's restricted view.
-- `engineFacts` contains objective hidden data used only by formal mechanics. It must not be exposed merely because a controller asks for a view or context.
-- A formal action such as `read_aura` may reveal a specific hidden fact through private grounded feedback.
+## 7. AI request architecture
 
-## Character mind
+- Production requests should resolve through `setup.AIRequestProfiles` unless an exception is explicit and documented.
+- Model roles:
+  - Character: ordinary AIController decisions.
+  - Utility: timelapse planning/replanning/intents/resolver, reflection, consolidation.
+  - Narrator: presentation-only prose.
+- Utility default is DeepSeek V4 Flash; if an invalid/unavailable configured Utility model cannot be resolved locally, fall back safely to Character role where the workflow supports fallback.
+- Ordinary character decisions retain the Character model.
+- OpenRouter routing defaults to `provider.sort = "latency"` with fallbacks enabled.
+- Use stable non-secret `session_id` values for sticky routing/cache locality.
+- Never put API keys or secrets into `session_id`, logs, saves, model context, or world data.
+- Do not enable response caching for gameplay responses.
+- Preserve stable prompt prefixes where practical to benefit provider prompt caching.
+- The one-second live transport pacing guard is intentional and must remain unless explicitly redesigned.
+- Ordinary causal reaction waves must not be parallelized for latency.
 
-Each runtime character owns a JSON-serializable `mind` object. The mind belongs to the character, not to its current controller, and survives Human/Dummy/AI controller switching.
+## 8. Model protocol and safety
 
-Required conceptual partitions:
+- Model outputs are local JSON contracts, not executable code.
+- Reject extra/invalid fields according to the relevant protocol.
+- At most one repair request is permitted for malformed/schema-invalid structured output unless a workflow explicitly documents otherwise.
+- Repair prompts must remain grounded in the current canonical contract/options.
+- Model failures must not silently commit speculative state.
+- A failed AI reaction restores that reaction's uncommitted snapshot; earlier committed reactions remain committed.
 
-- `knownFacts` — facts the character currently accepts;
-- `beliefs` — subjective conclusions or uncertain claims;
-- `relationships` — character-specific relationship summaries;
-- `recentMemories` — detailed recent memories;
-- `longTermMemories` — older or already compressed memories;
-- `pendingObservations` — objective events and action feedback not yet interpreted by a AI controller.
+## 9. Memory
 
-The AI controller may interpret a bounded snapshot of `pendingObservations` during a user-triggered queued reaction turn. The deterministic engine must never invent attitudes or interpretations itself.
+- Authored `knownFacts` come from current world authoring.
+- Runtime beliefs, relationships, recent memories, long-term memories, continuation, and pending observations live in the save/runtime.
+- Engine-owned memory updates support bounded recent-memory append, belief upsert, and relationship upsert.
+- Memory consolidation is transactional and may run as maintenance work.
+- Retrieval-based old-memory selection/embeddings are future work; do not add them incidentally.
 
-The current milestone still must not:
+## 10. Movement, perception, sleeping
 
-- count tokens or implement token-budget policies;
-- use embeddings or vector search;
-- run autonomous or time-based NPC loops.
+- Major location movement emits one canonical `character_moved` event with source and destination.
+- Deliver that event to the union of characters who can perceive the actor from either side.
+- Do not split one movement into separate departure/arrival canonical events.
+- Sleeping is explicit canonical state, separate from lying on a bed.
+- Observation alone does not mechanically wake a character.
+- Existing wake-on-own-action/speech semantics remain authoritative.
 
-Character memory consolidation is an explicit exception to the older no-compression rule. It is a dedicated AI maintenance operation over a character's own `recentMemories` and `longTermMemories`, not a game turn. Manual consolidation is available for the character selected in the sidebar. Optional automatic consolidation may run only at normal world-tick boundaries when enabled, and is disabled by default. Consolidation must be transactional, preserve the newest ten recent memories unchanged, persist through saves, and never mutate `knownFacts`, beliefs, relationships, continuation, observations, controllers, or objective world state.
+## 11. Items and authored content
 
-Validated AI memory updates may append recent memories and upsert beliefs or relationships only through a dedicated engine-owned function. The model never receives direct mutation access to `mind`.
+- Item definitions are authored types; item entities are stable/runtime instances.
+- Initial stable instances belong in `data/world.json` and appear in new worlds/fresh authored baselines.
+- Saved compatible runtime placement/state for an existing stable item instance wins over its authored starting placement.
+- New authored stable instances absent from an older save remain in their current authored starting placement after migration.
+- Item use may emit private/public grounded feedback without requiring buffs/stats. Narrative-only effects are valid when explicitly authored.
+- Do not add one-off story migration fields to item definitions/instances.
 
-## Formal action availability
+## 12. UI/editor
 
-The available formal action set for a character is the deduplicated union of:
+- Normal gameplay UI is generated from canonical state/action availability.
+- Do not add alternate manual execution paths for pending AI work. Read-only/debug visibility is acceptable.
+- The standalone editor edits `data/world.json`; it does not need Node/server/build tooling.
+- Do not hand-edit `src/generated/` artifacts.
 
-1. engine-defined base action types;
-2. action types granted by the current sublocation's `capabilities`;
-3. action types granted by the character's individual `abilityIds` through the ability catalog.
+## 13. Files and refactoring
 
-Rules:
+- Keep the public `setup.GameAPI`/`CharacterAPI` facade stable where practical.
+- Prefer extraction over broad rewrites.
+- Current internal split:
+  - `10-game-api.js`: deterministic facade/actions/events/world helpers;
+  - `11-save-migration.js`: save reconciliation;
+  - `12-character-context.js`: restricted views/context;
+  - `13-character-memory.js`: mind/continuation state helpers.
+- Preserve stable IDs, JSON field names, save compatibility, event order, and available-action shapes during structural refactors.
 
-- A registered action is not automatically available merely because it exists in `ActionRegistry`.
-- `getAvailableActions()` must expose why an action is available.
-- `perform()` must reject actions not currently granted to the actor.
-- Action definition validation still checks targets, reachability, inventory access, capacity, and other dynamic preconditions.
-- Character abilities grant access to actions; they do not contain executable JavaScript.
-- Player-facing ability controls must be derived from the currently human-controlled character's assigned abilities and current `available_actions`; never hardcode a character ID such as `hoodedWoman`.
-- For this milestone, the normal player-facing UI supports assigned zero-input abilities. The first supported action is `read_aura`.
-- `read_aura` accepts no target parameter. It scans all other characters currently perceivable to the actor and returns their authored hidden aura values as private grounded feedback.
-- Private feedback returned to the human-controlled actor must be shown immediately in the normal player-facing UI, not only in debug JSON or `mind.pendingObservations`.
+## 14. Validation before completion
 
-## Formal action results and observations
+For any implementation patch:
 
-Every `perform()` call must return one normalized JSON-serializable result shape containing, as applicable:
-
-- `ok`;
-- the attempted action;
-- confirmed public/private events;
-- private grounded `feedback` entries for specific recipients;
-- an error code and message on failure.
-
-Private feedback must be routed into the recipient character's `mind.pendingObservations`.
-
-Examples include:
-
-- a successful physical action that also reveals something tactile;
-- a failed attempt that reveals a locked door or unreachable object;
-- `read_aura`, which may change no world state and primarily returns private feedback.
-
-Narrative and a formal action may be submitted together in one intent envelope. Their authority remains separate: narrative may express speech, gestures, or an attempted act, but only a successful formal action result establishes objective consequences or hidden information.
-
-## Restricted views and AI context
-
-- `setup.CharacterAPI.getView(actorId)` must expose only information currently available to that actor.
-- It must never expose another character's `aiDescription`, `mind`, or `engineFacts`.
-- `setup.ContextBuilder.build(actorId)` remains a pure JSON-serializable restricted-data projection. It must not call an API, count tokens, acknowledge observations, or mutate state.
-- A separate AI prompt/protocol adapter may serialize that bundle for OpenRouter.
-- The context bundle may include the actor's own `aiDescription`, own mind, restricted world view, granted abilities, available formal actions, and pending observations.
-
-
-## AI turn queue and controller integration
-
-- Human `Submit` that consumes a turn and explicit `Pass / Next turn` are the only normal triggers for a global AI world tick (implemented as the reaction-wave scheduler). There is still no timer or background loop.
-- The sidebar checkbox `Stop automatic AI request processing` pauses the wave that normally follows `Submit`; `Pass` and the crystal sphere remain explicit controls. The normal gameplay sidebar must not expose a manual one-head AI processing button; it may show read-only queue diagnostics.
-- Objective events and feedback may enqueue eligible characters whose current controller assignment is `ai`.
-- The queue must be deterministic, JSON-serializable, saveable with SugarCube, and deduplicated by character ID.
-- Reaction order is derived from pending targeted observations: addressed speech contributes +1, targeted formal-action events contribute +2, and an observation originating from the current HumanController contributes an additional +2. Contributions accumulate while observations remain pending; ties use stable saved queue order.
-- A queued entry is eligible only while that character is currently assigned `ai` and has pending observations. Skip or remove stale entries.
-- When HumanController leaves a character and that character returns to `defaultControllerId: "ai"`, enqueue it if it already has pending observations.
-- Do not enqueue a human-controlled or dummy-controlled character.
-- One world tick may process many queued characters, but each character may react at most once in that tick and may choose at most one formal action. New observations for an already-reacted character remain queued for a later Human-triggered world tick.
-- Later characters in the same wave must see confirmed events produced by earlier reactions.
-- `setup.AITurnScheduler` owns queue projection, exact request construction, single-head manual processing, and full-wave processing.
-- `setup.AIRequestExecutor` is the only path for game, repair, and prompt-lab model requests. It serializes calls, leaves at least one second between live transports, and honors `Retry-After` without automatically retrying a 429.
-- A failed API call, invalid model response, or failed transaction must preserve the affected queue entry and all unconsumed observations for retry. During a full reaction wave, such a failure stops that world tick immediately while preserving earlier successfully committed reactions.
-
-## OpenRouter and API-key rules
-
-- The game calls OpenRouter directly from the browser through `POST https://openrouter.ai/api/v1/chat/completions`.
-- The provider remains fixed to OpenRouter. Models must come only from validated `data/model_list.json`; never accept an arbitrary model ID typed into the game UI.
-- `defaultModelId` must reference one entry in the model list. Unknown or removed saved selections fall back to that default.
-- Model selection is transient runtime configuration outside SugarCube state and may be persisted separately in namespaced `localStorage` without an expiry.
-- Streaming is disabled. Do not add provider selection yet.
-- The API key is entered in the game UI. It must never enter `world.json`, generated files, SugarCube state, saves, exported data, controller logs, request-debug dumps, or error text.
-- Without opt-in persistence, the key exists only in a non-SugarCube runtime object for the lifetime of the page.
-- `Remember for 24 hours` stores a record in `localStorage` with an explicit expiry timestamp. Expired records are deleted when read. Provide `Forget saved key`.
-- If `localStorage` is unavailable under `file://`, keep the key in memory and show a nonfatal warning.
-- Do not use cookies.
-
-## AI response and transaction safety
-
-- Never treat model prose as objective world state.
-- Parse and locally validate model JSON. Do not depend on native provider strict-schema support.
-- Permit at most one repair request for malformed or schema-invalid JSON. No general automatic retries.
-- One AI request returns optional narrative, optional speech, one nullable model-owned `continuation`, bounded memory updates, and no more than one available formal action.
-- There is no immediate result-stage model call. Execute the formal action locally, record its normalized grounded result as a new observation for the actor, and let the actor interpret that result during a later Human-triggered world tick. Store the latest `continuation` separately from durable character `mind` and return it to that actor on future AI reactions without interpreting its meaning.
-- Do not let model narrative claim that an unexecuted formal action succeeded. Objective consequences come only from `CharacterAPI.perform()`.
-- Commit the validated response atomically against a pre-turn snapshot. A request or commit failure must not consume observations or partially mutate the turn.
-- Apply combined narrative/action through `setup.CharacterAPI.submitIntent()`; lower-level public narrative still flows through `narrate()` internally.
-- Apply model memory changes only through an engine-owned validator supporting bounded append/upsert operations.
-- Remove only observation IDs actually consumed by a successfully committed turn. Never clear an entire inbox blindly.
-- Raw request and response bodies may be kept only in transient debug memory or an explicit user-requested exchange-log export. They must be sanitized before storage or display.
-- Strip API keys, Authorization/Bearer values, OpenRouter `user_id` properties, and `user_...` identifiers from provider diagnostics. Preserve non-secret diagnostic fields such as HTTP status, `provider_name`, `limit_source`, retry information, and provider error text.
-- Redaction must happen in the transport/client layer before diagnostics are copied into protocol traces, executor history, UI state, or exports; export-time redaction is only defense in depth.
-
-## Dynamic player-facing UI and passages
-
-- Every major physical location has its own generated Twine passage.
-- Passage names and the start passage are generated from validated `data/world.json` data.
-- Do not use or restore the obsolete "one generic physical-location passage" architecture.
-- Physical location prose, nearby-character presence, interaction links, and exits must be rendered from the restricted character view and runtime world state.
-- Normal movement UI must submit the registered `move` action through the same combined turn flow as other human intents.
-- Never show the controlled character as a nearby character or interaction target.
-- Keep the formal action panel as a developer/debug interface below the player-facing view. It uses one narrative area, addressee/loudness controls, radio buttons for at most one formal action, and shared `Submit` / `Pass` controls. The normal scene-text convention is ordinary speech plus inline `*...*` narration; narration never mutates canonical state by itself. The in-game Character window may edit only the current Human-controlled character name and `playerDescription`, never `aiDescription`.
-- Assigned character abilities are an exception: currently available zero-input abilities must also appear as normal player-facing controls above the debug panel.
-
-## World editor
-
-- `editor/world-editor.html` must remain one self-contained offline English-only HTML file.
-- It must work through `file://` and import/export only `world.json`.
-- The author must not need Node, npm, PowerShell, Tweego, a server, VS Code, or a terminal.
-- The editor may assign known engine actions and character abilities, but must never accept executable code.
-- Preserve unknown JSON properties whenever practical.
-- Block export on structural errors with human-readable English messages.
-
-## Hard validation rules
-
-Validate in the editor, build generator, and runtime where applicable:
-
-- unique major-location passage names;
-- a valid `startLocationId` whose passage is generated as the SugarCube start passage;
-- globally unique inventory IDs across locations, sublocations, and characters;
-- valid character location and sublocation references;
-- exactly one initial human-controlled character;
-- valid ability references;
-- ability `actionType` values that exist in the known engine action allowlist/registry;
-- valid item-definition references, transformation targets, and initial inventory references;
-- no deleted location, sublocation, character, ability, item type, or item instance still referenced by another record.
-
-## Current scope
-
-Implement and preserve:
-
-- existing tavern entrance, bar, common room, street, and the temporary village-temple prompt-lab room;
-- generated major physical passages;
-- sublocations, capacity, reachability, table inventories, and behind-bar capability;
-- inventories, wallets, movement, item transfer, money transfer, and `place_item`;
-- persistent item instances with authored item definitions and definition-changing `fill` / `consume` actions;
-- the behind-bar mug cabinet, ten initial empty mugs, and the `ale_source` environment capability;
-- confirmed events and restricted views;
-- debug takeover of any character by the one HumanController;
-- authorable characters, initial minds, and individual abilities;
-- one sample grounded individual ability, `read_aura`;
-- direct browser OpenRouter integration with a validated two-model catalog and authored default;
-- one deterministic saved AI turn queue, Human-triggered global AI world ticks, crystal-sphere debug stepping, read-only sidebar queue diagnostics, and an auto-processing pause checkbox;
-- validated single-request AI turns with combined narrative/action, one model-owned continuation, and bounded memory updates;
-- 24-hour optional local API-key persistence outside SugarCube.
-
-Do not add yet:
-
-- autonomous or timer-driven NPC execution unrelated to a user-triggered Submit/Pass wave;
-- arbitrary model IDs or provider selection;
-- memory compression, token budgeting, embeddings, or vector search;
-- combat, health changes, or damage;
-- buying and selling;
-- item use effects or equipment;
-- quests or dialogue trees;
-- arbitrary author scripts.
-
-## File placement
-
-- Keep engine logic in `src/10-game-api.js` unless a small additional numerically prefixed engine module clearly improves separation.
-- Keep controller behavior in `src/20-controllers.js`.
-- Put the browser-only OpenRouter client, prompt/protocol parsing, shared request executor, manual turn scheduler, transient AI settings, and prompt-lab state in small numerically prefixed source modules before `src/30-game-ui.js`; do not place secrets or promises in SugarCube state.
-- Keep browser/debug UI in `src/30-game-ui.js`.
-- Keep hand-authored non-generated Twee metadata and nonphysical passages in `src/story.twee`.
-- Keep authoritative world authoring data in `data/world.json` and the OpenRouter model catalog in `data/model_list.json`.
-- Generate `src/00-model-list.js` only through `tools/generate-model-list.js`; the standalone HTML must embed the validated catalog rather than fetching it at runtime.
-- Keep the standalone editor in `editor/world-editor.html`.
-- Preserve deterministic source ordering.
-
-## Validation before completion
-
-1. Run `node --check` on every JavaScript file.
-2. Run `node tests/run-tests.js`.
-3. Run `node tests/run-editor-tests.js`.
-4. Run the cross-platform Node world-data generator (`node tools/generate-world-data.js`).
-5. Build with Tweego when installed.
-6. Verify `setup.Game.validateWorld()` succeeds after all tested actions.
-7. Verify a JSON serialize/parse round trip preserves every character mind.
-8. Test queue ordering, deduplication, stale-entry handling, scheduler request projection, executor serialization/minimum interval, combined human intents, interaction grouping, reaction-wave once-per-character behavior, single-request action turns, malformed JSON repair, failed-request rollback, consumed-observation removal by ID, and 24-hour key expiry.
-9. Verify no API key appears in a save, world dump, generated artifact, debug log, or copied AI context.
-10. Verify the AI request contains the canonical player-facing `view` unchanged, contains no duplicate or aliased view data, and adds only private character context outside the view.
-11. Update `README.md` and `docs/status.md` with implemented results and remaining limitations.
+1. run `./test.sh` (or `test.bat` on Windows);
+2. run `./build.sh` (or `build.bat`);
+3. ensure generated files are current;
+4. when delivering a patch, verify it by applying it to a clean copy of the declared source archive and rerun tests/build;
+5. do not touch Git/GitHub unless explicitly asked.

@@ -188,12 +188,22 @@
         const temperature = Number.isFinite(source.temperature)
             ? source.temperature
             : TEMPERATURE;
+        const providerSort = typeof source.providerSort === "string" && ["latency", "throughput", "price"].includes(source.providerSort)
+            ? source.providerSort
+            : "latency";
+        const allowProviderFallbacks = source.allowProviderFallbacks !== false;
+        const sessionId = typeof source.sessionId === "string" && source.sessionId.trim()
+            ? source.sessionId.trim().slice(0, 256)
+            : null;
         return {
             modelId: modelId,
             maxTokens: maxTokens,
             reasoningMaxTokens: reasoningMaxTokens,
             reasoningEffort: reasoningEffort,
-            temperature: temperature
+            temperature: temperature,
+            providerSort: providerSort,
+            allowProviderFallbacks: allowProviderFallbacks,
+            sessionId: sessionId
         };
     }
 
@@ -212,8 +222,13 @@
             stream: false,
             max_tokens: requestOptions.maxTokens,
             temperature: requestOptions.temperature,
+            provider: {
+                sort: requestOptions.providerSort,
+                allow_fallbacks: requestOptions.allowProviderFallbacks
+            },
             messages: messages
         };
+        if (requestOptions.sessionId) requestBody.session_id = requestOptions.sessionId;
         if (requestOptions.reasoningEffort) {
             requestBody.reasoning = { effort: requestOptions.reasoningEffort };
         } else if (requestOptions.reasoningMaxTokens > 0) {

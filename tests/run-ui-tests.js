@@ -26,6 +26,8 @@ vm.runInContext(uiSource, context, { filename: "30-game-ui.js" });
 const model = context.setup.AbilityUIModel;
 const promptLabModel = context.setup.PromptLabUIModel;
 function assert(condition, message) { if (!condition) throw new Error(message); }
+assert(uiSource.includes('id="openrouter-utility-model-select"') && uiSource.includes('selectUtilityModel'),
+    "AI settings UI should expose an independent Utility model selector");
 function viewFor(actorId, abilityIds, grant) {
     return {
         self: {

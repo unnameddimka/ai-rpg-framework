@@ -4,6 +4,7 @@
     "schemaVersion": 1,
     "defaultModelId": "thedrummer/cydonia-24b-v4.1",
     "defaultNarratorModelId": "sao10k/l3.3-euryale-70b:nitro",
+    "defaultUtilityModelId": "deepseek/deepseek-v4-flash",
     "models": [
         {
             "id": "thedrummer/cydonia-24b-v4.1",

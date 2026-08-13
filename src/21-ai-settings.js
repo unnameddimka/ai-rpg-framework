@@ -4,6 +4,7 @@
     const STORAGE_KEY = "aiRpg.openRouterKey.v1";
     const MODEL_STORAGE_KEY = "aiRpg.openRouterModel.v1";
     const NARRATOR_MODEL_STORAGE_KEY = "aiRpg.openRouterNarratorModel.v1";
+    const UTILITY_MODEL_STORAGE_KEY = "aiRpg.openRouterUtilityModel.v1";
     const TTL_MS = 24 * 60 * 60 * 1000;
     const catalog = setup.GeneratedModelList;
     if (!catalog || !Array.isArray(catalog.models) || !catalog.models.length) {
@@ -23,10 +24,15 @@
     const defaultNarratorModelId = requestedNarratorDefault && modelById[requestedNarratorDefault]
         ? requestedNarratorDefault
         : defaultModelId;
+    const requestedUtilityDefault = String(catalog.defaultUtilityModelId || "").trim();
+    const defaultUtilityModelId = requestedUtilityDefault && modelById[requestedUtilityDefault]
+        ? requestedUtilityDefault
+        : defaultModelId;
 
     let apiKey = "";
     let selectedModelId = defaultModelId;
     let selectedNarratorModelId = defaultNarratorModelId;
+    let selectedUtilityModelId = defaultUtilityModelId;
     let warning = "";
 
     function clone(value) {
@@ -48,6 +54,7 @@
         let restoredKey = false;
         let restoredModel = false;
         let restoredNarratorModel = false;
+        let restoredUtilityModel = false;
         if (!storage) {
             return {
                 ok: true,
@@ -55,8 +62,10 @@
                 restoredKey: false,
                 restoredModel: false,
                 restoredNarratorModel: false,
+                restoredUtilityModel: false,
                 selectedModelId: selectedModelId,
-                selectedNarratorModelId: selectedNarratorModelId
+                selectedNarratorModelId: selectedNarratorModelId,
+                selectedUtilityModelId: selectedUtilityModelId
             };
         }
         try {
@@ -78,6 +87,15 @@
                 selectedNarratorModelId = defaultNarratorModelId;
             }
 
+            const savedUtilityModelId = storage.getItem(UTILITY_MODEL_STORAGE_KEY);
+            if (savedUtilityModelId && modelById[savedUtilityModelId]) {
+                selectedUtilityModelId = savedUtilityModelId;
+                restoredUtilityModel = true;
+            } else if (savedUtilityModelId) {
+                storage.removeItem(UTILITY_MODEL_STORAGE_KEY);
+                selectedUtilityModelId = defaultUtilityModelId;
+            }
+
             const raw = storage.getItem(STORAGE_KEY);
             if (raw) {
                 let record;
@@ -96,12 +114,14 @@
             }
             return {
                 ok: true,
-                restored: restoredKey || restoredModel || restoredNarratorModel,
+                restored: restoredKey || restoredModel || restoredNarratorModel || restoredUtilityModel,
                 restoredKey: restoredKey,
                 restoredModel: restoredModel,
                 restoredNarratorModel: restoredNarratorModel,
+                restoredUtilityModel: restoredUtilityModel,
                 selectedModelId: selectedModelId,
-                selectedNarratorModelId: selectedNarratorModelId
+                selectedNarratorModelId: selectedNarratorModelId,
+                selectedUtilityModelId: selectedUtilityModelId
             };
         } catch (error) {
             setWarning("Saved AI settings storage is unavailable; settings will remain in memory only.");
@@ -111,8 +131,10 @@
                 restoredKey: false,
                 restoredModel: false,
                 restoredNarratorModel: false,
+                restoredUtilityModel: false,
                 selectedModelId: selectedModelId,
                 selectedNarratorModelId: selectedNarratorModelId,
+                selectedUtilityModelId: selectedUtilityModelId,
                 warning: warning
             };
         }
@@ -171,6 +193,24 @@
         }
     }
 
+    function selectUtilityModel(modelId, storage) {
+        const normalized = typeof modelId === "string" ? modelId.trim() : "";
+        if (!modelById[normalized]) {
+            return { ok: false, error: { code: "UNKNOWN_MODEL", message: "Choose a utility model from model_list.json." } };
+        }
+        selectedUtilityModelId = normalized;
+        warning = "";
+        storage = storageOrDefault(storage);
+        try {
+            if (!storage) throw new Error("unavailable");
+            storage.setItem(UTILITY_MODEL_STORAGE_KEY, selectedUtilityModelId);
+            return { ok: true, persisted: true, model: clone(modelById[selectedUtilityModelId]) };
+        } catch (error) {
+            setWarning("Saved AI settings storage is unavailable; the utility model will remain in memory only.");
+            return { ok: true, persisted: false, model: clone(modelById[selectedUtilityModelId]), warning: warning };
+        }
+    }
+
     function forget(storage) {
         apiKey = "";
         warning = "";
@@ -188,23 +228,32 @@
         return clone(modelById[selectedNarratorModelId] || modelById[defaultNarratorModelId]);
     }
 
+    function getSelectedUtilityModel() {
+        return clone(modelById[selectedUtilityModelId] || modelById[defaultUtilityModelId] || modelById[selectedModelId] || modelById[defaultModelId]);
+    }
+
     setup.AIRuntimeSettings = {
         STORAGE_KEY: STORAGE_KEY,
         MODEL_STORAGE_KEY: MODEL_STORAGE_KEY,
         NARRATOR_MODEL_STORAGE_KEY: NARRATOR_MODEL_STORAGE_KEY,
+        UTILITY_MODEL_STORAGE_KEY: UTILITY_MODEL_STORAGE_KEY,
         TTL_MS: TTL_MS,
         getKey: function () { return apiKey; },
         hasKey: function () { return Boolean(apiKey); },
         getModels: function () { return clone(models); },
         getDefaultModelId: function () { return defaultModelId; },
         getDefaultNarratorModelId: function () { return defaultNarratorModelId; },
+        getDefaultUtilityModelId: function () { return defaultUtilityModelId; },
         getSelectedModelId: function () { return selectedModelId; },
         getSelectedNarratorModelId: function () { return selectedNarratorModelId; },
+        getSelectedUtilityModelId: function () { return selectedUtilityModelId; },
         getSelectedModel: getSelectedModel,
         getSelectedNarratorModel: getSelectedNarratorModel,
+        getSelectedUtilityModel: getSelectedUtilityModel,
         getStatus: function () {
             const model = getSelectedModel();
             const narratorModel = getSelectedNarratorModel();
+            const utilityModel = getSelectedUtilityModel();
             return {
                 hasKey: Boolean(apiKey),
                 warning: warning,
@@ -214,6 +263,9 @@
                 selectedNarratorModelId: narratorModel.id,
                 selectedNarratorModelName: narratorModel.name,
                 defaultNarratorModelId: defaultNarratorModelId,
+                selectedUtilityModelId: utilityModel.id,
+                selectedUtilityModelName: utilityModel.name,
+                defaultUtilityModelId: defaultUtilityModelId,
                 models: clone(models)
             };
         },
@@ -221,6 +273,7 @@
         save: save,
         selectModel: selectModel,
         selectNarratorModel: selectNarratorModel,
+        selectUtilityModel: selectUtilityModel,
         forget: forget
     };
 }());

@@ -204,6 +204,7 @@
                 purpose: "game-decision",
                 messages: messages,
                 stage: "decision",
+                requestOptions: setup.AIRequestProfiles.resolve("game-decision", { actorId: actorId }),
                 client: client
             });
             recordProtocolResult(actorId, "decision", messages, decisionResult);

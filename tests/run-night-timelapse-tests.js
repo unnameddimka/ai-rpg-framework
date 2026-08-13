@@ -33,15 +33,23 @@ function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [],
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
 load("src/10-game-api.js");
+load("src/11-save-migration.js");
+load("src/12-character-context.js");
+load("src/13-character-memory.js");
 load("src/21-ai-settings.js");
+load("src/21-ai-request-profiles.js");
 load("src/22-openrouter-client.js");
 load("src/23-ai-protocol.js");
 load("src/24-ai-request-executor.js");
 load("src/24-ai-turn-scheduler.js");
 load("src/20-controllers.js");
 load("src/24-memory-consolidator.js");
+load("src/24-timelapse-core.js");
 load("src/24-night-timelapse.js");
 load("src/25-turn-flow.js");
+const timelapseCoreSource = fs.readFileSync(path.join(root, "src/24-timelapse-core.js"), "utf8");
+assert(!timelapseCoreSource.includes("The current mode is overnight") && !timelapseCoreSource.includes("end-of-day reflection"),
+    "generic timelapse core must not hard-code overnight-only prompt semantics");
 
 function fresh() {
     setup.Game.resetWorld();
@@ -400,6 +408,8 @@ async function main() {
                 assert(actorId !== "hoodedWoman", "already sleeping AI should skip initial activity planning");
                 assert(!Object.prototype.hasOwnProperty.call(payload.context.view, "available_actions"),
                     "timelapse planning should omit the ordinary view.available_actions contract");
+                assert(!Object.prototype.hasOwnProperty.call(payload.context, "continuation"),
+                    "tick-mode continuation must be cut at the timelapse boundary and omitted from coarse planning context");
                 return response({
                     steps: [
                         { locationId: "commonRoom", action: { type: "narrate", text: `${actorId} spends the first part of the night in the common room.` } },
