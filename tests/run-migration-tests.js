@@ -74,6 +74,10 @@ legacy.control.assignments.player = "ai";
 legacy.ai.turnQueue = [{ characterId: "innkeeper", reason: "old transient queue" }];
 legacy.events = [{ id: 99, type: "old_event", recipients: [], pendingFor: [], processedBy: [] }];
 
+// Dynamic passage lock state is runtime state and must survive fresh-world migration.
+legacy.entities.upstairsCorridor.exits.guestRoom2.locked = false;
+legacy.entities.guestRoom2.exits.upstairsCorridor.locked = false;
+
 // Price should retain only runtime memory, never receive new local authored Mara facts.
 legacy.entities.captainPrice.mind.knownFacts = [{ id: "runtime_wrong_partition", text: "This should be replaced by authored baseline." }];
 legacy.entities.captainPrice.mind.recentMemories = [{ id: "price_memory", summary: "I met a hooded woman called Mara in the tavern.", importance: 0.5, protected: false }];
@@ -151,6 +155,10 @@ assert(world.entities.captainPrice.aiDescription.includes("Do not assume that yo
     !world.entities.captainPrice.playerDescription.includes("holding a mug") &&
     world.entities.player.aiDescription.includes("Do not assume a particular current location or activity"),
     "save migration should keep current authored character descriptions instead of restoring stale scene-specific descriptions from the save");
+assert(world.entities.upstairsCorridor.exits.guestRoom2.locked === false &&
+    world.entities.guestRoom2.exits.upstairsCorridor.locked === false &&
+    migrated.report.passageLocksPreserved >= 1,
+    "save migration should preserve compatible reciprocal runtime lock state instead of resetting to authored defaults");
 assert(world.entities.guestRoom1Key.containerId === "inventory_hoodedWoman" &&
     world.inventories.inventory_hoodedWoman.itemIds.includes("guestRoom1Key"),
     "saved key placement should override its fresh authored starting placement");
@@ -190,6 +198,29 @@ const noSecondMigration = setup.SaveMigration.migrate();
 assert(noSecondMigration.ok && !noSecondMigration.migrated &&
     Object.values(State.variables.world.entities).filter(function (entity) { return entity && entity.id === "memoryStone_01"; }).length === 1,
     "repeated migration checks must remain idempotent for the stable Memory Stone instance");
+
+// Saved locked state must also override a newer authored unlocked default for the same stable lock.
+const authoredGuestRoom3Hall = setup.GeneratedWorldData.locations.upstairsCorridor.exits.guestRoom3;
+const authoredGuestRoom3Room = setup.GeneratedWorldData.locations.guestRoom3.exits.upstairsCorridor;
+const originalGuestRoom3HallLocked = authoredGuestRoom3Hall.locked;
+const originalGuestRoom3RoomLocked = authoredGuestRoom3Room.locked;
+authoredGuestRoom3Hall.locked = false;
+authoredGuestRoom3Room.locked = false;
+try {
+    const savedLockedWorld = clone(current);
+    savedLockedWorld.authoringRevision = "1111111111111111111111111111111111111111111111111111111111111111";
+    savedLockedWorld.entities.upstairsCorridor.exits.guestRoom3.locked = true;
+    savedLockedWorld.entities.guestRoom3.exits.upstairsCorridor.locked = true;
+    State.variables.world = savedLockedWorld;
+    const migratedLocked = setup.SaveMigration.migrate();
+    assert(migratedLocked.ok && migratedLocked.migrated &&
+        State.variables.world.entities.upstairsCorridor.exits.guestRoom3.locked === true &&
+        State.variables.world.entities.guestRoom3.exits.upstairsCorridor.locked === true,
+        "saved locked state should override a fresh authored unlocked default for the same stable lock");
+} finally {
+    authoredGuestRoom3Hall.locked = originalGuestRoom3HallLocked;
+    authoredGuestRoom3Room.locked = originalGuestRoom3RoomLocked;
+}
 
 // Migration must be transactional: corrupt persistent memory cannot partially replace the active restored save.
 const broken = clone(current);

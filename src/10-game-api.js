@@ -885,6 +885,51 @@
         }
     }
 
+    function restoreSavedPassageLocks(candidate, savedWorld, report) {
+        const savedStates = new Map();
+        const conflictingLockIds = new Set();
+
+        Object.values(savedWorld.entities || {}).forEach(function (entity) {
+            if (!entity || entity.type !== "location") return;
+            locationExitEntries(entity).forEach(function (transition) {
+                if (!transition.lockId) return;
+                if (!savedStates.has(transition.lockId)) {
+                    savedStates.set(transition.lockId, transition.locked === true);
+                    return;
+                }
+                if (savedStates.get(transition.lockId) !== (transition.locked === true)) {
+                    conflictingLockIds.add(transition.lockId);
+                }
+            });
+        });
+
+        conflictingLockIds.forEach(function (lockId) {
+            savedStates.delete(lockId);
+            report.warnings.push(`Saved lock ${lockId} had inconsistent reciprocal state; current authored default was used.`);
+        });
+
+        const candidateTransitionsByLockId = new Map();
+        Object.values(candidate.entities || {}).forEach(function (entity) {
+            if (!entity || entity.type !== "location") return;
+            locationExitEntries(entity).forEach(function (transition) {
+                if (!transition.lockId) return;
+                if (!candidateTransitionsByLockId.has(transition.lockId)) candidateTransitionsByLockId.set(transition.lockId, []);
+                candidateTransitionsByLockId.get(transition.lockId).push({ location: entity, transition: transition });
+            });
+        });
+
+        savedStates.forEach(function (locked, lockId) {
+            const matches = candidateTransitionsByLockId.get(lockId);
+            if (!matches || matches.length < 2) return;
+            matches.forEach(function (match) {
+                const raw = match.location.exits[match.transition.key];
+                if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+                raw.locked = locked;
+            });
+            report.passageLocksPreserved += 1;
+        });
+    }
+
     function reconstructPersistentCounters(candidate, savedWorld) {
         let nextMemoryId = Number.isInteger(savedWorld.nextMemoryId) && savedWorld.nextMemoryId > 0
             ? savedWorld.nextMemoryId
@@ -922,6 +967,7 @@
             charactersPreserved: 0,
             charactersRemoved: 0,
             characterPositionFallbacks: 0,
+            passageLocksPreserved: 0,
             itemInstancesPreserved: 0,
             itemInstancesRemoved: 0,
             itemInstancesRepositioned: 0,
@@ -1054,6 +1100,7 @@
                 }
             });
 
+            restoreSavedPassageLocks(candidate, source, report);
             reconstructPersistentCounters(candidate, source);
             const validation = validateWorld(candidate);
             if (!validation.ok) throw new Error(validation.error.message);
