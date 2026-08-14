@@ -18,7 +18,7 @@ const knownActions = new Set([
     "give_money", "place_item", "fill", "consume", "lock", "unlock", "read_aura", "sleep"
 ]);
 const knownEnvironmentCapabilities = new Set(["ale_source"]);
-const knownItemEffects = new Set(["report_memory_counts", "narrative_feedback"]);
+const knownItemEffects = new Set(["report_memory_counts", "narrative_feedback", "abstract_study", "utility_query"]);
 const knownTimelapseEffects = new Set(["collect_mugs_to_storage"]);
 const controllers = new Set(["human", "dummy", "ai"]);
 const confidences = new Set(["low", "medium", "high"]);
@@ -261,6 +261,36 @@ function validateWorld(document) {
             if (definition.useAction.aiInstructions !== undefined) {
                 requireCondition(typeof definition.useAction.aiInstructions === "string" && nonBlank(definition.useAction.aiInstructions),
                     `Item definition ${id} useAction.aiInstructions must be non-empty text when present.`);
+            }
+            if (definition.useAction.effectId === "utility_query" || definition.useAction.effectId === "abstract_study") {
+                requireCondition(nonBlank(definition.useAction.inputLabel),
+                    `Item definition ${id} ${definition.useAction.effectId} useAction requires inputLabel.`);
+                if (definition.useAction.inputPlaceholder !== undefined) {
+                    requireCondition(typeof definition.useAction.inputPlaceholder === "string",
+                        `Item definition ${id} useAction.inputPlaceholder must be text when present.`);
+                }
+                if (definition.useAction.inputMaxLength !== undefined) {
+                    requireCondition(Number.isInteger(definition.useAction.inputMaxLength) &&
+                        definition.useAction.inputMaxLength >= 1 && definition.useAction.inputMaxLength <= 2000,
+                        `Item definition ${id} useAction.inputMaxLength must be an integer from 1 to 2000.`);
+                }
+            }
+            if (definition.useAction.effectId === "abstract_study") {
+                for (const field of ["focusedFeedbackText", "saturatedFeedbackText"]) {
+                    if (definition.useAction[field] !== undefined) {
+                        requireCondition(typeof definition.useAction[field] === "string" && nonBlank(definition.useAction[field]),
+                            `Item definition ${id} useAction.${field} must be non-empty text when present.`);
+                    }
+                }
+            }
+            if (definition.useAction.effectId === "utility_query") {
+                requireCondition(nonBlank(definition.useAction.utilityPrompt),
+                    `Item definition ${id} utility_query useAction requires utilityPrompt.`);
+                if (definition.useAction.utilityMaxTokens !== undefined) {
+                    requireCondition(Number.isInteger(definition.useAction.utilityMaxTokens) &&
+                        definition.useAction.utilityMaxTokens >= 64 && definition.useAction.utilityMaxTokens <= 4000,
+                        `Item definition ${id} useAction.utilityMaxTokens must be an integer from 64 to 4000.`);
+                }
             }
         }
     }

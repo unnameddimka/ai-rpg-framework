@@ -95,11 +95,17 @@ assert(world.itemDefinitions.arcaneKnowledgeSlab && world.entities.arcaneKnowled
     world.inventories.inventory_maraCottageTable.itemIds.includes("arcaneKnowledgeSlab_01"),
     "one stable Slab of Full Arcane Knowledge should be authored on Mara's work table");
 assert(world.itemDefinitions.arcaneKnowledgeSlab.useAction &&
-    world.itemDefinitions.arcaneKnowledgeSlab.useAction.effectId === "narrative_feedback" &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.effectId === "abstract_study" &&
     world.itemDefinitions.arcaneKnowledgeSlab.useAction.actionLabel === "Consult slab" &&
-    world.itemDefinitions.arcaneKnowledgeSlab.useAction.aiInstructions.includes("Choose what to investigate") &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.inputLabel === "Question or topic" &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.feedbackText.includes("broad theoretical orientation") &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.focusedFeedbackText.includes("substantially clearer theoretical grasp") &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.saturatedFeedbackText.includes("diminishing returns") &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.aiInstructions.includes("action.input_text") &&
+    !Object.prototype.hasOwnProperty.call(world.itemDefinitions.arcaneKnowledgeSlab.useAction, "utilityPrompt") &&
+    !Object.prototype.hasOwnProperty.call(world.itemDefinitions.arcaneKnowledgeSlab.useAction, "utilityMaxTokens") &&
     !Object.prototype.hasOwnProperty.call(world.entities.arcaneKnowledgeSlab_01, "migrationObservation"),
-    "the slab should expose deep narrative-only consultation guidance without story-specific migration metadata");
+    "the slab should expose deterministic abstract study without model-generated lore or story-specific migration metadata");
 perform("player", { type: "move", destination_id: "street" }, "arcane-slab fixture walks to the village street");
 perform("player", { type: "move", destination_id: "villageEdge" }, "arcane-slab fixture walks to the village edge");
 perform("player", { type: "move", destination_id: "secludedCottage" }, "arcane-slab fixture enters Mara's cottage garden");
@@ -115,15 +121,43 @@ perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }, "arc
 const slabUseView = setup.CharacterAPI.getView("player").available_actions.use_item;
 assert(slabUseView && slabUseView.options.items.some(function (item) {
     return item.id === "arcaneKnowledgeSlab_01" && item.action_label === "Consult slab" &&
-        item.effect_id === "narrative_feedback" && item.instructions.includes("repeated study");
-}), "owned slab should expose its narrative consultation guidance through canonical use_item options");
-const slabUseResult = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01" },
-    "arcane-slab fixture consults the slab through the ordinary item-use path");
+        item.effect_id === "abstract_study" && item.instructions.includes("action.input_text") &&
+        item.input_required === true && item.input_label === "Question or topic" && item.input_max_length === 600;
+}), "owned slab should expose its authored query contract through canonical use_item options");
+assert(!setup.CharacterAPI.validateActionRequest("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01" }).ok,
+    "query-backed item use should be rejected by the canonical action contract when input_text is missing");
+assert(setup.CharacterAPI.validateActionRequest("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "How are artificial worlds created?" }).ok,
+    "query-backed item use should accept a bounded authored text query");
+const slabUseResult = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "How are artificial worlds created?" },
+    "arcane-slab fixture submits a query through the ordinary item-use path");
 assert(slabUseResult.events.length === 1 && slabUseResult.events[0].type === "item_used" &&
-    slabUseResult.feedback.length === 1 && slabUseResult.feedback[0].code === "ITEM_NARRATIVE_FEEDBACK" &&
-    slabUseResult.feedback[0].text.includes("searchable and cross-referenced archive") &&
+    slabUseResult.feedback.length === 1 && slabUseResult.modelRequests.length === 0 &&
+    slabUseResult.feedback[0].code === "ITEM_ABSTRACT_STUDY_RESULT" &&
+    slabUseResult.feedback[0].text.includes("How are artificial worlds created?") &&
+    slabUseResult.feedback[0].text.includes("broad theoretical orientation") &&
+    slabUseResult.feedback[0].data.studyStage === "survey" && slabUseResult.feedback[0].data.studyDepth === 1 &&
+    !slabUseResult.feedback[0].text.includes("resonance") &&
     world.entities.arcaneKnowledgeSlab_01.definitionId === "arcaneKnowledgeSlab",
-    "consulting the slab should emit grounded narrative feedback without transforming the item or creating a new mechanical subsystem");
+    "first consultation on a study thread should return deterministic survey feedback without invoking a model or transforming the item");
+const slabFocusedResult = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "magical methods used to create artificial worlds" },
+    "arcane-slab fixture continues a related study thread");
+assert(slabFocusedResult.feedback[0].data.studyStage === "focused" && slabFocusedResult.feedback[0].data.studyDepth === 2 &&
+    slabFocusedResult.feedback[0].data.relatedToPrevious === true &&
+    slabFocusedResult.feedback[0].text.includes("substantially clearer theoretical grasp"),
+    "a related second consultation should advance the deterministic study thread to focused understanding");
+const slabSaturatedResult = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "practical exercises for creating artificial magical worlds" },
+    "arcane-slab fixture pushes the related study thread to diminishing returns");
+assert(slabSaturatedResult.feedback[0].data.studyStage === "saturated" && slabSaturatedResult.feedback[0].data.studyDepth === 3 &&
+    slabSaturatedResult.feedback[0].text.includes("diminishing returns") && slabSaturatedResult.feedback[0].text.includes("practice"),
+    "a third related consultation should report diminishing theoretical returns and point toward practice or a different question");
+const slabNewThreadResult = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "the history of enchanted forests" },
+    "arcane-slab fixture switches to an unrelated study thread");
+assert(slabNewThreadResult.feedback[0].data.studyStage === "survey" && slabNewThreadResult.feedback[0].data.studyDepth === 1 &&
+    slabNewThreadResult.feedback[0].data.relatedToPrevious === false &&
+    slabNewThreadResult.feedback[0].text.includes("broad theoretical orientation"),
+    "a genuinely different question should reset abstract study to a new survey thread");
+assert(setup.Game.getWorld().entities.player.mind.abstractStudyProgress.arcaneKnowledgeSlab_01.depth === 1,
+    "abstract study depth should be stored as private runtime learning progress for this reader and source");
 
 setup.Game.resetWorld();
 world = setup.Game.getWorld();

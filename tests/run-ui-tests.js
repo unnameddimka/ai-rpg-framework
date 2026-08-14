@@ -215,7 +215,8 @@ gameUIModel.resizeNarrativeTextarea(fakeTextarea);
 assert(fakeTextarea.style.height === "72px" && fakeTextarea.style.overflowY === "auto",
     "auto-growing narrative input should size itself from content and allow overflow only beyond its visible height");
 assert(uiSource.includes("framework-contextual-actions") && uiSource.includes('title: "Characters"') &&
-    uiSource.includes('radioField("use_item", "Use item"') && uiSource.includes('item.description || ""') &&
+    uiSource.includes('radioField("use_item", "Use item"') && uiSource.includes('id="action-use-item-input"') &&
+    uiSource.includes('option.input_required') && uiSource.includes('input_text') && uiSource.includes('item.description || ""') &&
     uiSource.includes('title: "Here"') && uiSource.includes('title: "Travel"') &&
     !uiSource.includes("setup.CharacterAPI.perform") &&
     !uiSource.includes("Use the narrative or formal-action controls below") &&

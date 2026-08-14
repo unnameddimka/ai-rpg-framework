@@ -34,7 +34,7 @@ and load `data/world.json`.
 
 `data/world.json` is the authoritative authored source. Generated files under `src/generated/` are build products and must not be edited manually.
 
-The editor is standalone/offline and can author locations, sublocations, characters, public/private descriptions, abilities, item definitions, stable item instances and initial placement, locks/keys, and initial mind data.
+The editor is standalone/offline and can author locations, sublocations, characters, public/private descriptions, abilities, item definitions, stable item instances and initial placement, locks/keys, and initial mind data. Item `useAction` authoring includes deterministic effects, the deterministic text-input `abstract_study` effect, and the generic model-backed `utility_query` information-source effect with bounded reader text input, an authored Utility-model source prompt, and an optional per-item output-token cap.
 
 ## Build and test
 
@@ -83,6 +83,10 @@ Production model calls resolve through named request profiles. OpenRouter reques
 
 The shared executor intentionally leaves at least one second between live transport calls and honors `Retry-After` after HTTP 429. Safe timelapse maintenance work may execute concurrently, but ordinary causal character reactions do not.
 
+`abstract_study` is a deterministic text-input item effect for cases where gameplay needs to record that a character studied a freely chosen subject without generating new lore. The controller supplies bounded `input_text`; the engine commits `use_item` and returns authored private feedback that may interpolate `{inputText}`. Reader-specific runtime progress tracks the immediately active study thread. Lexically related follow-ups advance through `survey` → `focused` → `saturated`; an unrelated question starts a new survey. Authored focused/saturated feedback can signal diminishing theoretical returns and suggest practice or a different question without inventing the subject matter. No model call is made.
+
+Authored item interactions may also use the Utility role after a deterministic `use_item` commit. `utility_query` accepts bounded `input_text`, calls a non-character authored information source, and returns generated content as private grounded feedback/observation to the reader. The source is not an NPC and receives no character mind by default. Use this only when the source genuinely needs generated information; for lore-safe educational progress prefer `abstract_study`. Generated content grounds what the source returned, not automatically the objective truth of every claim inside it.
+
 ## Repository map
 
 ```text
@@ -101,6 +105,7 @@ src/21-ai-settings.js           API key + Character/Utility/Narrator model setti
 src/22-openrouter-client.js     Browser OpenRouter transport/routing options
 src/23-ai-protocol.js           Ordinary character JSON protocol/validation
 src/24-ai-request-executor.js   Pacing, serialization/concurrency boundary, exchange log
+src/24-item-model-effects.js    Deferred non-character Utility item information requests
 src/24-ai-turn-scheduler.js     Causal AI reaction-wave scheduler
 src/24-timelapse-core.js        Generic coarse-time planning/encounter/reflection core
 src/24-night-timelapse.js       Overnight wrapper/policy

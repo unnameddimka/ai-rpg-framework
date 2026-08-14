@@ -143,6 +143,15 @@
                 typeof action.amount === "number" && action.amount > options.maximum_amount) {
             errors.push(`${path}.amount exceeds currently available maximum ${options.maximum_amount}.`);
         }
+        if (action.type === "use_item" && typeof action.item_id === "string" && Array.isArray(options.items)) {
+            const itemOption = options.items.find(function (candidate) { return candidate.id === action.item_id; });
+            if (itemOption && itemOption.input_required) {
+                const inputText = typeof action.input_text === "string" ? action.input_text.trim() : "";
+                const maxLength = Number.isInteger(itemOption.input_max_length) ? itemOption.input_max_length : 600;
+                if (!inputText) errors.push(`${path}.input_text is required for ${JSON.stringify(itemOption.action_label || action.item_id)}.`);
+                else if (inputText.length > maxLength) errors.push(`${path}.input_text must not exceed ${maxLength} characters.`);
+            }
+        }
         return errors;
     }
 

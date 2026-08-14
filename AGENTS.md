@@ -68,7 +68,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Production requests should resolve through `setup.AIRequestProfiles` unless an exception is explicit and documented.
 - Model roles:
   - Character: ordinary AIController decisions.
-  - Utility: timelapse planning/replanning/intents/resolver, reflection, consolidation.
+  - Utility: timelapse planning/replanning/intents/resolver, reflection, consolidation, authored non-character information-source queries.
   - Narrator: presentation-only prose.
 - Utility default is DeepSeek V4 Flash; if an invalid/unavailable configured Utility model cannot be resolved locally, fall back safely to Character role where the workflow supports fallback.
 - Ordinary character decisions retain the Character model.
@@ -113,6 +113,11 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Saved compatible runtime placement/state for an existing stable item instance wins over its authored starting placement.
 - New authored stable instances absent from an older save remain in their current authored starting placement after migration.
 - Item use may emit private/public grounded feedback without requiring buffs/stats. Narrative-only effects are valid when explicitly authored.
+- Text-input item effects may be deterministic (`abstract_study`) or model-backed (`utility_query`). `abstract_study` must return authored feedback only and make no model request. It may keep bounded reader-specific runtime study progress for the source and deterministically classify related follow-ups as `survey`, `focused`, or `saturated`; this state is learning/progress metadata, not generated lore. Model-backed item information effects must remain post-action effects: first validate/commit the deterministic physical `use_item`, then execute the deferred Utility request. Never let model output become an alternate mechanical commit path.
+- A `utility_query` source is not a character: do not give it controller state, mind, relationships, autonomous turns, or the reader's private mind unless a future architecture explicitly authorizes such context.
+- Generated information-source text grounds what the source returned; it does not automatically elevate every embedded claim to objective canonical truth.
+- `utility_query` authoring must control lore specificity explicitly. Do not invent new proper nouns/dates/named world facts unless the authored source contract deliberately authorizes generative concrete lore. When only character learning/progress is needed, use deterministic `abstract_study` instead of asking a model to summarize the subject.
+- `utility_query` may declare a bounded per-item `utilityMaxTokens`; use it to constrain genuinely model-backed sources. `abstract_study` has no model-output budget because no model is called.
 - Do not add one-off story migration fields to item definitions/instances.
 
 ## 12. UI/editor

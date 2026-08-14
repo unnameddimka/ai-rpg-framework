@@ -68,6 +68,22 @@
         return clone(savedCharacter.mind[partition]);
     }
 
+    function migrationAbstractStudyProgress(savedCharacter) {
+        const source = savedCharacter && savedCharacter.mind && savedCharacter.mind.abstractStudyProgress;
+        if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+        const result = {};
+        Object.entries(source).slice(0, 64).forEach(function (entry) {
+            const key = String(entry[0] || "").slice(0, 160);
+            const value = entry[1];
+            if (!key || !value || typeof value !== "object" || Array.isArray(value)) return;
+            const lastInput = typeof value.lastInput === "string" ? value.lastInput.trim().slice(0, 600) : "";
+            const depth = Number.isInteger(value.depth) ? Math.max(1, Math.min(3, value.depth)) : 1;
+            if (!lastInput) return;
+            result[key] = { lastInput: lastInput, depth: depth };
+        });
+        return result;
+    }
+
     function candidateInventoryForSavedContainer(savedWorld, candidate, savedContainerId) {
         if (savedContainerId && candidate.inventories[savedContainerId]) return savedContainerId;
         const savedInventory = savedContainerId && savedWorld.inventories && savedWorld.inventories[savedContainerId];
@@ -304,6 +320,7 @@
             memoriesPreserved: 0,
             relationshipsPreserved: 0,
             beliefsPreserved: 0,
+            abstractStudyProgressPreserved: 0,
             runtimeEventsPreserved: 0,
             runtimeEventsDiscarded: 0,
             runtimeObservationsPreserved: 0,
@@ -347,11 +364,13 @@
                 character.mind.relationships = migrationArray(savedCharacter, "relationships");
                 character.mind.recentMemories = migrationArray(savedCharacter, "recentMemories");
                 character.mind.longTermMemories = migrationArray(savedCharacter, "longTermMemories");
+                character.mind.abstractStudyProgress = migrationAbstractStudyProgress(savedCharacter);
                 character.mind.pendingObservations = [];
                 character.sleeping = savedCharacter.sleeping === true;
                 report.beliefsPreserved += character.mind.beliefs.length;
                 report.relationshipsPreserved += character.mind.relationships.length;
                 report.memoriesPreserved += character.mind.recentMemories.length + character.mind.longTermMemories.length;
+                report.abstractStudyProgressPreserved += Object.keys(character.mind.abstractStudyProgress).length;
 
                 if (Number.isInteger(savedCharacter.wallet) && savedCharacter.wallet >= 0) {
                     character.wallet = savedCharacter.wallet;

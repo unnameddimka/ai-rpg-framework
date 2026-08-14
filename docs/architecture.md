@@ -72,7 +72,22 @@ An item instance references an authored item definition. The definition supplies
 
 Tracked transformations change the instance's definition/subtype deterministically rather than replacing narrative text only.
 
-Item definitions may expose deterministic `useAction` effects. A use effect may be mechanically light and return only grounded public/private feedback; it does not need to add stats or buffs.
+Item definitions may expose authored `useAction` effects. Most effects are synchronous/deterministic, such as `report_memory_counts`, and may return only grounded public/private feedback without adding stats or buffs.
+
+`abstract_study` is a deterministic text-input effect for educational/reference interactions that must not materialize new lore. The controller supplies bounded `input_text`; the engine validates and commits `use_item`, then returns authored private feedback whose template may interpolate `{inputText}`. The engine stores a small reader-specific progress record keyed by source item. Consecutive lexically related queries advance through `survey`, `focused`, and `saturated`; an unrelated query begins a new survey. `focusedFeedbackText` and `saturatedFeedbackText` are optional authored stage templates, with `feedbackText` as the survey/fallback template. This progress is not exposed as lore and no model request is created.
+
+A `useAction` may also declare a **model-backed information request**. The generic effect is `utility_query`:
+
+1. the controller chooses ordinary `use_item` and supplies bounded `input_text` when that authored item requires it;
+2. the deterministic engine validates ownership/current availability/input, commits the public `item_used` event, and returns a deferred model-request descriptor;
+3. after that canonical action commit, the shared AI executor sends the authored information-source contract plus the reader input to the Utility model;
+4. the generated result is delivered only to the configured reader as private grounded action feedback/observation.
+
+The Utility call is **not an actor turn**. The information source has no controller, personality, goals, memories, relationships, or autonomous agency. The request does not receive the reader's private mind by default; current `utility_query` input consists of authored source instructions/description plus the explicit reader query.
+
+Source authoring also owns **specificity and output size**. `utility_query` may declare `utilityMaxTokens` to bound model output for that item. A source contract may intentionally return concrete reference material, but concrete worldbuilding is not implicit: new proper nouns, dates, named doctrines, spells, organizations, places, historical claims, or similar setting facts should only be generated when the authored source explicitly allows it. When gameplay only needs to establish that a character studied a subject and broadened understanding, use deterministic `abstract_study` instead of generating a summary with a model.
+
+A generated information result grounds **what the source returned**, not necessarily the objective truth of every proposition inside it. Authored sources may contain competing schools, disputed history, mistaken theories, records, interpretations, etc. unless their contract explicitly defines stronger authority. A model-request failure does not retroactively undo the already committed physical item-use action; it becomes private failure feedback instead.
 
 ## 4. Characters and control
 
@@ -252,7 +267,7 @@ Production requests resolve through `setup.AIRequestProfiles`.
 Current model roles:
 
 - **Character**: ordinary AIController decision;
-- **Utility**: timelapse structural work, reflection, memory consolidation;
+- **Utility**: timelapse structural work, reflection, memory consolidation, authored non-character information-source queries;
 - **Narrator**: presentation prose.
 
 Profiles centralize model role, max output, reasoning settings, temperature, provider routing, and telemetry labels without encoding gameplay semantics.
@@ -303,7 +318,7 @@ Ordinary character decisions return one strict JSON object containing:
 - `continuation`;
 - `memoryUpdates`.
 
-Protocol validation rejects unknown/malformed fields and illegal action options. One repair attempt may be made for malformed/schema-invalid output.
+Protocol validation rejects unknown/malformed fields and illegal action options. Action-specific authored text input (currently `use_item.input_text` for `abstract_study` and `utility_query`) is also required/bounded from the current `available_actions` option record before execution. One repair attempt may be made for malformed/schema-invalid output.
 
 Structured timelapse workflows use separate exact JSON protocols with their own validators/repair prompts.
 
@@ -337,7 +352,7 @@ Normal sidebar may expose read-only scheduler information, but there is no manua
 
 The current authored world includes the tavern, village/street/temple, village edge and Mara's secluded cottage.
 
-Mara's cottage includes a work table and a stable authored **Slab of Full Arcane Knowledge** instance. The slab is a narrative-only searchable arcane encyclopedia: consulting it provides grounded access/feedback but no buffs, stats, automatic mastery, or omniscient current/future knowledge.
+Mara's cottage includes a work table and a stable authored **Slab of Full Arcane Knowledge** instance. `Consult slab` uses deterministic `abstract_study`. Mara/another holder supplies a subject or question in `input_text`; the engine returns authored private feedback for the reader's current study stage. A new line gives broad orientation, a related follow-up gives focused understanding, and continued reading on the same line reaches `saturated` feedback with diminishing theoretical returns. The slab never asks a model to invent or summarize the subject, so it cannot introduce new schools, spells, techniques, taxonomies, history, dates, mechanisms, recipes, or other setting facts through this interaction. It provides no buffs, stats, automatic mastery, or omniscient current/future knowledge.
 
 Story-specific activation of an existing save is performed by editing that save's runtime observation inbox when desired, not by embedding Mara/slab special cases into migration.
 

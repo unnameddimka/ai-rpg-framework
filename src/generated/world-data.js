@@ -1209,10 +1209,15 @@
       "fillable": false,
       "useAction": {
         "actionLabel": "Consult slab",
-        "effectId": "narrative_feedback",
-        "publicText": "{actorName} touches the surface of the arcane knowledge slab and pale symbols awaken across it.",
-        "feedbackText": "The slab opens into a vast searchable and cross-referenced archive of arcane knowledge. You may search a question or subject, browse related entries, compare competing theories, follow references, or spend extended time studying. It provides information rather than mastery, and it is not an oracle for current hidden events or the future.",
-        "aiInstructions": "Choose what to investigate from the character's own curiosity, memories, questions, and circumstances. The archive is deep enough for repeated study over hours or days; entries can lead to prerequisites, related subjects, practical methods, historical disputes, and competing theories. Do not treat consulting it as instant mastery or as access to current hidden facts or the future."
+        "effectId": "abstract_study",
+        "publicText": "{actorName} touches the surface of the arcane knowledge slab and searches its archive.",
+        "feedbackText": "You survey the slab's material relevant to “{inputText}”. The reading gives you a broad theoretical orientation to that subject and enough context to identify narrower lines of study. Further consultation can profitably focus on a more specific aspect; this is study and orientation, not instant practical mastery.",
+        "inputLabel": "Question or topic",
+        "inputPlaceholder": "What do you want to learn about?",
+        "inputMaxLength": 600,
+        "aiInstructions": "When you choose Consult slab, put the subject or question you want to study in action.input_text. Choose it from your own curiosity, memories, current questions, and circumstances. This interaction records abstract study progress rather than returning concrete reference content. Repeated consultations on a related line move from broad orientation to focused understanding and then diminishing returns; when the slab says a line is saturated, practice or a genuinely different question is more useful than asking the same thing again.",
+        "focusedFeedbackText": "You study the slab's material relevant to “{inputText}” in greater depth. The reading gives you a substantially clearer theoretical grasp of this line of inquiry and organizes it within the broader subject. Another close consultation on the same line would mostly consolidate what you have already learned; practical competence would still require practice.",
+        "saturatedFeedbackText": "You revisit the slab's material relevant to “{inputText}”. The archive now mostly reinforces and organizes material you have already studied rather than opening a substantially new theoretical direction. Further reading on this same line has diminishing returns; meaningful progress would come from practice or from choosing a different question."
       }
     }
   },
@@ -1328,6 +1333,6 @@
       "inventoryId": "inventory_maraCottageTable"
     }
   },
-  "authoringRevision": "38f1ec4c31b47dc18970781fe578b59c0fee9e22fe34927761c7654f5d5cff45"
+  "authoringRevision": "8df3a697dc90da11243cc8ca8f71fb7e5c32bb73ebb7409e01f481bc08252d5b"
 };
 }());

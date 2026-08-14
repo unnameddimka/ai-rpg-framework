@@ -40,6 +40,19 @@ rejects(function (doc) { doc.itemDefinitions.emptyMug.fillAction.resultDefinitio
 rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.effectId = "execute_arbitrary_code"; }, "invalid useAction");
 rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.feedbackText = ""; }, "invalid useAction");
 rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.aiInstructions = ""; }, "aiInstructions");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.inputLabel = ""; }, "requires inputLabel");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.inputMaxLength = 5000; }, "inputMaxLength");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.focusedFeedbackText = ""; }, "focusedFeedbackText");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.saturatedFeedbackText = ""; }, "saturatedFeedbackText");
+rejects(function (doc) {
+    doc.itemDefinitions.arcaneKnowledgeSlab.useAction.effectId = "utility_query";
+    doc.itemDefinitions.arcaneKnowledgeSlab.useAction.utilityPrompt = "";
+}, "requires utilityPrompt");
+rejects(function (doc) {
+    doc.itemDefinitions.arcaneKnowledgeSlab.useAction.effectId = "utility_query";
+    doc.itemDefinitions.arcaneKnowledgeSlab.useAction.utilityPrompt = "Return concise reference information.";
+    doc.itemDefinitions.arcaneKnowledgeSlab.useAction.utilityMaxTokens = 10;
+}, "utilityMaxTokens");
 rejects(function (doc) { doc.itemDefinitions.memoryStone.description = 42; }, "description must be text");
 rejects(function (doc) { doc.locations.commonRoom.timelapseActions[0].effectId = "execute_arbitrary_code"; }, "references unknown effect");
 rejects(function (doc) { doc.locations.commonRoom.timelapseActions[0].effectParams.destinationInventoryId = "inventory_missing"; }, "references missing destination inventory");

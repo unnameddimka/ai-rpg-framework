@@ -591,6 +591,27 @@
                         typeof action.feedbackText !== "string" || !action.feedbackText.trim()) {
                     return fail("ITEM_USE_ACTION_INVALID", `Item definition ${definitionId} has an invalid useAction.`);
                 }
+                if (action.effectId === "utility_query" || action.effectId === "abstract_study") {
+                    if (typeof action.inputLabel !== "string" || !action.inputLabel.trim()) {
+                        return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} ${action.effectId} requires inputLabel.`);
+                    }
+                    if (action.inputPlaceholder !== undefined && typeof action.inputPlaceholder !== "string") {
+                        return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} inputPlaceholder must be text.`);
+                    }
+                    if (action.inputMaxLength !== undefined && (!Number.isInteger(action.inputMaxLength) ||
+                            action.inputMaxLength < 1 || action.inputMaxLength > 2000)) {
+                        return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} inputMaxLength must be an integer from 1 to 2000.`);
+                    }
+                }
+                if (action.effectId === "utility_query") {
+                    if (typeof action.utilityPrompt !== "string" || !action.utilityPrompt.trim()) {
+                        return fail("ITEM_UTILITY_QUERY_INVALID", `Item definition ${definitionId} utility_query requires utilityPrompt.`);
+                    }
+                    if (action.utilityMaxTokens !== undefined && (!Number.isInteger(action.utilityMaxTokens) ||
+                            action.utilityMaxTokens < 64 || action.utilityMaxTokens > 4000)) {
+                        return fail("ITEM_UTILITY_QUERY_INVALID", `Item definition ${definitionId} utilityMaxTokens must be an integer from 64 to 4000.`);
+                    }
+                }
             }
         }
 
@@ -770,6 +791,11 @@
                 if (!Array.isArray(character.mind[partition])) {
                     return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.${partition} must be an array.`);
                 }
+            }
+            if (character.mind.abstractStudyProgress !== undefined &&
+                    (!character.mind.abstractStudyProgress || typeof character.mind.abstractStudyProgress !== "object" ||
+                    Array.isArray(character.mind.abstractStudyProgress))) {
+                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.abstractStudyProgress must be an object when present.`);
             }
             for (const abilityId of character.abilityIds || []) {
                 if (!world.abilities[abilityId]) {
@@ -1147,6 +1173,86 @@
         });
     }
 
+    const ABSTRACT_STUDY_STOP_WORDS = new Set([
+        "a", "an", "and", "are", "as", "at", "be", "by", "can", "could", "describe", "do", "does", "for", "from",
+        "how", "i", "in", "including", "into", "is", "it", "learn", "learning", "method", "methods", "of", "on", "or",
+        "practical", "practice", "practices", "question", "relevant", "safe", "safely", "simple", "step", "steps", "study",
+        "studying", "subject", "suitable", "technique", "techniques", "the", "their", "them", "theory", "this", "to", "use",
+        "using", "what", "when", "where", "which", "with", "would", "your", "novice", "beginner", "basic", "exact", "exercise",
+        "exercises", "archive", "slab", "knowledge", "material", "materials"
+    ]);
+
+    function normalizeAbstractStudyToken(token) {
+        let value = String(token || "").toLowerCase();
+        if (value.length > 6 && value.endsWith("ing")) value = value.slice(0, -3);
+        else if (value.length > 5 && value.endsWith("ed")) value = value.slice(0, -2);
+        else if (value.length > 5 && value.endsWith("es")) value = value.slice(0, -2);
+        else if (value.length > 4 && value.endsWith("s")) value = value.slice(0, -1);
+        return value;
+    }
+
+    function abstractStudyTokens(text) {
+        return String(text || "").toLowerCase()
+            .replace(/[^a-z0-9\u00c0-\u024f\u0400-\u04ff]+/g, " ")
+            .split(/\s+/)
+            .map(normalizeAbstractStudyToken)
+            .filter(function (token) {
+                return token.length >= 3 && !ABSTRACT_STUDY_STOP_WORDS.has(token);
+            });
+    }
+
+    function abstractStudyTopicsRelated(previousText, nextText) {
+        const previousNormalized = String(previousText || "").trim().toLowerCase();
+        const nextNormalized = String(nextText || "").trim().toLowerCase();
+        if (!previousNormalized || !nextNormalized) return false;
+        if (previousNormalized === nextNormalized) return true;
+        const previous = new Set(abstractStudyTokens(previousNormalized));
+        const next = new Set(abstractStudyTokens(nextNormalized));
+        if (!previous.size || !next.size) return false;
+        let overlap = 0;
+        previous.forEach(function (token) {
+            if (next.has(token)) overlap += 1;
+        });
+        if (overlap >= 2) return true;
+        return overlap === 1 && Math.min(previous.size, next.size) <= 2;
+    }
+
+    function ensureAbstractStudyProgress(actor) {
+        if (!actor.mind || typeof actor.mind !== "object") actor.mind = {};
+        if (!actor.mind.abstractStudyProgress || typeof actor.mind.abstractStudyProgress !== "object" ||
+                Array.isArray(actor.mind.abstractStudyProgress)) {
+            actor.mind.abstractStudyProgress = {};
+        }
+        return actor.mind.abstractStudyProgress;
+    }
+
+    function abstractStudyStage(actor, item, inputText) {
+        const progress = ensureAbstractStudyProgress(actor);
+        const key = item.id;
+        const previous = progress[key] && typeof progress[key] === "object" ? progress[key] : null;
+        const related = Boolean(previous && abstractStudyTopicsRelated(previous.lastInput, inputText));
+        const depth = related ? Math.min(3, Math.max(1, Number(previous.depth) || 1) + 1) : 1;
+        progress[key] = {
+            lastInput: inputText.slice(0, 600),
+            depth: depth
+        };
+        return {
+            id: depth === 1 ? "survey" : (depth === 2 ? "focused" : "saturated"),
+            depth: depth,
+            relatedToPrevious: related
+        };
+    }
+
+    function abstractStudyFeedbackTemplate(useAction, stage) {
+        if (stage.id === "focused" && typeof useAction.focusedFeedbackText === "string" && useAction.focusedFeedbackText.trim()) {
+            return useAction.focusedFeedbackText;
+        }
+        if (stage.id === "saturated" && typeof useAction.saturatedFeedbackText === "string" && useAction.saturatedFeedbackText.trim()) {
+            return useAction.saturatedFeedbackText;
+        }
+        return useAction.feedbackText;
+    }
+
     const ItemEffectRegistry = {
         report_memory_counts: {
             execute: function (actor, item, definition, useAction) {
@@ -1189,6 +1295,55 @@
                             itemName: definition.name
                         }),
                         data: { itemId: item.id, effectId: useAction.effectId }
+                    }]
+                };
+            }
+        },
+        abstract_study: {
+            execute: function (actor, item, definition, useAction, world, action) {
+                const inputText = action && typeof action.input_text === "string" ? action.input_text.trim() : "";
+                const stage = abstractStudyStage(actor, item, inputText);
+                const feedbackTemplate = abstractStudyFeedbackTemplate(useAction, stage);
+                return {
+                    feedback: [{
+                        recipientId: actor.id,
+                        kind: "observation",
+                        code: "ITEM_ABSTRACT_STUDY_RESULT",
+                        text: renderItemActionText(feedbackTemplate, {
+                            actorName: actor.name,
+                            itemName: definition.name,
+                            inputText: inputText,
+                            studyStage: stage.id,
+                            studyDepth: stage.depth
+                        }),
+                        data: {
+                            itemId: item.id,
+                            effectId: useAction.effectId,
+                            inputText: inputText,
+                            studyStage: stage.id,
+                            studyDepth: stage.depth,
+                            relatedToPrevious: stage.relatedToPrevious
+                        }
+                    }]
+                };
+            }
+        },
+        utility_query: {
+            execute: function (actor, item, definition, useAction, world, action) {
+                const inputText = action && typeof action.input_text === "string" ? action.input_text.trim() : "";
+                return {
+                    feedback: [],
+                    modelRequests: [{
+                        kind: "utility_query",
+                        recipientId: actor.id,
+                        itemId: item.id,
+                        itemName: definition.name,
+                        itemDescription: typeof definition.description === "string" ? definition.description : "",
+                        effectId: useAction.effectId,
+                        inputText: inputText,
+                        systemPrompt: useAction.utilityPrompt,
+                        feedbackText: useAction.feedbackText,
+                        maxTokens: Number.isInteger(useAction.utilityMaxTokens) ? useAction.utilityMaxTokens : null
                     }]
                 };
             }
@@ -1998,7 +2153,8 @@
                 type: "object",
                 properties: {
                     type: { const: "use_item" },
-                    item_id: { type: "string" }
+                    item_id: { type: "string" },
+                    input_text: { type: "string" }
                 },
                 required: ["type", "item_id"]
             },
@@ -2009,12 +2165,17 @@
                     const definition = getItemDefinition(item, world);
                     const useAction = definition && definition.useAction;
                     if (!useAction || !ItemEffectRegistry[useAction.effectId]) return null;
+                    const queryInput = useAction.effectId === "utility_query" || useAction.effectId === "abstract_study";
                     return {
                         id: item.id,
                         name: definition.name,
                         action_label: useAction.actionLabel,
                         effect_id: useAction.effectId,
-                        instructions: typeof useAction.aiInstructions === "string" ? useAction.aiInstructions : ""
+                        instructions: typeof useAction.aiInstructions === "string" ? useAction.aiInstructions : "",
+                        input_required: queryInput,
+                        input_label: queryInput ? useAction.inputLabel : "",
+                        input_placeholder: queryInput && typeof useAction.inputPlaceholder === "string" ? useAction.inputPlaceholder : "",
+                        input_max_length: queryInput && Number.isInteger(useAction.inputMaxLength) ? useAction.inputMaxLength : (queryInput ? 600 : 0)
                     };
                 }).filter(Boolean);
                 return { item_ids: items.map(function (item) { return item.id; }), items: items };
@@ -2033,6 +2194,12 @@
                 if (!ItemEffectRegistry[useAction.effectId]) {
                     return fail("ITEM_EFFECT_UNKNOWN", "The configured item effect is not supported by the engine.");
                 }
+                if (useAction.effectId === "utility_query" || useAction.effectId === "abstract_study") {
+                    const inputText = typeof action.input_text === "string" ? action.input_text.trim() : "";
+                    const maxLength = Number.isInteger(useAction.inputMaxLength) ? useAction.inputMaxLength : 600;
+                    if (!inputText) return fail("ITEM_INPUT_REQUIRED", `${useAction.inputLabel || "Input"} is required.`);
+                    if (inputText.length > maxLength) return fail("ITEM_INPUT_TOO_LONG", `${useAction.inputLabel || "Input"} must not exceed ${maxLength} characters.`);
+                }
                 return ok();
             },
             execute: function (actor, action, world) {
@@ -2040,7 +2207,7 @@
                 const definition = getItemDefinition(item, world);
                 const useAction = definition.useAction;
                 const effect = ItemEffectRegistry[useAction.effectId];
-                const effectResult = effect.execute(actor, item, definition, useAction, world) || {};
+                const effectResult = effect.execute(actor, item, definition, useAction, world, action) || {};
                 return {
                     events: [{
                         type: "item_used",
@@ -2055,7 +2222,8 @@
                             itemName: definition.name
                         })
                     }],
-                    feedback: clone(effectResult.feedback || [])
+                    feedback: clone(effectResult.feedback || []),
+                    modelRequests: clone(effectResult.modelRequests || [])
                 };
             }
         },
@@ -2339,6 +2507,15 @@
                 typeof action.amount === "number" && action.amount > options.maximum_amount) {
             errors.push("Action amount exceeds the currently available maximum.");
         }
+        if (action.type === "use_item" && typeof action.item_id === "string" && Array.isArray(options.items)) {
+            const itemOption = options.items.find(function (candidate) { return candidate.id === action.item_id; });
+            if (itemOption && itemOption.input_required) {
+                const inputText = typeof action.input_text === "string" ? action.input_text.trim() : "";
+                const maxLength = Number.isInteger(itemOption.input_max_length) ? itemOption.input_max_length : 600;
+                if (!inputText) errors.push(`Action field input_text is required for ${itemOption.action_label || action.item_id}.`);
+                else if (inputText.length > maxLength) errors.push(`Action field input_text exceeds the maximum length of ${maxLength}.`);
+            }
+        }
         return errors;
     }
 
@@ -2425,6 +2602,7 @@
             const raw = definition.execute(actor, action, world);
             const rawEvents = Array.isArray(raw) ? raw : (raw.events || []);
             const feedback = Array.isArray(raw) ? [] : clone(raw.feedback || []);
+            const modelRequests = Array.isArray(raw) ? [] : clone(raw.modelRequests || []);
             const invariantResult = validateWorld(world);
 
             if (!invariantResult.ok) {
@@ -2451,7 +2629,7 @@
                 }, world);
             }
 
-            const result = { ok: true, action: clone(action), events: clone(events), feedback: feedback, error: null };
+            const result = { ok: true, action: clone(action), events: clone(events), feedback: feedback, modelRequests: modelRequests, error: null };
             world.debug.lastActionResult = result;
             return result;
         } catch (error) {

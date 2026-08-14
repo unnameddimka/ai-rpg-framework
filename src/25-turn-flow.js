@@ -249,6 +249,22 @@
 
         const intentResult = setup.CharacterAPI.submitIntent(actorId, input);
         if (!intentResult.ok) return intentResult;
+        if (intentResult.actionResult && intentResult.actionResult.ok && setup.ItemModelEffects) {
+            const modelEffects = await setup.ItemModelEffects.resolveActionResult(
+                actorId,
+                intentResult.actionResult,
+                client || setup.OpenRouterClient
+            );
+            if (!modelEffects.ok) {
+                return {
+                    ok: false,
+                    error: clone(modelEffects.error),
+                    actorId: actorId,
+                    turnConsumed: true,
+                    intentResult: clone(intentResult)
+                };
+            }
+        }
 
         const submittedPresentation = describeSubmittedIntent(actorId, input, intentResult);
         emitCommittedPresentation(options, submittedPresentation, { phase: "human", actorId: actorId });

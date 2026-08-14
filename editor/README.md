@@ -9,6 +9,7 @@
 7. Send the downloaded file to the administrator.
 
 Consumable and fillable item types may declare explicit state transitions; equippable slot metadata can be authored for later runtime support.
+Text-input item use actions may use deterministic `abstract_study` progress or model-backed `utility_query`. For `abstract_study`, the normal private feedback is the survey-stage text; optional focused and saturated feedback fields can describe deeper study and diminishing returns without generating new lore.
 
 The editor works offline. It never uploads data and never overwrites the original file.
 No command line, server, account, or development software is required.

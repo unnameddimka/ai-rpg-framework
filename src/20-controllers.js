@@ -114,7 +114,7 @@
             : (lastAttempt && lastAttempt.usage ? clone(lastAttempt.usage) : null);
     }
 
-    function commitDecision(actorId, decision, consumedIds) {
+    async function commitDecision(actorId, decision, consumedIds, client) {
         const narrativeText = combineNarrative(decision);
         let intentResult = { ok: true, action: decision.action, actionResult: null, narrativeResult: null, narrativeSuppressed: false };
         let actionFailed = false;
@@ -146,6 +146,15 @@
             });
             if (!intentResult.ok) throw intentResult.error;
             actionFailed = Boolean(decision.action && intentResult.actionResult && !intentResult.actionResult.ok);
+        }
+
+        if (!actionFailed && intentResult.actionResult && intentResult.actionResult.ok && setup.ItemModelEffects) {
+            const modelEffects = await setup.ItemModelEffects.resolveActionResult(
+                actorId,
+                intentResult.actionResult,
+                client || setup.OpenRouterClient
+            );
+            if (!modelEffects.ok) throw modelEffects.error;
         }
 
         if (!actionFailed) {
@@ -210,7 +219,7 @@
             recordProtocolResult(actorId, "decision", messages, decisionResult);
             if (!decisionResult.ok) throw decisionResult.error;
 
-            const committed = commitDecision(actorId, decisionResult.value, observationIds);
+            const committed = await commitDecision(actorId, decisionResult.value, observationIds, client);
             log("ai", actorId, "Completed one single-request AI reaction turn.");
             return {
                 ok: true,

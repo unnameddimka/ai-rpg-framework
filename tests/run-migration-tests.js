@@ -69,6 +69,9 @@ legacy.entities.hoodedWoman.mind.beliefs = [{ id: "traveler_keeps_word", text: "
 legacy.entities.hoodedWoman.mind.relationships = [{ targetCharacterId: "player", summary: "I cautiously trust the Traveler after our conversation." }];
 legacy.entities.hoodedWoman.mind.recentMemories = [{ id: "memory_ai_41", summary: "Traveler offered me a secluded cottage and left to build it.", importance: 0.9, protected: false }];
 legacy.entities.hoodedWoman.mind.longTermMemories = [{ id: "mara_old_memory", summary: "I have long made remedies for villagers who prefer discretion.", importance: 0.7, protected: true }];
+legacy.entities.hoodedWoman.mind.abstractStudyProgress = {
+    arcaneKnowledgeSlab_01: { lastInput: "magical energy in alchemy", depth: 2 }
+};
 legacy.entities.hoodedWoman.mind.pendingObservations = [{ id: 777, kind: "external_story", text: "A thin dark slab now rests on your work table.", data: { itemId: "arcaneKnowledgeSlab_01" } }];
 legacy.ai.continuations.hoodedWoman = "Wait for the Traveler to show me where the promised cottage stands.";
 legacy.entities.hoodedWoman.wallet = 19;
@@ -146,6 +149,11 @@ assert(world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { r
 assert(world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "traveler_keeps_word"; }) &&
     world.entities.hoodedWoman.mind.relationships.some(function (relationship) { return relationship.targetCharacterId === "player"; }),
     "Mara's saved beliefs and relationships should survive");
+assert(world.entities.hoodedWoman.mind.abstractStudyProgress.arcaneKnowledgeSlab_01 &&
+    world.entities.hoodedWoman.mind.abstractStudyProgress.arcaneKnowledgeSlab_01.lastInput === "magical energy in alchemy" &&
+    world.entities.hoodedWoman.mind.abstractStudyProgress.arcaneKnowledgeSlab_01.depth === 2 &&
+    migrated.report.abstractStudyProgressPreserved === 1,
+    "reader-specific abstract-study progress should survive authored revision migration as bounded runtime state");
 assert(!world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return fact.id === "old_mara_fact"; }) &&
     world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return fact.id === "mara_home"; }) &&
     world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return fact.id === "mara_open_secret"; }),

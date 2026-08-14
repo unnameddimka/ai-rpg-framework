@@ -18,8 +18,10 @@
 - Roadside tavern with Garrick, Nell, Guest Rooms, bar/common-room furniture and keys.
 - Captain Price as a character.
 - Village street/temple/edge and Mara's secluded cottage with garden, bed, table and alchemical shelves.
-- Memory Stone item/use effect.
-- **Slab of Full Arcane Knowledge** authored on Mara's work table. `Consult slab` is narrative-only: searchable/cross-referenced arcane knowledge, no instant mastery and no oracle access to current hidden facts/future.
+- Memory Stone deterministic item/use effect.
+- Deterministic `abstract_study` authored item effect: bounded `use_item.input_text` -> committed item use -> authored private study feedback with `{inputText}` interpolation. Reader+source runtime progress classifies related consecutive queries as `survey`, `focused`, then `saturated`; unrelated questions reset to a fresh survey. No Utility/model request occurs.
+- Generic `utility_query` authored item effect remains available for genuinely model-backed information sources: bounded `input_text` -> committed physical item use -> deferred Utility-model information request -> private grounded result observation to the reader, with optional per-item output-token cap.
+- **Slab of Full Arcane Knowledge** authored on Mara's work table and implemented through `abstract_study`. A reader freely chooses a question/topic. The first consultation gives broad orientation, a related follow-up gives focused theoretical understanding, and a third related consultation reports diminishing returns and points toward practice or a genuinely different question. The slab still does not generate classifications, mechanisms, schools, spells, dates, recipes, or other new setting facts. It remains non-sentient, grants no instant mastery, and has no oracle access to current hidden facts/future.
 
 ### Ordinary AI turns
 
@@ -52,7 +54,7 @@
 - Utility model default: DeepSeek V4 Flash.
 - Central `AIRequestProfiles` for ordinary decisions, timelapse structural jobs, reflection, consolidation and narrator requests.
 - Ordinary character decisions remain on Character model with conservative existing budget.
-- Utility jobs use Utility model.
+- Utility jobs use Utility model, including authored non-character item information queries.
 - Narration uses Narrator model.
 - Provider routing prefers `latency` with fallbacks enabled.
 - Stable non-secret OpenRouter `session_id` values improve sticky routing/cache locality where supported.
@@ -106,6 +108,7 @@ Timelapse is split into generic core + overnight wrapper.
 - Ordinary AI decision prompts can still become large as memories/beliefs grow. Retrieval-based hybrid memory is deferred.
 - Ordinary game-decision reasoning/output budget has not yet been aggressively tuned; request profiles make measured tuning possible without scattering constants.
 - Prompt caching/sticky routing are best-effort provider optimizations, not guaranteed cache hits.
+- Generic `utility_query` sources that deliberately generate concrete lore still have no persistent encyclopedia corpus, so such sources can drift across repeated requests unless a future persistence layer is added. The current arcane slab avoids this class of inconsistency entirely because it uses deterministic `abstract_study` and performs no lore-generating model call.
 - OpenRouter transport is non-streaming.
 - Loudness currently supports noticeable/hidden only; shout propagation is absent.
 - Narrator remains presentation-only and can still embellish incorrectly; deeper narrator grounding is deferred.

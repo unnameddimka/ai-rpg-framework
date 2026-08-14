@@ -198,6 +198,34 @@
         return owned.concat(accessible).find(function (item) { return item.id === itemId; }) || null;
     }
 
+    function useItemOption(view, itemId) {
+        const action = view && view.available_actions && view.available_actions.use_item;
+        const items = action && action.options && Array.isArray(action.options.items) ? action.options.items : [];
+        return items.find(function (candidate) { return candidate.id === itemId; }) || null;
+    }
+
+    function syncUseItemInputUI(view, selectedAction) {
+        const wrapper = document.getElementById("action-use-item-input-wrap");
+        const input = document.getElementById("action-use-item-input");
+        const label = document.getElementById("action-use-item-input-label");
+        if (!wrapper || !input || !label) return;
+        const selectedItemId = selectedAction && selectedAction.type === "use_item"
+            ? selectedAction.item_id
+            : (document.getElementById("action-use-item") && document.getElementById("action-use-item").value || "");
+        const option = useItemOption(view, selectedItemId);
+        const required = Boolean(option && option.input_required);
+        wrapper.hidden = !required;
+        input.disabled = !required || getBusyState().busy;
+        label.textContent = required ? (option.input_label || "Input") : "Input";
+        input.placeholder = required ? (option.input_placeholder || "") : "";
+        input.maxLength = required && Number.isInteger(option.input_max_length) ? option.input_max_length : 600;
+        if (required && selectedAction && selectedAction.type === "use_item" && typeof selectedAction.input_text === "string") {
+            input.value = selectedAction.input_text;
+        } else if (!required) {
+            input.value = "";
+        }
+    }
+
     function actionLabel(action, view) {
         if (!action || !action.type) return "None";
         const item = action.item_id ? findViewItem(view, action.item_id) : null;
@@ -312,6 +340,7 @@
         document.querySelectorAll('input[name="formal-action"]').forEach(function (radio) {
             if (radio.value) radio.checked = Boolean(selected && radio.value === selected.type);
         });
+        syncUseItemInputUI(view, selected);
         if (!selected) return;
         if (selected.type === "move") setControlValue("action-move-destination", selected.destination_id);
         if (selected.type === "unlock") setControlValue("action-unlock-destination", selected.destination_id);
@@ -333,7 +362,10 @@
         }
         if (selected.type === "fill") setControlValue("action-fill-item", selected.item_id);
         if (selected.type === "consume") setControlValue("action-consume-item", selected.item_id);
-        if (selected.type === "use_item") setControlValue("action-use-item", selected.item_id);
+        if (selected.type === "use_item") {
+            setControlValue("action-use-item", selected.item_id);
+            syncUseItemInputUI(view, selected);
+        }
     }
 
     function buildContextualActionGroups(view) {
@@ -1759,7 +1791,7 @@
             radioField("place_item", "Place item", `<select id="action-place-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-place-inventory"${disabledAttribute}>${optionMarkup(placementInventories, "No accessible surface")}</select>`, ownedItems.length === 0 || placementInventories.length === 0),
             radioField("fill", "Fill item", `<select id="action-fill-item"${disabledAttribute}>${itemActionOptionMarkup(fillItems, "No fillable item here")}</select>`, fillItems.length === 0),
             radioField("consume", "Consume item", `<select id="action-consume-item"${disabledAttribute}>${itemActionOptionMarkup(consumableItems, "No consumable item")}</select>`, consumableItems.length === 0),
-            radioField("use_item", "Use item", `<select id="action-use-item"${disabledAttribute}>${itemActionOptionMarkup(usableItems, "No usable item")}</select>`, usableItems.length === 0),
+            radioField("use_item", "Use item", `<select id="action-use-item"${disabledAttribute}>${itemActionOptionMarkup(usableItems, "No usable item")}</select><label id="action-use-item-input-wrap" hidden><span id="action-use-item-input-label">Input</span><input id="action-use-item-input" type="text" maxlength="600"${disabledAttribute}></label>`, usableItems.length === 0),
             radioField("sleep", "Sleep till morning", "<p>No parameters.</p>", !view.available_actions.sleep)
         ].concat(zeroInputExtras.map(function (entry) {
             return radioField(entry[0], entry[1].description || entry[0], "<p>No parameters.</p>", false);
@@ -1824,11 +1856,22 @@
             if (type === "place_item") return { type: type, item_id: $("#action-place-item").val(), target_inventory_id: $("#action-place-inventory").val() };
             if (type === "fill") return { type: type, item_id: $("#action-fill-item").val() };
             if (type === "consume") return { type: type, item_id: $("#action-consume-item").val() };
-            if (type === "use_item") return { type: type, item_id: $("#action-use-item").val() };
+            if (type === "use_item") {
+                const itemId = $("#action-use-item").val();
+                const option = useItemOption(view, itemId);
+                const result = { type: type, item_id: itemId };
+                if (option && option.input_required) result.input_text = String($("#action-use-item-input").val() || "");
+                return result;
+            }
             return { type: type };
         }
 
         syncActionSelectionUI(view);
+        syncUseItemInputUI(view, selectedActionForView(view));
+
+        $("#action-use-item").on("change", function () {
+            syncUseItemInputUI(view, { type: "use_item", item_id: $(this).val(), input_text: "" });
+        });
 
         $("#action-narrative-target").on("change", function () {
             uiState.interactionTargetId = $(this).val() || "";

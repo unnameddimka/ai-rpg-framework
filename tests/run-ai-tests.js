@@ -40,7 +40,7 @@ load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
-load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
+load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-item-model-effects.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
 
 async function main() {
     let world = fresh();
@@ -310,11 +310,58 @@ async function main() {
         utilityProfile.reasoningEffort === "none" && utilityProfile.providerSort === "latency" &&
         typeof utilityProfile.sessionId === "string" && utilityProfile.sessionId.includes("hoodedWoman"),
         "timelapse request profile should use the utility model, no reasoning, latency routing, and a stable actor-scoped sticky session");
+    const itemUtilityProfile = setup.AIRequestProfiles.resolve("item-utility-query", { actorId: "hoodedWoman" });
+    assert(itemUtilityProfile.modelId === setup.AIRuntimeSettings.getSelectedUtilityModelId() &&
+        itemUtilityProfile.reasoningEffort === "none" && itemUtilityProfile.maxTokens === 1800 &&
+        itemUtilityProfile.temperature === 0.55 && itemUtilityProfile.sessionId.includes("hoodedWoman"),
+        "authored item utility queries should use the Utility model with bounded no-reasoning output and actor-scoped sticky routing");
     await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "profiled" }], utilityProfile, fetchOk);
     const profiledBody = JSON.parse(captured.options.body);
     assert(profiledBody.model === setup.AIRuntimeSettings.getSelectedUtilityModelId() &&
         profiledBody.provider.sort === "latency" && profiledBody.session_id === utilityProfile.sessionId,
         "profiled OpenRouter requests should carry the resolved utility model, latency provider sort, and session_id");
+
+    world = fresh();
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "street" }), "item utility fixture reaches street");
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "villageEdge" }), "item utility fixture reaches village edge");
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "secludedCottage" }), "item utility fixture reaches Mara cottage");
+    ok(setup.CharacterAPI.perform("player", { type: "move_within_location", destination_id: "maraCottageFloor" }), "item utility fixture enters cottage");
+    ok(setup.CharacterAPI.perform("player", { type: "move_within_location", destination_id: "maraCottageTable" }), "item utility fixture reaches table");
+    ok(setup.CharacterAPI.perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }), "item utility fixture takes slab");
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction = {
+        actionLabel: "Consult test source",
+        effectId: "utility_query",
+        publicText: "{actorName} consults the test source.",
+        feedbackText: "The source returns: {result}",
+        inputLabel: "Question",
+        inputMaxLength: 600,
+        utilityMaxTokens: 220,
+        utilityPrompt: "Return concise reference information without inventing concrete setting facts."
+    };
+    const queryAction = { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "How can a constructed world persist without its creator?" };
+    const queryActionResult = setup.CharacterAPI.perform("player", queryAction);
+    ok(queryActionResult, "query-backed use_item should commit synchronously");
+    assert(Array.isArray(queryActionResult.modelRequests) && queryActionResult.modelRequests.length === 1 &&
+        queryActionResult.feedback.length === 0,
+        "generic utility_query item use should defer model content rather than pretending the synchronous engine generated it");
+    const beforeQueryObservationCount = world.entities.player.mind.pendingObservations.length;
+    const utilityResolverResult = await setup.ItemModelEffects.resolveActionResult("player", queryActionResult, {
+        enforceRequestTiming: false,
+        chat: async function (messages, requestOptions) {
+            assert(messages[0].content.includes("not a character") && messages[0].content.includes("AUTHORED SOURCE CONTRACT") &&
+                messages[0].content.includes("Do not invent concrete setting facts") &&
+                messages[1].content.includes(queryAction.input_text),
+                "item utility request should frame the model as a non-character information source and include only the authored source contract plus reader query");
+            assert(requestOptions && requestOptions.maxTokens === 220,
+                "item utility request should honor the authored per-item output token cap");
+            return { ok: true, content: "A concise test-source result.", modelId: "test/utility", usage: { total_tokens: 42 } };
+        }
+    });
+    assert(utilityResolverResult.ok && queryActionResult.feedback.some(function (entry) {
+        return entry.code === "ITEM_UTILITY_QUERY_RESULT" && entry.text.includes("A concise test-source result.");
+    }) && world.entities.player.mind.pendingObservations.length === beforeQueryObservationCount + 1 &&
+        world.entities.player.mind.pendingObservations[world.entities.player.mind.pendingObservations.length - 1].code === "ITEM_UTILITY_QUERY_RESULT",
+        "resolved generic Utility item content should become private grounded action feedback/observation for the reader without creating a public actor");
     async function statusFetch(status) { return { ok: false, status: status, json: async function () { return {}; } }; }
     for (const pair of [[401,"AUTHENTICATION_FAILED"],[402,"INSUFFICIENT_CREDITS"],[429,"RATE_LIMITED"],[503,"PROVIDER_UNAVAILABLE"]]) {
         const result = await setup.OpenRouterClient.chat([], function () { return statusFetch(pair[0]); });
@@ -504,6 +551,22 @@ async function main() {
         optionDecision({ type: "use_item", item_id: "memoryStone_01" }).ok &&
         optionDecision({ type: "give_item", target_id: "player", item_id: "mug" }).ok,
         "current action options should constrain item, target, destination, inventory, and amount parameters");
+    const utilityQueryCatalog = {
+        use_item: {
+            schema: { properties: { type: {}, item_id: { type: "string" }, input_text: { type: "string" } }, required: ["type", "item_id"] },
+            options: {
+                item_ids: ["arcaneKnowledgeSlab_01"],
+                items: [{ id: "arcaneKnowledgeSlab_01", action_label: "Consult slab", input_required: true, input_max_length: 40 }]
+            }
+        }
+    };
+    function utilityQueryDecision(action) {
+        return setup.AIProtocol.validateDecision(decisionFixture({ action: action, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), utilityQueryCatalog);
+    }
+    assert(!utilityQueryDecision({ type: "use_item", item_id: "arcaneKnowledgeSlab_01" }).ok &&
+        utilityQueryDecision({ type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "How are artificial worlds made?" }).ok &&
+        !utilityQueryDecision({ type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "x".repeat(41) }).ok,
+        "AI action validation should require and bound authored text input for query-backed item use before engine execution");
     assert(setup.AIProtocol.validateDecision(decisionFixture({
         action: { type: "place_item", item_id: "mug", target_inventory_id: "table" },
         publicNarrative: null,

@@ -59,7 +59,7 @@ assert(html.includes("Characters") && html.includes("Abilities") && html.include
     "editor should expose character, ability, item-type, global item-instance, and embedded inventory workflows");
 assert(!/[А-Яа-яЁё]/.test(html), "visible editor source introduced by this task should remain English-only");
 assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura") && core.KNOWN_ACTIONS.includes("lock") && core.KNOWN_ACTIONS.includes("unlock") &&
-    core.KNOWN_ITEM_EFFECTS.includes("report_memory_counts"),
+    core.KNOWN_ITEM_EFFECTS.includes("report_memory_counts") && core.KNOWN_ITEM_EFFECTS.includes("abstract_study") && core.KNOWN_ITEM_EFFECTS.includes("utility_query"),
     "editor should embed schema 2, known actions, and the allowlisted generic item effects");
 assert(core.validateWorldDocument(validDocument()).length === 0, "valid schema 2 document should validate");
 const blockedExitDocument = validDocument();
@@ -96,6 +96,34 @@ useActionDocument.itemDefinitions.memoryStone = {
 useActionDocument.items.memoryStone_01 = { id: "memoryStone_01", definitionId: "memoryStone", inventoryId: "inventory_room" };
 assert(core.validateWorldDocument(useActionDocument).length === 0,
     "editor should validate an authored generic item-use action using an allowlisted deterministic effect");
+
+const abstractStudyDocument = clone(useActionDocument);
+abstractStudyDocument.itemDefinitions.memoryStone.useAction = {
+    actionLabel: "Study archive", effectId: "abstract_study", publicText: "{actorName} studies {itemName}.",
+    feedbackText: "You survey material relevant to {inputText}.",
+    focusedFeedbackText: "You study {inputText} in greater depth.",
+    saturatedFeedbackText: "Further reading on {inputText} now has diminishing returns.",
+    inputLabel: "Subject", inputPlaceholder: "Study", inputMaxLength: 500,
+    aiInstructions: "Put the desired subject in action.input_text."
+};
+assert(core.validateWorldDocument(abstractStudyDocument).length === 0,
+    "editor should validate deterministic abstract-study text-input authoring without a Utility prompt");
+const badAbstractFocused = clone(abstractStudyDocument); badAbstractFocused.itemDefinitions.memoryStone.useAction.focusedFeedbackText = "";
+assert(hasError(badAbstractFocused, "focusedFeedbackText"), "editor should reject blank focused-stage abstract-study feedback when authored");
+const badAbstractSaturated = clone(abstractStudyDocument); badAbstractSaturated.itemDefinitions.memoryStone.useAction.saturatedFeedbackText = "";
+assert(hasError(badAbstractSaturated, "saturatedFeedbackText"), "editor should reject blank saturated-stage abstract-study feedback when authored");
+const utilityQueryDocument = clone(useActionDocument);
+utilityQueryDocument.itemDefinitions.memoryStone.useAction = {
+    actionLabel: "Consult archive", effectId: "utility_query", publicText: "{actorName} consults {itemName}.",
+    feedbackText: "Archive entry for {inputText}: {result}", inputLabel: "Question", inputPlaceholder: "Ask", inputMaxLength: 500, utilityMaxTokens: 240,
+    utilityPrompt: "Return non-character reference information.", aiInstructions: "Put the desired subject in action.input_text."
+};
+assert(core.validateWorldDocument(utilityQueryDocument).length === 0,
+    "editor should validate model-backed Utility query item authoring");
+const badUtilityQuery = clone(utilityQueryDocument); delete badUtilityQuery.itemDefinitions.memoryStone.useAction.utilityPrompt;
+assert(hasError(badUtilityQuery, "utility query requires"), "editor should reject utility-query authoring without a source prompt");
+const badUtilityCap = clone(utilityQueryDocument); badUtilityCap.itemDefinitions.memoryStone.useAction.utilityMaxTokens = 12;
+assert(hasError(badUtilityCap, "output token cap"), "editor should reject invalid utility-query output token caps");
 const badUseEffect = clone(useActionDocument); badUseEffect.itemDefinitions.memoryStone.useAction.effectId = "execute_code";
 assert(hasError(badUseEffect, "invalid use action"), "editor must reject unknown item effect IDs");
 const mismatchedLock = clone(lockDocument); mismatchedLock.locations.other.exits.room.locked = false;

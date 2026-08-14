@@ -112,6 +112,14 @@ foreach ($dp in $document.itemDefinitions.PSObject.Properties) {
             ($knownItemEffects -contains [string]$definition.useAction.effectId) -and
             -not [string]::IsNullOrWhiteSpace([string]$definition.useAction.publicText) -and
             -not [string]::IsNullOrWhiteSpace([string]$definition.useAction.feedbackText)) "Item definition $id has an invalid useAction."
+        if ([string]$definition.useAction.effectId -eq "abstract_study") {
+            foreach ($field in @("focusedFeedbackText", "saturatedFeedbackText")) {
+                $property = $definition.useAction.PSObject.Properties[$field]
+                if ($null -ne $property) {
+                    Require (-not [string]::IsNullOrWhiteSpace([string]$property.Value)) "Item definition $id useAction.$field must be non-empty text when present."
+                }
+            }
+        }
     }
 }
 
