@@ -783,3 +783,16 @@ details[open] > summary .framework-disclosure-arrow {
 .framework-migration-overlay.is-failed .framework-migration-panel {
     border-color: #a36f6f;
 }
+
+.framework-mind-tools {
+    margin-top: 0.55rem;
+}
+
+.framework-mind-tools summary {
+    cursor: pointer;
+    opacity: 0.9;
+}
+
+.framework-mind-tools button {
+    margin-right: 0.25rem;
+}

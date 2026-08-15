@@ -95,6 +95,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Runtime beliefs, relationships, recent memories, long-term memories, continuation, and pending observations live in the save/runtime.
 - Engine-owned memory updates support bounded recent-memory append, belief upsert, and relationship upsert.
 - Memory consolidation is transactional and may run as maintenance work.
+- Portable character-mind transfer carries only persistent model-authored mind partitions: beliefs, relationships, recent memories, and long-term memories. Version 1 import is replace-only, exact-character-ID guarded, clears continuation, and never transfers authored facts or physical/world state.
 - Retrieval-based old-memory selection/embeddings are future work; do not add them incidentally.
 
 ## 10. Movement, perception, sleeping
@@ -118,6 +119,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Generated information-source text grounds what the source returned; it does not automatically elevate every embedded claim to objective canonical truth.
 - `utility_query` authoring must control lore specificity explicitly. Do not invent new proper nouns/dates/named world facts unless the authored source contract deliberately authorizes generative concrete lore. When only character learning/progress is needed, use deterministic `abstract_study` instead of asking a model to summarize the subject.
 - `utility_query` may declare a bounded per-item `utilityMaxTokens`; use it to constrain genuinely model-backed sources. `abstract_study` has no model-output budget because no model is called.
+- `abstract_study` progress belongs to the physical item instance and is keyed independently by reader character ID. Do not store this mechanic-specific bookkeeping in `character.mind`; legacy character-owned progress migrates generically onto compatible item instances.
 - Do not add one-off story migration fields to item definitions/instances.
 
 ## 12. UI/editor

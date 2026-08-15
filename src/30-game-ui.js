@@ -1336,7 +1336,7 @@
 
         root.innerHTML = `
             <div class="framework-sidebar-block">
-                <strong>Human controller</strong><br>
+                <strong>Character</strong><br>
                 <select id="human-character-select">
                     ${characters.map(function (character) {
                         const selected = character.id === humanId ? " selected" : "";
@@ -1344,8 +1344,14 @@
                     }).join("")}
                 </select>
                 <button id="take-control-button">Take control</button>
-                <button id="compress-memory-button" type="button"${aiBusy ? " disabled" : ""}>Compress memory</button>
-                <br><button id="open-character-window" type="button">Character</button>
+                <button id="open-character-window" type="button">Character</button>
+                <details class="framework-mind-tools">
+                    <summary>Mind tools</summary>
+                    <button id="compress-memory-button" type="button"${aiBusy ? " disabled" : ""}>Compress memory</button>
+                    <button id="export-character-mind" type="button"${aiBusy ? " disabled" : ""}>Export mind</button>
+                    <button id="import-character-mind" type="button"${aiBusy ? " disabled" : ""}>Import mind</button>
+                    <input id="import-character-mind-file" type="file" accept="application/json,.json" hidden>
+                </details>
             </div>
             <div class="framework-sidebar-block">
                 <strong>${escapeHtml(actor.name)}</strong><br>
@@ -1418,6 +1424,94 @@
             Engine.play(passage);
         });
 
+
+        $("#export-character-mind").on("click", function () {
+            const targetId = String($("#human-character-select").val() || "");
+            if (getBusyState().busy) {
+                $("#sidebar-status").text("Character mind export is unavailable while AI or migration work is in progress.");
+                return;
+            }
+            const result = setup.CharacterMindTransfer && setup.CharacterMindTransfer.exportMind(targetId);
+            if (!result || !result.ok) {
+                $("#sidebar-status").text(result && result.error && result.error.message || "Character mind export is unavailable.");
+                return;
+            }
+            try {
+                const blob = new Blob([result.text], { type: "application/json;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = result.filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+                $("#sidebar-status").text(`Exported ${result.document.characterName}'s mind.`);
+            } catch (error) {
+                $("#sidebar-status").text("The browser could not download the character mind file.");
+            }
+        });
+
+        $("#import-character-mind").on("click", function () {
+            if (getBusyState().busy) {
+                $("#sidebar-status").text("Character mind import is unavailable while AI or migration work is in progress.");
+                return;
+            }
+            const input = document.getElementById("import-character-mind-file");
+            if (input) input.click();
+        });
+
+        $("#import-character-mind-file").on("change", async function () {
+            const file = this.files && this.files[0];
+            const targetId = String($("#human-character-select").val() || "");
+            const target = characters.find(function (character) { return character.id === targetId; });
+            if (!file) return;
+            try {
+                if (getBusyState().busy) {
+                    $("#sidebar-status").text("Character mind import is unavailable while AI or migration work is in progress.");
+                    return;
+                }
+                const text = await file.text();
+                let document;
+                try {
+                    document = JSON.parse(text);
+                } catch (error) {
+                    $("#sidebar-status").text("The selected character mind file is not valid JSON.");
+                    return;
+                }
+                const validation = setup.CharacterMindTransfer && setup.CharacterMindTransfer.validateDocument(document, targetId);
+                if (!validation || !validation.ok) {
+                    $("#sidebar-status").text(validation && validation.error && validation.error.message || "The selected character mind file is invalid.");
+                    return;
+                }
+                const targetName = target ? target.name : targetId;
+                const confirmed = window.confirm(
+                    `Import saved mind for ${targetName} (${targetId})?\n\n` +
+                    `File: ${document.characterName} (${document.characterId})\n\n` +
+                    "This will replace beliefs, relationships, recent memories, and long-term memories.\n" +
+                    "Known facts, descriptions, location, inventory, equipment, and other world state will not change."
+                );
+                if (!confirmed) return;
+                if (getBusyState().busy) {
+                    $("#sidebar-status").text("Character mind import was cancelled because AI or migration work started.");
+                    return;
+                }
+                const result = setup.CharacterMindTransfer.importMind(targetId, document);
+                if (!result.ok) {
+                    $("#sidebar-status").text(result.error.message);
+                    return;
+                }
+                renderSidebar();
+                $("#human-character-select").val(targetId);
+                $("#sidebar-status").text(
+                    `Imported ${document.characterName}'s mind: ${result.recentMemories} recent and ${result.longTermMemories} long-term memories.`
+                );
+            } catch (error) {
+                $("#sidebar-status").text("The selected character mind file could not be read.");
+            } finally {
+                this.value = "";
+            }
+        });
 
         $("#compress-memory-button").on("click", async function () {
             const targetId = String($("#human-character-select").val() || "");

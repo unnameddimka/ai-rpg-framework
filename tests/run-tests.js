@@ -58,12 +58,19 @@ assert(world.entities.captainPrice && world.entities.captainPrice.locationId ===
 assert(world.entities.nell && world.entities.nell.locationId === "commonRoom" &&
     world.entities.nell.sublocationId === "commonRoomFloor" && world.control.assignments.nell === "ai",
     "Nell should start AI-controlled on the common-room floor");
-assert(world.entities.villageEdge && world.entities.secludedCottage &&
+assert(world.entities.villageEdge && world.entities.secludedCottage && world.entities.forestMountainStream &&
     world.entities.street.exits.villageEdge === "villageEdge" &&
     world.entities.villageEdge.exits.street === "street" &&
     world.entities.villageEdge.exits.secludedCottage === "secludedCottage" &&
-    world.entities.secludedCottage.exits.villageEdge === "villageEdge",
-    "street, village edge, and Mara's cottage should form the authored bidirectional route");
+    world.entities.secludedCottage.exits.villageEdge === "villageEdge" &&
+    world.entities.secludedCottage.exits.forestMountainStream === "forestMountainStream" &&
+    world.entities.forestMountainStream.exits.secludedCottage === "secludedCottage",
+    "street, village edge, Mara's cottage, and the forest stream should form the authored bidirectional route");
+assert(world.entities.forestMountainStream.defaultSublocationId === "forestStreamBank" &&
+    world.entities.forestStreamSittingPlace && world.entities.forestStreamSittingPlace.capacity === 2 &&
+    world.entities.forestStreamBank.reachableSublocationIds.includes("forestStreamSittingPlace") &&
+    world.entities.forestStreamSittingPlace.reachableSublocationIds.includes("forestStreamBank"),
+    "the forest stream should expose a default bank and an ordinary two-person sitting place");
 assert(world.entities.maraCottageBed && world.entities.maraCottageTable && world.entities.maraCottageShelves &&
     world.inventories.inventory_maraCottageTable && world.inventories.inventory_maraCottageShelves,
     "Mara's cottage should contain authored bed, table, and alchemical shelf sublocations using existing inventory mechanics");
@@ -88,6 +95,67 @@ assert(world.entities.underStairsNook && world.entities.underStairsNook.location
 assert(world.entities.upstairsCorridor && ["innkeeperRoom", "guestRoom1", "guestRoom2", "guestRoom3", "guestRoom4"].every(function (id) {
     return world.entities[id] && world.entities[id].type === "location";
 }), "the upstairs corridor and five rooms should exist as authored locations");
+
+// Portable character mind should carry only model-authored persistent identity.
+world.entities.hoodedWoman.mind.beliefs = [{ id: "portable_belief", text: "The Traveler keeps unusual promises.", confidence: "high" }];
+world.entities.hoodedWoman.mind.relationships = [{ targetCharacterId: "player", summary: "I trust the Traveler enough to continue our strange collaboration." }];
+world.entities.hoodedWoman.mind.recentMemories = [{ id: "memory_ai_118", summary: "The Traveler promised to warn me before changing worlds.", importance: 0.8, protected: false }];
+world.entities.hoodedWoman.mind.longTermMemories = [{ id: "memory_ai_119", summary: "My conversations with the Traveler changed how I understand this world.", importance: 0.9, protected: true }];
+world.ai.continuations.hoodedWoman = "Finish an old-world task that must not survive transfer.";
+world.entities.hoodedWoman.mind.pendingObservations.push({ id: 991, kind: "test", text: "Current-world observation." });
+const exportedMaraMind = setup.CharacterMindTransfer.exportMind("hoodedWoman");
+assertOk(exportedMaraMind, "Mara mind export should succeed");
+assert(Object.keys(exportedMaraMind.document.mind).sort().join(",") === "beliefs,longTermMemories,recentMemories,relationships" &&
+    !exportedMaraMind.text.includes("knownFacts") && !exportedMaraMind.text.includes("pendingObservations") &&
+    !exportedMaraMind.text.includes("continuation") && !exportedMaraMind.text.includes("abstractStudyProgress") &&
+    !exportedMaraMind.text.includes("aiDescription"),
+    "mind export should contain exactly the four portable model-authored partitions and no world/transient state");
+const beforeMismatch = JSON.stringify(setup.Game.getWorld());
+const mismatchImport = setup.CharacterMindTransfer.importMind("innkeeper", exportedMaraMind.document);
+assertFails(mismatchImport, "CHARACTER_MIND_ID_MISMATCH", "mind import should refuse a different stable character ID");
+assert(JSON.stringify(setup.Game.getWorld()) === beforeMismatch, "failed mismatched mind import must be atomic");
+
+setup.Game.resetWorld();
+world = setup.Game.getWorld();
+const freshMaraFacts = JSON.stringify(world.entities.hoodedWoman.mind.knownFacts);
+const freshMaraDescription = world.entities.hoodedWoman.aiDescription;
+const freshMaraLocation = world.entities.hoodedWoman.locationId;
+const freshMaraInventory = world.entities.hoodedWoman.inventoryId;
+world.entities.hoodedWoman.mind.beliefs = [{ id: "fresh_belief", text: "This should be replaced.", confidence: "low" }];
+world.ai.continuations.hoodedWoman = "Fresh target continuation that must be cleared by replace import.";
+const beforeMindImportEventCount = world.events.length;
+const beforeMindImportQueue = JSON.stringify(world.ai.turnQueue);
+const importedMaraMind = setup.CharacterMindTransfer.importMind("hoodedWoman", exportedMaraMind.document);
+assertOk(importedMaraMind, "matching Mara mind import should succeed");
+world = setup.Game.getWorld();
+assert(world.entities.hoodedWoman.mind.beliefs.length === 1 && world.entities.hoodedWoman.mind.beliefs[0].id === "portable_belief" &&
+    world.entities.hoodedWoman.mind.relationships[0].targetCharacterId === "player" &&
+    world.entities.hoodedWoman.mind.recentMemories[0].id === "memory_ai_118" &&
+    world.entities.hoodedWoman.mind.longTermMemories[0].id === "memory_ai_119",
+    "matching import should replace all four portable target partitions");
+assert(JSON.stringify(world.entities.hoodedWoman.mind.knownFacts) === freshMaraFacts &&
+    world.entities.hoodedWoman.aiDescription === freshMaraDescription && world.entities.hoodedWoman.locationId === freshMaraLocation &&
+    world.entities.hoodedWoman.inventoryId === freshMaraInventory,
+    "mind import should preserve fresh authored facts, description, physical location, and inventory identity");
+assert(!Object.prototype.hasOwnProperty.call(world.ai.continuations, "hoodedWoman") &&
+    world.events.length === beforeMindImportEventCount && JSON.stringify(world.ai.turnQueue) === beforeMindImportQueue &&
+    world.nextMemoryId >= 120,
+    "mind import should clear continuation, create no event/queue work, and advance memory IDs beyond imported memory_ai IDs");
+
+// The forest-stream sitting place uses only generic sublocation capacity.
+world.entities.player.locationId = "forestMountainStream";
+world.entities.player.sublocationId = "forestStreamBank";
+world.entities.hoodedWoman.locationId = "forestMountainStream";
+world.entities.hoodedWoman.sublocationId = "forestStreamBank";
+world.entities.nell.locationId = "forestMountainStream";
+world.entities.nell.sublocationId = "forestStreamBank";
+assertOk(setup.Game.validateWorld(), "stream capacity fixture should remain a valid generic world state");
+perform("player", { type: "move_within_location", destination_id: "forestStreamSittingPlace" }, "Traveler should sit by the stream");
+perform("hoodedWoman", { type: "move_within_location", destination_id: "forestStreamSittingPlace" }, "Mara should sit beside the Traveler");
+assertFails(setup.CharacterAPI.perform("nell", { type: "move_within_location", destination_id: "forestStreamSittingPlace" }),
+    "SUBLOCATION_FULL", "a third character should not fit in the two-person stream sitting place");
+setup.Game.resetWorld();
+world = setup.Game.getWorld();
 
 assert(world.itemDefinitions.arcaneKnowledgeSlab && world.entities.arcaneKnowledgeSlab_01 &&
     world.entities.arcaneKnowledgeSlab_01.definitionId === "arcaneKnowledgeSlab" &&
@@ -156,8 +224,38 @@ assert(slabNewThreadResult.feedback[0].data.studyStage === "survey" && slabNewTh
     slabNewThreadResult.feedback[0].data.relatedToPrevious === false &&
     slabNewThreadResult.feedback[0].text.includes("broad theoretical orientation"),
     "a genuinely different question should reset abstract study to a new survey thread");
-assert(setup.Game.getWorld().entities.player.mind.abstractStudyProgress.arcaneKnowledgeSlab_01.depth === 1,
-    "abstract study depth should be stored as private runtime learning progress for this reader and source");
+world = setup.Game.getWorld();
+assert(!Object.prototype.hasOwnProperty.call(world.entities.player.mind, "abstractStudyProgress") &&
+    world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.player.depth === 1,
+    "abstract study progress should live on the item instance under the current reader ID, not in character mind");
+const playerStudySnapshot = JSON.stringify(world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.player);
+// Bring Mara to the same table, hand her the same physical slab, and verify her thread is independent.
+perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "Mara study fixture leaves the common room");
+perform("hoodedWoman", { type: "move", destination_id: "street" }, "Mara study fixture walks to the street");
+perform("hoodedWoman", { type: "move", destination_id: "villageEdge" }, "Mara study fixture walks to the village edge");
+perform("hoodedWoman", { type: "move", destination_id: "secludedCottage" }, "Mara study fixture enters her cottage garden");
+perform("hoodedWoman", { type: "move_within_location", destination_id: "maraCottageFloor" }, "Mara study fixture steps inside");
+perform("hoodedWoman", { type: "move_within_location", destination_id: "maraCottageTable" }, "Mara study fixture sits at her table");
+perform("player", { type: "give_item", target_id: "hoodedWoman", item_id: "arcaneKnowledgeSlab_01" }, "Traveler gives Mara the studied slab");
+const maraSlabResult = perform("hoodedWoman", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "protective wards around a cottage" },
+    "Mara starts her own study thread on the same slab");
+world = setup.Game.getWorld();
+assert(maraSlabResult.feedback[0].data.studyStage === "survey" &&
+    JSON.stringify(world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.player) === playerStudySnapshot &&
+    world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.hoodedWoman.depth === 1,
+    "one slab should preserve independent study state for different readers");
+// A second physical slab instance should maintain an independent history even for the same reader.
+world.entities.arcaneKnowledgeSlab_test2 = {
+    id: "arcaneKnowledgeSlab_test2", type: "item", definitionId: "arcaneKnowledgeSlab",
+    name: world.itemDefinitions.arcaneKnowledgeSlab.name, containerId: "inventory_hoodedWoman"
+};
+world.inventories.inventory_hoodedWoman.itemIds.push("arcaneKnowledgeSlab_test2");
+assertOk(setup.Game.validateWorld(), "second-slab fixture should use the normal item-instance model");
+const maraSecondSlab = perform("hoodedWoman", { type: "use_item", item_id: "arcaneKnowledgeSlab_test2", input_text: "protective wards around a cottage" },
+    "Mara studies the same topic on a different slab instance");
+assert(maraSecondSlab.feedback[0].data.studyStage === "survey" &&
+    setup.Game.getWorld().entities.arcaneKnowledgeSlab_test2.abstractStudyProgressByCharacterId.hoodedWoman.depth === 1,
+    "separate slab instances should not share a reader's study history");
 
 setup.Game.resetWorld();
 world = setup.Game.getWorld();

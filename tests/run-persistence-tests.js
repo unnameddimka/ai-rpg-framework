@@ -67,6 +67,23 @@ assert(State.variables.world.entities.player.locationId === "commonRoom" &&
     State.variables.world.ai.continuations.hoodedWoman === "Current live continuation after the in-place tick.",
     "a save created immediately after an in-place tick should restore the actual live state");
 
+// Character mind import is also an in-place canonical mutation and must be captured immediately by onSave.
+State.variables.world = setup.Game.createInitialWorld();
+State.variables.world.entities.hoodedWoman.mind.beliefs = [{ id: "portable_test", text: "A portable belief before export.", confidence: "high" }];
+State.variables.world.entities.hoodedWoman.mind.recentMemories = [{ id: "memory_ai_77", summary: "A portable memory before export.", importance: 0.8, protected: false }];
+const exportedMind = setup.CharacterMindTransfer.exportMind("hoodedWoman");
+assert(exportedMind.ok, "portable mind fixture should export");
+State.variables.world = setup.Game.createInitialWorld();
+const staleMindSave = saveObjectFromVariables(State.variables);
+const importedMind = setup.CharacterMindTransfer.importMind("hoodedWoman", exportedMind.document);
+assert(importedMind.ok && State.variables.world.entities.hoodedWoman.mind.beliefs[0].id === "portable_test",
+    "portable mind fixture should mutate the live world in place without passage navigation");
+synchronize(staleMindSave);
+State.variables = clone(staleMindSave.state.history[1].variables);
+assert(State.variables.world.entities.hoodedWoman.mind.beliefs[0].id === "portable_test" &&
+    State.variables.world.entities.hoodedWoman.mind.recentMemories[0].id === "memory_ai_77",
+    "a save made immediately after mind import should restore the imported portable mind");
+
 // Reproduce the overnight symptom with deterministic timelapse APIs: the stale
 // active moment is captured before Price moves/sleeps, then the live world changes.
 State.variables.world = setup.Game.createInitialWorld();

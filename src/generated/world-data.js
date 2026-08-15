@@ -681,7 +681,8 @@
       "defaultSublocationId": "maraCottageGarden",
       "inventoryId": "inventory_secludedCottage",
       "exits": {
-        "villageEdge": "villageEdge"
+        "villageEdge": "villageEdge",
+        "forestMountainStream": "forestMountainStream"
       },
       "sublocations": {
         "maraCottageGarden": {
@@ -773,6 +774,54 @@
           "reachableSublocationIds": [
             "maraCottageShelves",
             "maraCottageFloor"
+          ]
+        }
+      }
+    },
+    "forestMountainStream": {
+      "id": "forestMountainStream",
+      "type": "location",
+      "name": "Forest stream",
+      "passage": "Forest Stream",
+      "description": [
+        "A clear forest stream runs over dark stones at the foot of the mountains, not far from Mara's cottage.",
+        "Pines and old broadleaf trees crowd the banks, while the mountain slopes rise beyond them through the forest.",
+        "The place is quiet and secluded enough to linger without the village close at hand."
+      ],
+      "defaultSublocationId": "forestStreamBank",
+      "inventoryId": "inventory_forestMountainStream",
+      "exits": {
+        "secludedCottage": "secludedCottage"
+      },
+      "sublocations": {
+        "forestStreamBank": {
+          "id": "forestStreamBank",
+          "type": "sublocation",
+          "locationId": "forestMountainStream",
+          "name": "Stream bank",
+          "publicText": "A narrow bank follows the clear water between roots, moss, and dark stream-worn stones.",
+          "enterLabel": "Stand by the forest stream",
+          "selfText": "You are standing on the bank of the forest stream.",
+          "occupantTemplate": "{name} stands on the bank of the forest stream.",
+          "capacity": 12,
+          "reachableSublocationIds": [
+            "forestStreamBank",
+            "forestStreamSittingPlace"
+          ]
+        },
+        "forestStreamSittingPlace": {
+          "id": "forestStreamSittingPlace",
+          "type": "sublocation",
+          "locationId": "forestMountainStream",
+          "name": "Stones by the stream",
+          "publicText": "A pair of broad, smooth stones beside the water make a comfortable place for two people to sit close to the stream.",
+          "enterLabel": "Sit together by the stream",
+          "selfText": "You are sitting beside the stream.",
+          "occupantTemplate": "{name} sits beside the stream.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "forestStreamSittingPlace",
+            "forestStreamBank"
           ]
         }
       }
@@ -1333,6 +1382,6 @@
       "inventoryId": "inventory_maraCottageTable"
     }
   },
-  "authoringRevision": "8df3a697dc90da11243cc8ca8f71fb7e5c32bb73ebb7409e01f481bc08252d5b"
+  "authoringRevision": "aaa3d146c4959494a74eea63a99f3859897307a3c37d9bb5fac2817fc3341d27"
 };
 }());

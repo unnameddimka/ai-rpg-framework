@@ -648,6 +648,19 @@
                     `Item ${entity.id} references missing definition ${entity.definitionId}.`
                 );
             }
+            if (entity.abstractStudyProgressByCharacterId !== undefined) {
+                const progressByReader = entity.abstractStudyProgressByCharacterId;
+                if (!progressByReader || typeof progressByReader !== "object" || Array.isArray(progressByReader)) {
+                    return fail("ITEM_STUDY_PROGRESS_INVALID", `Item ${entity.id} has invalid abstract-study reader progress.`);
+                }
+                for (const [readerId, progress] of Object.entries(progressByReader)) {
+                    if (!readerId || readerId.length > 160 || !progress || typeof progress !== "object" || Array.isArray(progress) ||
+                            typeof progress.lastInput !== "string" || !progress.lastInput.trim() || progress.lastInput.length > 600 ||
+                            !Number.isInteger(progress.depth) || progress.depth < 1 || progress.depth > 3) {
+                        return fail("ITEM_STUDY_PROGRESS_INVALID", `Item ${entity.id} has invalid abstract-study progress for reader ${String(readerId)}.`);
+                    }
+                }
+            }
         }
 
         return ok();
@@ -791,11 +804,6 @@
                 if (!Array.isArray(character.mind[partition])) {
                     return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.${partition} must be an array.`);
                 }
-            }
-            if (character.mind.abstractStudyProgress !== undefined &&
-                    (!character.mind.abstractStudyProgress || typeof character.mind.abstractStudyProgress !== "object" ||
-                    Array.isArray(character.mind.abstractStudyProgress))) {
-                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.abstractStudyProgress must be an object when present.`);
             }
             for (const abilityId of character.abilityIds || []) {
                 if (!world.abilities[abilityId]) {
@@ -1217,22 +1225,22 @@
         return overlap === 1 && Math.min(previous.size, next.size) <= 2;
     }
 
-    function ensureAbstractStudyProgress(actor) {
-        if (!actor.mind || typeof actor.mind !== "object") actor.mind = {};
-        if (!actor.mind.abstractStudyProgress || typeof actor.mind.abstractStudyProgress !== "object" ||
-                Array.isArray(actor.mind.abstractStudyProgress)) {
-            actor.mind.abstractStudyProgress = {};
+    function ensureAbstractStudyProgress(item) {
+        if (!item.abstractStudyProgressByCharacterId || typeof item.abstractStudyProgressByCharacterId !== "object" ||
+                Array.isArray(item.abstractStudyProgressByCharacterId)) {
+            item.abstractStudyProgressByCharacterId = {};
         }
-        return actor.mind.abstractStudyProgress;
+        return item.abstractStudyProgressByCharacterId;
     }
 
     function abstractStudyStage(actor, item, inputText) {
-        const progress = ensureAbstractStudyProgress(actor);
-        const key = item.id;
-        const previous = progress[key] && typeof progress[key] === "object" ? progress[key] : null;
+        const progressByReader = ensureAbstractStudyProgress(item);
+        const previous = progressByReader[actor.id] && typeof progressByReader[actor.id] === "object"
+            ? progressByReader[actor.id]
+            : null;
         const related = Boolean(previous && abstractStudyTopicsRelated(previous.lastInput, inputText));
         const depth = related ? Math.min(3, Math.max(1, Number(previous.depth) || 1) + 1) : 1;
-        progress[key] = {
+        progressByReader[actor.id] = {
             lastInput: inputText.slice(0, 600),
             depth: depth
         };

@@ -269,6 +269,12 @@ assert(uiSource.includes('id="stop-auto-ai-processing"') &&
 assert(uiSource.includes('id="compress-memory-button"') && uiSource.includes("Compress memory") &&
     uiSource.includes('$("#human-character-select").val()') && uiSource.includes("setup.MemoryConsolidator.compress"),
     "sidebar should expose manual memory compression for the character selected in the existing Human-controller selector");
+assert(uiSource.includes('<strong>Character</strong>') && uiSource.includes('<details class="framework-mind-tools">') &&
+    uiSource.includes('<summary>Mind tools</summary>') && uiSource.includes('id="export-character-mind"') &&
+    uiSource.includes('id="import-character-mind"') && uiSource.includes('id="import-character-mind-file"') &&
+    uiSource.includes("setup.CharacterMindTransfer.exportMind") && uiSource.includes("setup.CharacterMindTransfer.importMind") &&
+    uiSource.includes("CHARACTER_MIND_ID_MISMATCH") === false && uiSource.includes("window.confirm"),
+    "sidebar should group character mind maintenance under a collapsed Mind tools section and use the strict transfer facade");
 assert(uiSource.includes('id="auto-compress-character-memory"') && uiSource.includes("Auto-compress character memory") &&
     uiSource.includes("setup.AITurnScheduler.setAutoMemoryCompressionEnabled"),
     "AI scheduler controls should expose the optional automatic memory-compression toggle");

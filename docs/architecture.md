@@ -74,7 +74,7 @@ Tracked transformations change the instance's definition/subtype deterministical
 
 Item definitions may expose authored `useAction` effects. Most effects are synchronous/deterministic, such as `report_memory_counts`, and may return only grounded public/private feedback without adding stats or buffs.
 
-`abstract_study` is a deterministic text-input effect for educational/reference interactions that must not materialize new lore. The controller supplies bounded `input_text`; the engine validates and commits `use_item`, then returns authored private feedback whose template may interpolate `{inputText}`. The engine stores a small reader-specific progress record keyed by source item. Consecutive lexically related queries advance through `survey`, `focused`, and `saturated`; an unrelated query begins a new survey. `focusedFeedbackText` and `saturatedFeedbackText` are optional authored stage templates, with `feedbackText` as the survey/fallback template. This progress is not exposed as lore and no model request is created.
+`abstract_study` is a deterministic text-input effect for educational/reference interactions that must not materialize new lore. The controller supplies bounded `input_text`; the engine validates and commits `use_item`, then returns authored private feedback whose template may interpolate `{inputText}`. Study progress belongs to the **item instance** and is keyed by reader character ID (`item.abstractStudyProgressByCharacterId[characterId]`), so one physical source can remember independent threads for multiple readers and separate copies of the same item definition do not share progress. Consecutive lexically related queries advance through `survey`, `focused`, and `saturated`; an unrelated query begins a new survey. `focusedFeedbackText` and `saturatedFeedbackText` are optional authored stage templates, with `feedbackText` as the survey/fallback template. This progress is deterministic source bookkeeping rather than character mind/lore and no model request is created.
 
 A `useAction` may also declare a **model-backed information request**. The generic effect is `utility_query`:
 
@@ -117,6 +117,8 @@ A character mind contains:
 `continuation` is stored under AI runtime state and is model-authored opaque working intention. The framework stores/returns it but does not interpret its semantics.
 
 Memory updates from ordinary AI decisions are bounded structured operations: recent-memory append, belief upsert, relationship upsert. Consolidation is a separate transactional maintenance job.
+
+Portable character-mind export/import is an admin/runtime operation, not an in-world action. Version 1 carries exactly the persistent model-authored partitions `beliefs`, `relationships`, `recentMemories`, and `longTermMemories`. Import is strict replace-only and requires an exact stable `characterId` match; there is no force-import or merge path. Current authored `knownFacts`, descriptions, controller/physical state, inventory/equipment, pending observations, continuation, and item-owned mechanic state remain in the destination world. Import clears the target continuation, preserves imported memory IDs, advances `nextMemoryId` beyond imported `memory_ai_*` IDs, and does not emit a transition event/observation or schedule a turn.
 
 ## 6. Canonical restricted character view
 
@@ -353,6 +355,8 @@ Normal sidebar may expose read-only scheduler information, but there is no manua
 The current authored world includes the tavern, village/street/temple, village edge and Mara's secluded cottage.
 
 Mara's cottage includes a work table and a stable authored **Slab of Full Arcane Knowledge** instance. `Consult slab` uses deterministic `abstract_study`. Mara/another holder supplies a subject or question in `input_text`; the engine returns authored private feedback for the reader's current study stage. A new line gives broad orientation, a related follow-up gives focused understanding, and continued reading on the same line reaches `saturated` feedback with diminishing theoretical returns. The slab never asks a model to invent or summarize the subject, so it cannot introduce new schools, spells, techniques, taxonomies, history, dates, mechanisms, recipes, or other setting facts through this interaction. It provides no buffs, stats, automatic mastery, or omniscient current/future knowledge.
+
+Mara's cottage also has a normal reciprocal unlocked exit to **Forest stream** (`forestMountainStream`) at the foot of the mountains. The stream has an ordinary bank plus `forestStreamSittingPlace`, a two-capacity sublocation represented by broad smooth stones beside the water. It uses only existing movement/co-location/capacity mechanics and has no scripted date/romance behavior.
 
 Story-specific activation of an existing save is performed by editing that save's runtime observation inbox when desired, not by embedding Mara/slab special cases into migration.
 

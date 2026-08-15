@@ -72,6 +72,9 @@ legacy.entities.hoodedWoman.mind.longTermMemories = [{ id: "mara_old_memory", su
 legacy.entities.hoodedWoman.mind.abstractStudyProgress = {
     arcaneKnowledgeSlab_01: { lastInput: "magical energy in alchemy", depth: 2 }
 };
+legacy.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId = {
+    captainPrice: { lastInput: "battlefield wards", depth: 1 }
+};
 legacy.entities.hoodedWoman.mind.pendingObservations = [{ id: 777, kind: "external_story", text: "A thin dark slab now rests on your work table.", data: { itemId: "arcaneKnowledgeSlab_01" } }];
 legacy.ai.continuations.hoodedWoman = "Wait for the Traveler to show me where the promised cottage stands.";
 legacy.entities.hoodedWoman.wallet = 19;
@@ -149,11 +152,14 @@ assert(world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { r
 assert(world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "traveler_keeps_word"; }) &&
     world.entities.hoodedWoman.mind.relationships.some(function (relationship) { return relationship.targetCharacterId === "player"; }),
     "Mara's saved beliefs and relationships should survive");
-assert(world.entities.hoodedWoman.mind.abstractStudyProgress.arcaneKnowledgeSlab_01 &&
-    world.entities.hoodedWoman.mind.abstractStudyProgress.arcaneKnowledgeSlab_01.lastInput === "magical energy in alchemy" &&
-    world.entities.hoodedWoman.mind.abstractStudyProgress.arcaneKnowledgeSlab_01.depth === 2 &&
-    migrated.report.abstractStudyProgressPreserved === 1,
-    "reader-specific abstract-study progress should survive authored revision migration as bounded runtime state");
+assert(!Object.prototype.hasOwnProperty.call(world.entities.hoodedWoman.mind, "abstractStudyProgress") &&
+    world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.hoodedWoman &&
+    world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.hoodedWoman.lastInput === "magical energy in alchemy" &&
+    world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.hoodedWoman.depth === 2 &&
+    world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.captainPrice &&
+    world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.captainPrice.lastInput === "battlefield wards" &&
+    migrated.report.abstractStudyProgressPreserved === 2 && migrated.report.abstractStudyProgressMigratedFromCharacter === 1,
+    "legacy character-owned study progress should move onto the item while existing item-owned per-reader progress survives");
 assert(!world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return fact.id === "old_mara_fact"; }) &&
     world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return fact.id === "mara_home"; }) &&
     world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return fact.id === "mara_open_secret"; }),

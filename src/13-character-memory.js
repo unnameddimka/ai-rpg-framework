@@ -211,6 +211,168 @@
         });
     }
 
+    const PORTABLE_MIND_SCHEMA = "ai-rpg.character-mind";
+    const PORTABLE_MIND_VERSION = 1;
+    const PORTABLE_MIND_PARTITIONS = ["beliefs", "relationships", "recentMemories", "longTermMemories"];
+
+    function exactKeys(record, keys) {
+        if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+        const actual = Object.keys(record);
+        return actual.length === keys.length && actual.every(function (key) { return keys.includes(key); });
+    }
+
+    function validPortableText(value, maximumLength) {
+        return typeof value === "string" && value.trim().length > 0 && value.trim().length <= maximumLength;
+    }
+
+    function validatePortableMindDocument(document, targetActorId) {
+        if (!exactKeys(document, ["schema", "version", "exportedAt", "characterId", "characterName", "mind"])) {
+            return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind file has invalid top-level fields.");
+        }
+        if (document.schema !== PORTABLE_MIND_SCHEMA || document.version !== PORTABLE_MIND_VERSION) {
+            return fail("CHARACTER_MIND_IMPORT_UNSUPPORTED", "Character mind file uses an unsupported schema or version.");
+        }
+        if (typeof document.exportedAt !== "string" || !document.exportedAt.trim() ||
+                typeof document.characterId !== "string" || !document.characterId.trim() ||
+                typeof document.characterName !== "string" || !document.characterName.trim()) {
+            return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind file metadata is invalid.");
+        }
+        if (targetActorId && document.characterId !== targetActorId) {
+            return fail(
+                "CHARACTER_MIND_ID_MISMATCH",
+                `This mind belongs to ${document.characterName} (${document.characterId}), not the selected character (${targetActorId}).`
+            );
+        }
+        if (!exactKeys(document.mind, PORTABLE_MIND_PARTITIONS)) {
+            return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind file has invalid mind partitions.");
+        }
+        for (const partition of PORTABLE_MIND_PARTITIONS) {
+            if (!Array.isArray(document.mind[partition]) || document.mind[partition].length > 5000) {
+                return fail("CHARACTER_MIND_IMPORT_INVALID", `Character mind ${partition} is invalid or too large.`);
+            }
+        }
+
+        const beliefIds = new Set();
+        for (const belief of document.mind.beliefs) {
+            if (!exactKeys(belief, ["id", "text", "confidence"]) ||
+                    !/^[A-Za-z][A-Za-z0-9_-]*$/.test(belief.id || "") || beliefIds.has(belief.id) ||
+                    !validPortableText(belief.text, 500) || !["low", "medium", "high"].includes(belief.confidence)) {
+                return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind contains an invalid or duplicate belief.");
+            }
+            beliefIds.add(belief.id);
+        }
+
+        const relationshipTargets = new Set();
+        for (const relationship of document.mind.relationships) {
+            if (!exactKeys(relationship, ["targetCharacterId", "summary"]) ||
+                    typeof relationship.targetCharacterId !== "string" || !relationship.targetCharacterId.trim() ||
+                    relationship.targetCharacterId.length > 160 || relationship.targetCharacterId === document.characterId ||
+                    relationshipTargets.has(relationship.targetCharacterId) || !validPortableText(relationship.summary, 500)) {
+                return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind contains an invalid or duplicate relationship.");
+            }
+            relationshipTargets.add(relationship.targetCharacterId);
+        }
+
+        const memoryIds = new Set();
+        for (const partition of ["recentMemories", "longTermMemories"]) {
+            for (const memory of document.mind[partition]) {
+                if (!exactKeys(memory, ["id", "summary", "importance", "protected"]) ||
+                        typeof memory.id !== "string" || !memory.id.trim() || memory.id.length > 160 || memoryIds.has(memory.id) ||
+                        !validPortableText(memory.summary, 2000) || typeof memory.importance !== "number" ||
+                        !Number.isFinite(memory.importance) || memory.importance < 0 || memory.importance > 1 ||
+                        typeof memory.protected !== "boolean") {
+                    return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind contains an invalid or duplicate memory.");
+                }
+                memoryIds.add(memory.id);
+            }
+        }
+        return ok();
+    }
+
+    function portableMindFilename(actor) {
+        const id = String(actor && actor.id || "character").replace(/[^A-Za-z0-9_-]+/g, "-");
+        return `${id}-character-mind.json`;
+    }
+
+    function exportPortableMind(actorId) {
+        const pair = worldAndActor(actorId);
+        if (!pair.actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        const document = {
+            schema: PORTABLE_MIND_SCHEMA,
+            version: PORTABLE_MIND_VERSION,
+            exportedAt: new Date().toISOString(),
+            characterId: pair.actor.id,
+            characterName: pair.actor.name,
+            mind: {
+                beliefs: clone(pair.actor.mind.beliefs || []),
+                relationships: clone(pair.actor.mind.relationships || []),
+                recentMemories: clone(pair.actor.mind.recentMemories || []),
+                longTermMemories: clone(pair.actor.mind.longTermMemories || [])
+            }
+        };
+        const validation = validatePortableMindDocument(document, actorId);
+        if (!validation.ok) return validation;
+        return ok({
+            actorId: actorId,
+            document: document,
+            text: JSON.stringify(document, null, 2),
+            filename: portableMindFilename(pair.actor)
+        });
+    }
+
+    function normalizeNextMemoryId(world) {
+        let maximum = 0;
+        I.getCharacters(world).forEach(function (character) {
+            ["recentMemories", "longTermMemories"].forEach(function (partition) {
+                (character.mind && character.mind[partition] || []).forEach(function (memory) {
+                    const match = /^memory_ai_(\d+)$/.exec(memory && memory.id || "");
+                    if (match) maximum = Math.max(maximum, Number(match[1]) || 0);
+                });
+            });
+        });
+        world.nextMemoryId = Math.max(Number.isInteger(world.nextMemoryId) ? world.nextMemoryId : 1, maximum + 1);
+        return world.nextMemoryId;
+    }
+
+    function importPortableMind(actorId, source) {
+        const pair = worldAndActor(actorId);
+        if (!pair.actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        let document = source;
+        if (typeof source === "string") {
+            try {
+                document = JSON.parse(source);
+            } catch (error) {
+                return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind file is not valid JSON.");
+            }
+        }
+        const validation = validatePortableMindDocument(document, actorId);
+        if (!validation.ok) return validation;
+
+        const candidate = clone(pair.world);
+        const candidateActor = I.getCharacter(actorId, candidate);
+        candidateActor.mind.beliefs = clone(document.mind.beliefs);
+        candidateActor.mind.relationships = clone(document.mind.relationships);
+        candidateActor.mind.recentMemories = clone(document.mind.recentMemories);
+        candidateActor.mind.longTermMemories = clone(document.mind.longTermMemories);
+        if (candidate.ai && candidate.ai.continuations) delete candidate.ai.continuations[actorId];
+        normalizeNextMemoryId(candidate);
+        const worldValidation = I.validateWorld(candidate);
+        if (!worldValidation.ok) {
+            return fail("CHARACTER_MIND_IMPORT_INVALID", `Imported character mind would make the world invalid: ${worldValidation.error.message}`);
+        }
+        State.variables.world = candidate;
+        return ok({
+            actorId: actorId,
+            characterId: document.characterId,
+            characterName: document.characterName,
+            beliefs: candidateActor.mind.beliefs.length,
+            relationships: candidateActor.mind.relationships.length,
+            recentMemories: candidateActor.mind.recentMemories.length,
+            longTermMemories: candidateActor.mind.longTermMemories.length,
+            nextMemoryId: candidate.nextMemoryId
+        });
+    }
+
     function consumeObservations(actorId, observationIds) {
         const pair = worldAndActor(actorId);
         const actor = pair.actor;
@@ -226,6 +388,14 @@
         consumeObservations: consumeObservations,
         prepareConsolidation: prepareConsolidation,
         commitConsolidation: commitConsolidation
+    };
+
+    setup.CharacterMindTransfer = {
+        SCHEMA: PORTABLE_MIND_SCHEMA,
+        VERSION: PORTABLE_MIND_VERSION,
+        exportMind: exportPortableMind,
+        importMind: importPortableMind,
+        validateDocument: validatePortableMindDocument
     };
 
     setup.AIWorkingState = {

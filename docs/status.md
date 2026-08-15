@@ -17,9 +17,9 @@
 
 - Roadside tavern with Garrick, Nell, Guest Rooms, bar/common-room furniture and keys.
 - Captain Price as a character.
-- Village street/temple/edge and Mara's secluded cottage with garden, bed, table and alchemical shelves.
+- Village street/temple/edge, Mara's secluded cottage with garden/bed/table/alchemical shelves, and a reciprocal nearby Forest stream location with a normal two-person sitting sublocation.
 - Memory Stone deterministic item/use effect.
-- Deterministic `abstract_study` authored item effect: bounded `use_item.input_text` -> committed item use -> authored private study feedback with `{inputText}` interpolation. Reader+source runtime progress classifies related consecutive queries as `survey`, `focused`, then `saturated`; unrelated questions reset to a fresh survey. No Utility/model request occurs.
+- Deterministic `abstract_study` authored item effect: bounded `use_item.input_text` -> committed item use -> authored private study feedback with `{inputText}` interpolation. Reader progress is owned by the physical item instance and keyed independently per character; related consecutive queries classify as `survey`, `focused`, then `saturated`, while unrelated questions reset that reader's thread. No Utility/model request occurs.
 - Generic `utility_query` authored item effect remains available for genuinely model-backed information sources: bounded `input_text` -> committed physical item use -> deferred Utility-model information request -> private grounded result observation to the reader, with optional per-item output-token cap.
 - **Slab of Full Arcane Knowledge** authored on Mara's work table and implemented through `abstract_study`. A reader freely chooses a question/topic. The first consultation gives broad orientation, a related follow-up gives focused theoretical understanding, and a third related consultation reports diminishing returns and points toward practice or a genuinely different question. The slab still does not generate classifications, mechanisms, schools, spells, dates, recipes, or other new setting facts. It remains non-sentient, grants no instant mastery, and has no oracle access to current hidden facts/future.
 
@@ -68,7 +68,7 @@
 
 - Current authored world + compatible runtime overlay migration.
 - Current authored descriptions/definitions/known facts replace stale saved authored copies.
-- Runtime beliefs, relationships, memories, continuation, wallet, sleeping, position/controller and valid item instances survive.
+- Runtime beliefs, relationships, memories, continuation, wallet, sleeping, position/controller and valid item instances survive. Legacy character-owned `abstractStudyProgress` is migrated generically onto compatible item instances as per-reader runtime state.
 - Dynamic reciprocal lock state survives by stable lock ID.
 - Compatible saved event journal and pending observations survive migration; invalid references can be discarded safely.
 - AI queue is restored/repaired from surviving pending observations.
@@ -81,7 +81,7 @@
 - Minimal main Human input with persistent addressee/loudness selection and auto-growing text area.
 - Progressive committed scene rendering while input remains locked.
 - Optional current-turn invisible-event debug display.
-- Character runtime profile modal.
+- Character runtime profile modal plus collapsed **Mind tools** for manual compression and strict JSON export/import of portable character mind (`beliefs`, `relationships`, recent/long-term memories). Import is replace-only and exact-character-ID guarded.
 - Standalone offline world editor for `data/world.json`.
 - Crystal-sphere/prompt-lab diagnostics, dry runs and AI exchange import/export.
 - No normal gameplay button that manually processes pending AI work.
