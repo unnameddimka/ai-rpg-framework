@@ -2,8 +2,8 @@
     "use strict";
 
     const LEGACY_WORLD_VERSION = 6;
-    const WORLD_SCHEMA_VERSION = 8;
-    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, WORLD_SCHEMA_VERSION]);
+    const WORLD_SCHEMA_VERSION = 9;
+    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, WORLD_SCHEMA_VERSION]);
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
     const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden"]);
@@ -89,6 +89,7 @@
             delete character.initialMind;
             character.mind.pendingObservations = [];
             character.recentDialogue = [];
+            character.equippedItems = [];
             character.sleeping = character.sleeping === true;
             world.entities[characterId] = character;
             if (world.inventories[character.inventoryId]) {
@@ -107,20 +108,29 @@
         for (const [itemId, sourceItem] of Object.entries(document.items)) {
             const item = clone(sourceItem);
             const definition = world.itemDefinitions[item.definitionId];
-            const inventory = world.inventories[item.inventoryId];
-            if (!definition) {
-                throw new Error(`Item ${itemId} references missing definition ${item.definitionId}.`);
-            }
-            if (!inventory) {
-                throw new Error(`Item ${itemId} references missing inventory ${item.inventoryId}.`);
-            }
+            if (!definition) throw new Error(`Item ${itemId} references missing definition ${item.definitionId}.`);
             item.id = itemId;
             item.type = "item";
-            item.containerId = item.inventoryId;
             item.name = definition.name;
-            delete item.inventoryId;
+            if (item.inventoryId) {
+                const inventory = world.inventories[item.inventoryId];
+                if (!inventory) throw new Error(`Item ${itemId} references missing inventory ${item.inventoryId}.`);
+                item.containerId = item.inventoryId;
+                delete item.inventoryId;
+                world.entities[itemId] = item;
+                inventory.itemIds.push(itemId);
+                continue;
+            }
+            const character = getCharacter(item.equippedByCharacterId, world);
+            if (!character || !Array.isArray(definition.equipSlots) || !definition.equipSlots.includes(item.equippedSlot)) {
+                throw new Error(`Item ${itemId} has invalid equipped starting placement.`);
+            }
+            item.containerId = character.id;
+            const slot = item.equippedSlot;
+            delete item.equippedByCharacterId;
+            delete item.equippedSlot;
             world.entities[itemId] = item;
-            inventory.itemIds.push(itemId);
+            character.equippedItems.push({ itemId: itemId, slot: slot, visible: true });
         }
     }
 
@@ -415,9 +425,47 @@
             description: definition && typeof definition.description === "string" ? definition.description : "",
             tags: definition ? clone(definition.tags || []) : [],
             consumable: Boolean(definition && definition.consumable),
-            equippable: Boolean(definition && definition.equippable),
+            equippable: Boolean(definition && Array.isArray(definition.equipSlots) && definition.equipSlots.length),
+            equip_slots: definition ? clone(definition.equipSlots || []) : [],
+            equipped_description: definition && typeof definition.equippedDescription === "string" ? definition.equippedDescription : "",
             fillable: Boolean(definition && definition.fillable)
         };
+    }
+
+    function equippedRecords(character) {
+        return character && Array.isArray(character.equippedItems) ? character.equippedItems : [];
+    }
+
+    function equippedItemView(record, world) {
+        const item = record && world.entities[record.itemId];
+        if (!item || item.type !== "item") return null;
+        const view = itemView(item, world);
+        view.slot = record.slot;
+        view.visible = record.visible !== false;
+        return view;
+    }
+
+    function characterAppearanceText(character, world) {
+        const fragments = [];
+        const base = String(character && character.playerDescription || "").trim();
+        if (base) fragments.push(base);
+        const records = equippedRecords(character);
+        if (!records.some(function (record) { return record.slot === "clothing"; })) {
+            fragments.push(`${character.name} is undressed.`);
+        }
+        records.filter(function (record) { return record.visible !== false; }).forEach(function (record) {
+            const item = world.entities[record.itemId];
+            const definition = getItemDefinition(item, world);
+            const description = definition && typeof definition.equippedDescription === "string"
+                ? definition.equippedDescription.trim() : "";
+            if (description) fragments.push(description);
+        });
+        return fragments.join(" ");
+    }
+
+    function actorOwnsItem(actor, itemId, world) {
+        const inventory = world.inventories[actor.inventoryId];
+        return Boolean(inventory && inventory.itemIds.includes(itemId)) || equippedRecords(actor).some(function (record) { return record.itemId === itemId; });
     }
 
     function transformItem(item, resultDefinitionId, world) {
@@ -552,7 +600,7 @@
 
     function validateItemInvariants(world) {
         const itemMembership = {};
-
+        const equipmentMembership = {};
         const lockIds = new Set();
         Object.values(world.entities).forEach(function (entity) {
             if (entity && entity.type === "location") {
@@ -566,23 +614,26 @@
             if (!definition || definition.id !== definitionId || typeof definition.name !== "string" || !definition.name.trim()) {
                 return fail("ITEM_DEFINITION_INVALID", `Item definition ${definitionId} is invalid.`);
             }
-            if (definition.keyLockId !== undefined) {
-                if (typeof definition.keyLockId !== "string" || !LOCK_ID_PATTERN.test(definition.keyLockId) || !lockIds.has(definition.keyLockId)) {
-                    return fail("ITEM_KEY_LOCK_INVALID", `Item definition ${definitionId} references invalid lock ID ${String(definition.keyLockId)}.`);
-                }
+            if (definition.description !== undefined && typeof definition.description !== "string") {
+                return fail("ITEM_DESCRIPTION_INVALID", `Item definition ${definitionId} description must be text.`);
+            }
+            const equipSlots = definition.equipSlots === undefined ? [] : definition.equipSlots;
+            if (!Array.isArray(equipSlots) || equipSlots.some(function (slot) { return typeof slot !== "string" || !slot.trim(); }) ||
+                    new Set(equipSlots).size !== equipSlots.length) {
+                return fail("ITEM_EQUIP_SLOTS_INVALID", `Item definition ${definitionId} has invalid equipSlots.`);
+            }
+            if (equipSlots.length > 0 && (typeof definition.equippedDescription !== "string" || !definition.equippedDescription.trim())) {
+                return fail("ITEM_EQUIPPED_DESCRIPTION_INVALID", `Item definition ${definitionId} requires equippedDescription.`);
+            }
+            if (definition.keyLockId !== undefined &&
+                    (typeof definition.keyLockId !== "string" || !LOCK_ID_PATTERN.test(definition.keyLockId) || !lockIds.has(definition.keyLockId))) {
+                return fail("ITEM_KEY_LOCK_INVALID", `Item definition ${definitionId} references invalid lock ID ${String(definition.keyLockId)}.`);
             }
             for (const actionField of ["fillAction", "consumeAction"]) {
                 const action = definition[actionField];
-                if (!action) continue;
-                if (!world.itemDefinitions[action.resultDefinitionId]) {
-                    return fail(
-                        "ITEM_TRANSFORM_TARGET_INVALID",
-                        `Item definition ${definitionId} references missing result definition ${action.resultDefinitionId}.`
-                    );
+                if (action && !world.itemDefinitions[action.resultDefinitionId]) {
+                    return fail("ITEM_TRANSFORM_TARGET_INVALID", `Item definition ${definitionId} references missing result definition ${action.resultDefinitionId}.`);
                 }
-            }
-            if (definition.description !== undefined && typeof definition.description !== "string") {
-                return fail("ITEM_DESCRIPTION_INVALID", `Item definition ${definitionId} description must be text.`);
             }
             if (definition.useAction) {
                 const action = definition.useAction;
@@ -593,25 +644,13 @@
                     return fail("ITEM_USE_ACTION_INVALID", `Item definition ${definitionId} has an invalid useAction.`);
                 }
                 if (action.effectId === "utility_query" || action.effectId === "abstract_study") {
-                    if (typeof action.inputLabel !== "string" || !action.inputLabel.trim()) {
-                        return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} ${action.effectId} requires inputLabel.`);
-                    }
-                    if (action.inputPlaceholder !== undefined && typeof action.inputPlaceholder !== "string") {
-                        return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} inputPlaceholder must be text.`);
-                    }
-                    if (action.inputMaxLength !== undefined && (!Number.isInteger(action.inputMaxLength) ||
-                            action.inputMaxLength < 1 || action.inputMaxLength > 2000)) {
-                        return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} inputMaxLength must be an integer from 1 to 2000.`);
-                    }
+                    if (typeof action.inputLabel !== "string" || !action.inputLabel.trim()) return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} ${action.effectId} requires inputLabel.`);
+                    if (action.inputPlaceholder !== undefined && typeof action.inputPlaceholder !== "string") return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} inputPlaceholder must be text.`);
+                    if (action.inputMaxLength !== undefined && (!Number.isInteger(action.inputMaxLength) || action.inputMaxLength < 1 || action.inputMaxLength > 2000)) return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} inputMaxLength must be an integer from 1 to 2000.`);
                 }
                 if (action.effectId === "utility_query") {
-                    if (typeof action.utilityPrompt !== "string" || !action.utilityPrompt.trim()) {
-                        return fail("ITEM_UTILITY_QUERY_INVALID", `Item definition ${definitionId} utility_query requires utilityPrompt.`);
-                    }
-                    if (action.utilityMaxTokens !== undefined && (!Number.isInteger(action.utilityMaxTokens) ||
-                            action.utilityMaxTokens < 64 || action.utilityMaxTokens > 4000)) {
-                        return fail("ITEM_UTILITY_QUERY_INVALID", `Item definition ${definitionId} utilityMaxTokens must be an integer from 64 to 4000.`);
-                    }
+                    if (typeof action.utilityPrompt !== "string" || !action.utilityPrompt.trim()) return fail("ITEM_UTILITY_QUERY_INVALID", `Item definition ${definitionId} utility_query requires utilityPrompt.`);
+                    if (action.utilityMaxTokens !== undefined && (!Number.isInteger(action.utilityMaxTokens) || action.utilityMaxTokens < 64 || action.utilityMaxTokens > 4000)) return fail("ITEM_UTILITY_QUERY_INVALID", `Item definition ${definitionId} utilityMaxTokens must be an integer from 64 to 4000.`);
                 }
             }
         }
@@ -619,41 +658,40 @@
         for (const inventory of Object.values(world.inventories)) {
             for (const itemId of inventory.itemIds) {
                 const item = world.entities[itemId];
-                if (!item || item.type !== "item") {
-                    return fail("INVENTORY_ITEM_INVALID", `Inventory ${inventory.id} contains invalid item ${itemId}.`);
-                }
-                if (itemMembership[itemId]) {
-                    return fail(
-                        "ITEM_IN_MULTIPLE_INVENTORIES",
-                        `Item ${itemId} appears in more than one inventory.`
-                    );
-                }
+                if (!item || item.type !== "item") return fail("INVENTORY_ITEM_INVALID", `Inventory ${inventory.id} contains invalid item ${itemId}.`);
+                if (itemMembership[itemId] || equipmentMembership[itemId]) return fail("ITEM_MULTIPLE_PLACEMENT", `Item ${itemId} has more than one physical placement.`);
                 itemMembership[itemId] = inventory.id;
             }
         }
 
-        for (const entity of Object.values(world.entities)) {
-            if (entity.type !== "item") {
-                continue;
+        for (const character of getCharacters(world)) {
+            if (!Array.isArray(character.equippedItems)) return fail("CHARACTER_EQUIPMENT_INVALID", `Character ${character.id} equippedItems must be an array.`);
+            const occupied = new Set();
+            for (const record of character.equippedItems) {
+                if (!record || typeof record.itemId !== "string" || typeof record.slot !== "string" || !record.slot.trim() || typeof record.visible !== "boolean") {
+                    return fail("CHARACTER_EQUIPMENT_INVALID", `Character ${character.id} has an invalid equipment record.`);
+                }
+                if (occupied.has(record.slot)) return fail("EQUIPMENT_SLOT_CONFLICT", `Character ${character.id} has multiple items in slot ${record.slot}.`);
+                occupied.add(record.slot);
+                const item = world.entities[record.itemId];
+                const definition = item && item.type === "item" ? getItemDefinition(item, world) : null;
+                if (!item || !definition || !Array.isArray(definition.equipSlots) || !definition.equipSlots.includes(record.slot)) {
+                    return fail("EQUIPMENT_ITEM_INVALID", `Character ${character.id} has invalid equipped item ${record.itemId}.`);
+                }
+                if (itemMembership[item.id] || equipmentMembership[item.id]) return fail("ITEM_MULTIPLE_PLACEMENT", `Item ${item.id} has more than one physical placement.`);
+                if (item.containerId !== character.id) return fail("ITEM_CONTAINER_MISMATCH", `Equipped item ${item.id} containerId must match character ${character.id}.`);
+                equipmentMembership[item.id] = character.id;
             }
+        }
 
-            if (itemMembership[entity.id] !== entity.containerId) {
-                return fail(
-                    "ITEM_CONTAINER_MISMATCH",
-                    `Item ${entity.id} containerId does not match inventory membership.`
-                );
-            }
-            if (!getItemDefinition(entity, world)) {
-                return fail(
-                    "ITEM_DEFINITION_MISSING",
-                    `Item ${entity.id} references missing definition ${entity.definitionId}.`
-                );
-            }
+        for (const entity of Object.values(world.entities)) {
+            if (entity.type !== "item") continue;
+            if (!getItemDefinition(entity, world)) return fail("ITEM_DEFINITION_MISSING", `Item ${entity.id} references missing definition ${entity.definitionId}.`);
+            const placedIn = itemMembership[entity.id] || equipmentMembership[entity.id];
+            if (!placedIn || placedIn !== entity.containerId) return fail("ITEM_CONTAINER_MISMATCH", `Item ${entity.id} containerId does not match canonical placement.`);
             if (entity.abstractStudyProgressByCharacterId !== undefined) {
                 const progressByReader = entity.abstractStudyProgressByCharacterId;
-                if (!progressByReader || typeof progressByReader !== "object" || Array.isArray(progressByReader)) {
-                    return fail("ITEM_STUDY_PROGRESS_INVALID", `Item ${entity.id} has invalid abstract-study reader progress.`);
-                }
+                if (!progressByReader || typeof progressByReader !== "object" || Array.isArray(progressByReader)) return fail("ITEM_STUDY_PROGRESS_INVALID", `Item ${entity.id} has invalid abstract-study reader progress.`);
                 for (const [readerId, progress] of Object.entries(progressByReader)) {
                     if (!readerId || readerId.length > 160 || !progress || typeof progress !== "object" || Array.isArray(progress) ||
                             typeof progress.lastInput !== "string" || !progress.lastInput.trim() || progress.lastInput.length > 600 ||
@@ -663,7 +701,6 @@
                 }
             }
         }
-
         return ok();
     }
 
@@ -2085,6 +2122,75 @@
             }
         },
 
+        equip: {
+            description: "Equip an owned item into one of that item's currently available slots.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "equip" }, item_id: { type: "string" }, slot: { type: "string" } },
+                required: ["type", "item_id", "slot"]
+            },
+            getOptions: function (actor, world) {
+                const occupied = new Set(equippedRecords(actor).map(function (record) { return record.slot; }));
+                const inventory = world.inventories[actor.inventoryId];
+                const items = (inventory ? inventory.itemIds : []).map(function (itemId) {
+                    const item = world.entities[itemId];
+                    const definition = getItemDefinition(item, world);
+                    const slots = definition && Array.isArray(definition.equipSlots)
+                        ? definition.equipSlots.filter(function (slot) { return !occupied.has(slot); }) : [];
+                    if (!slots.length) return null;
+                    return { id: item.id, name: definition.name, slots: slots.slice() };
+                }).filter(Boolean);
+                return { item_ids: items.map(function (item) { return item.id; }), items: items };
+            },
+            validate: function (actor, action, world) {
+                const inventory = world.inventories[actor.inventoryId];
+                if (!inventory || !inventory.itemIds.includes(action.item_id)) return fail("ITEM_NOT_OWNED", "Actor does not possess this item in inventory.");
+                const item = world.entities[action.item_id];
+                const definition = getItemDefinition(item, world);
+                if (!definition || !Array.isArray(definition.equipSlots) || !definition.equipSlots.includes(action.slot)) return fail("EQUIP_SLOT_INVALID", "This item cannot be equipped in that slot.");
+                if (equippedRecords(actor).some(function (record) { return record.slot === action.slot; })) return fail("EQUIP_SLOT_OCCUPIED", "That equipment slot is already occupied.");
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const inventory = world.inventories[actor.inventoryId];
+                inventory.itemIds = inventory.itemIds.filter(function (id) { return id !== action.item_id; });
+                const item = world.entities[action.item_id];
+                item.containerId = actor.id;
+                actor.equippedItems.push({ itemId: item.id, slot: action.slot, visible: true });
+                return [{ type: "item_equipped", actorId: actor.id, itemId: item.id, slot: action.slot,
+                    locationId: actor.locationId, sublocationId: actor.sublocationId, text: `${actor.name} puts on ${item.name}.` }];
+            }
+        },
+
+        unequip: {
+            description: "Remove one currently equipped item and return it to inventory.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "unequip" }, item_id: { type: "string" } },
+                required: ["type", "item_id"]
+            },
+            getOptions: function (actor, world) {
+                const items = equippedRecords(actor).map(function (record) {
+                    const item = world.entities[record.itemId];
+                    const definition = getItemDefinition(item, world);
+                    return item && definition ? { id: item.id, name: definition.name, slot: record.slot } : null;
+                }).filter(Boolean);
+                return { item_ids: items.map(function (item) { return item.id; }), items: items };
+            },
+            validate: function (actor, action) {
+                if (!equippedRecords(actor).some(function (record) { return record.itemId === action.item_id; })) return fail("ITEM_NOT_EQUIPPED", "Actor is not wearing this item.");
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const item = world.entities[action.item_id];
+                actor.equippedItems = actor.equippedItems.filter(function (record) { return record.itemId !== action.item_id; });
+                world.inventories[actor.inventoryId].itemIds.push(item.id);
+                item.containerId = actor.inventoryId;
+                return [{ type: "item_unequipped", actorId: actor.id, itemId: item.id,
+                    locationId: actor.locationId, sublocationId: actor.sublocationId, text: `${actor.name} takes off ${item.name}.` }];
+            }
+        },
+
         use_item: {
             description: "Use an owned item through its authored interaction. item_id must be one of this action's listed item IDs.",
             schema: {
@@ -2098,7 +2204,8 @@
             },
             getOptions: function (actor, world) {
                 const inventory = world.inventories[actor.inventoryId];
-                const items = (inventory ? inventory.itemIds : []).map(function (itemId) {
+                const ownedIds = (inventory ? inventory.itemIds.slice() : []).concat(equippedRecords(actor).map(function (record) { return record.itemId; }));
+                const items = Array.from(new Set(ownedIds)).map(function (itemId) {
                     const item = world.entities[itemId];
                     const definition = getItemDefinition(item, world);
                     const useAction = definition && definition.useAction;
@@ -2119,8 +2226,7 @@
                 return { item_ids: items.map(function (item) { return item.id; }), items: items };
             },
             validate: function (actor, action, world) {
-                const inventory = world.inventories[actor.inventoryId];
-                if (!inventory || !inventory.itemIds.includes(action.item_id)) {
+                if (!actorOwnsItem(actor, action.item_id, world)) {
                     return fail("ITEM_NOT_OWNED", "Actor does not possess this item.");
                 }
                 const item = world.entities[action.item_id];
@@ -2250,6 +2356,11 @@
             const item = world.entities[itemId];
             const definition = getItemDefinition(item, world);
             if (!definition) continue;
+            if (Array.isArray(definition.equipSlots) && definition.equipSlots.some(function (slot) {
+                    return !equippedRecords(actor).some(function (record) { return record.slot === slot; });
+                })) {
+                grant("equip", { kind: "item", id: item.id, definitionId: definition.id, name: definition.name });
+            }
             if (definition.fillAction && environmentCapabilities.has(definition.fillAction.requiredEnvironmentCapability)) {
                 grant("fill", {
                     kind: "item",
@@ -2276,6 +2387,15 @@
                 });
             }
         }
+        equippedRecords(actor).forEach(function (record) {
+            const item = world.entities[record.itemId];
+            const definition = getItemDefinition(item, world);
+            if (!item || !definition) return;
+            grant("unequip", { kind: "item", id: item.id, definitionId: definition.id, name: definition.name, slot: record.slot });
+            if (definition.useAction && ItemEffectRegistry[definition.useAction.effectId]) {
+                grant("use_item", { kind: "item", id: item.id, definitionId: definition.id, name: definition.name, effectId: definition.useAction.effectId });
+            }
+        });
 
         const location = getLocation(actor.locationId, world);
         locationExitEntries(location).forEach(function (transition) {
@@ -2340,6 +2460,8 @@
                 id: actor.id,
                 name: actor.name,
                 playerDescription: actor.playerDescription || "",
+                appearance_text: characterAppearanceText(actor, world),
+                equipped_items: equippedRecords(actor).map(function (record) { return equippedItemView(record, world); }).filter(Boolean),
                 controller_id: world.control.assignments[actor.id],
                 location_id: actor.locationId,
                 sublocation_id: actor.sublocationId,
@@ -2366,7 +2488,8 @@
                         id: character.id,
                         name: character.name,
                         playerDescription: character.playerDescription || `${character.name} is here.`,
-                        presence_text: character.playerDescription || `${character.name} is here.`,
+                        presence_text: characterAppearanceText(character, world) || `${character.name} is here.`,
+                        equipped_items: equippedRecords(character).map(function (record) { return equippedItemView(record, world); }).filter(Boolean),
                         interaction_label: character.interactionLabel || `Speak with ${character.name}`,
                         sublocation_id: character.sublocationId,
                         position_text: positionText(character, world),
@@ -2444,6 +2567,12 @@
         if (Object.prototype.hasOwnProperty.call(action, "amount") && typeof options.maximum_amount === "number" &&
                 typeof action.amount === "number" && action.amount > options.maximum_amount) {
             errors.push("Action amount exceeds the currently available maximum.");
+        }
+        if (action.type === "equip" && typeof action.item_id === "string" && typeof action.slot === "string" && Array.isArray(options.items)) {
+            const itemOption = options.items.find(function (candidate) { return candidate.id === action.item_id; });
+            if (!itemOption || !Array.isArray(itemOption.slots) || !itemOption.slots.includes(action.slot)) {
+                errors.push("Action field slot selected an unavailable option for the selected item.");
+            }
         }
         if (action.type === "use_item" && typeof action.item_id === "string" && Array.isArray(options.items)) {
             const itemOption = options.items.find(function (candidate) { return candidate.id === action.item_id; });

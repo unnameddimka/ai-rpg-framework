@@ -15,7 +15,7 @@ const defaults = {
 
 const knownActions = new Set([
     "move", "move_within_location", "take_item", "drop_item", "give_item",
-    "give_money", "place_item", "fill", "consume", "lock", "unlock", "read_aura", "sleep"
+    "give_money", "place_item", "fill", "consume", "equip", "unequip", "lock", "unlock", "read_aura", "sleep"
 ]);
 const knownEnvironmentCapabilities = new Set(["ale_source"]);
 const knownItemEffects = new Set(["report_memory_counts", "narrative_feedback", "abstract_study", "utility_query"]);
@@ -231,9 +231,19 @@ function validateWorld(document) {
                 lockIds.has(definition.keyLockId),
             `Item definition ${id} references invalid keyLockId '${definition.keyLockId}'.`);
         }
-        for (const flag of ["consumable", "equippable", "fillable"]) {
+        for (const flag of ["consumable", "fillable"]) {
             requireCondition(typeof definition[flag] === "boolean",
                 `Item definition ${id} ${flag} must be Boolean.`);
+        }
+        const equipSlots = definition.equipSlots === undefined ? [] : definition.equipSlots;
+        requireCondition(Array.isArray(equipSlots) && equipSlots.every(nonBlank) && new Set(equipSlots).size === equipSlots.length,
+            `Item definition ${id} equipSlots must be a unique list of non-empty strings.`);
+        if (equipSlots.length > 0) {
+            requireCondition(nonBlank(definition.equippedDescription),
+                `Item definition ${id} with equipSlots requires equippedDescription.`);
+        } else if (definition.equippedDescription !== undefined) {
+            requireCondition(typeof definition.equippedDescription === "string",
+                `Item definition ${id} equippedDescription must be text.`);
         }
         if (definition.fillAction) {
             requireCondition(nonBlank(definition.fillAction.actionLabel) &&
@@ -372,13 +382,31 @@ function validateWorld(document) {
         }
     }
 
+    const authoredEquipmentSlots = new Set();
     for (const [id, item] of entries(document.items)) {
         requireCondition(isObject(item) && item.id === id, `Item key ${id} must match its id.`);
         registerTechnicalId(technicalIdOwners, id, `item ${id}`);
         requireCondition(own(document.itemDefinitions, String(item.definitionId || "")),
             `Item ${id} references missing definition '${item.definitionId}'.`);
-        requireCondition(inventoryOwners.has(String(item.inventoryId || "")),
-            `Item ${id} references missing inventory '${item.inventoryId}'.`);
+        const hasInventory = nonBlank(String(item.inventoryId || ""));
+        const hasEquippedOwner = nonBlank(String(item.equippedByCharacterId || ""));
+        const hasEquippedSlot = nonBlank(String(item.equippedSlot || ""));
+        requireCondition(hasInventory !== hasEquippedOwner,
+            `Item ${id} must start in exactly one inventory or equipped on one character.`);
+        if (hasInventory) {
+            requireCondition(!hasEquippedSlot && inventoryOwners.has(String(item.inventoryId)),
+                `Item ${id} references missing inventory '${item.inventoryId}' or also defines equippedSlot.`);
+        } else {
+            requireCondition(hasEquippedSlot && own(document.characters, String(item.equippedByCharacterId)),
+                `Item ${id} has invalid equipped starting placement.`);
+            const definition = document.itemDefinitions[item.definitionId];
+            requireCondition(Array.isArray(definition.equipSlots) && definition.equipSlots.includes(item.equippedSlot),
+                `Item ${id} equippedSlot '${item.equippedSlot}' is not allowed by its definition.`);
+            const occupancyKey = `${item.equippedByCharacterId}:${item.equippedSlot}`;
+            requireCondition(!authoredEquipmentSlots.has(occupancyKey),
+                `Item ${id} conflicts with another authored item in ${occupancyKey}.`);
+            authoredEquipmentSlots.add(occupancyKey);
+        }
     }
 
     requireCondition(humanCount === 1,

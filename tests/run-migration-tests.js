@@ -299,6 +299,84 @@ try {
     authoredGuestRoom3Room.locked = originalGuestRoom3RoomLocked;
 }
 
+// Stable sublocation identity must survive authored reparenting without moving unrelated cottage occupants.
+const reparentedSublocationWorld = clone(current);
+reparentedSublocationWorld.authoringRevision = "3333333333333333333333333333333333333333333333333333333333333333";
+reparentedSublocationWorld.entities.player.locationId = "secludedCottage";
+reparentedSublocationWorld.entities.player.sublocationId = "maraCottageBed";
+reparentedSublocationWorld.entities.hoodedWoman.locationId = "secludedCottage";
+reparentedSublocationWorld.entities.hoodedWoman.sublocationId = "maraCottageGarden";
+State.variables.world = reparentedSublocationWorld;
+const migratedReparented = setup.SaveMigration.migrate();
+assert(migratedReparented.ok && migratedReparented.migrated,
+    "a save spanning the Mara garden reparenting should migrate normally");
+assert(State.variables.world.entities.player.locationId === "secludedCottage" &&
+    State.variables.world.entities.player.sublocationId === "maraCottageBed",
+    "a character saved on Mara's bed must remain on the same stable interior sublocation");
+assert(State.variables.world.entities.hoodedWoman.locationId === "maraCottageGardenLocation" &&
+    State.variables.world.entities.hoodedWoman.sublocationId === "maraCottageGarden",
+    "a character saved in the stable garden sublocation should follow that sublocation to its new authored parent location");
+
+// Saved equipment placement must override fresh authored starting equipment.
+const movedEquipmentWorld = clone(current);
+movedEquipmentWorld.authoringRevision = "4444444444444444444444444444444444444444444444444444444444444444";
+movedEquipmentWorld.entities.hoodedWoman.equippedItems = movedEquipmentWorld.entities.hoodedWoman.equippedItems.filter(function (record) {
+    return record.itemId !== "maraHoodedCloak_01";
+});
+removeFromAllInventories(movedEquipmentWorld, "maraHoodedCloak_01");
+movedEquipmentWorld.entities.maraHoodedCloak_01.containerId = "inventory_player";
+movedEquipmentWorld.inventories.inventory_player.itemIds.push("maraHoodedCloak_01");
+State.variables.world = movedEquipmentWorld;
+const migratedMovedEquipment = setup.SaveMigration.migrate();
+assert(migratedMovedEquipment.ok && migratedMovedEquipment.migrated &&
+    State.variables.world.entities.maraHoodedCloak_01.containerId === "inventory_player" &&
+    State.variables.world.inventories.inventory_player.itemIds.includes("maraHoodedCloak_01") &&
+    !State.variables.world.entities.hoodedWoman.equippedItems.some(function (record) { return record.itemId === "maraHoodedCloak_01"; }),
+    "saved runtime placement should win over the cloak's authored starting equipment");
+
+// Invalid saved equipment should recover into the owner's inventory rather than disappearing or breaking migration.
+const invalidEquipmentWorld = clone(current);
+invalidEquipmentWorld.authoringRevision = "5555555555555555555555555555555555555555555555555555555555555555";
+const invalidCloakRecord = invalidEquipmentWorld.entities.hoodedWoman.equippedItems.find(function (record) {
+    return record.itemId === "maraHoodedCloak_01";
+});
+invalidCloakRecord.slot = "back";
+invalidEquipmentWorld.entities.maraHoodedCloak_01.containerId = "hoodedWoman";
+State.variables.world = invalidEquipmentWorld;
+const migratedInvalidEquipment = setup.SaveMigration.migrate();
+assert(migratedInvalidEquipment.ok && migratedInvalidEquipment.migrated &&
+    State.variables.world.entities.maraHoodedCloak_01.containerId === "inventory_hoodedWoman" &&
+    State.variables.world.inventories.inventory_hoodedWoman.itemIds.includes("maraHoodedCloak_01") &&
+    !State.variables.world.entities.hoodedWoman.equippedItems.some(function (record) { return record.itemId === "maraHoodedCloak_01"; }) &&
+    migratedInvalidEquipment.report.warnings.some(function (warning) { return warning.includes("maraHoodedCloak_01") && warning.includes("moved to inventory_hoodedWoman"); }),
+    "invalid saved equipment should fall back to the owner's inventory with a migration warning");
+
+// Saves from the schema immediately before equipment should gain newly authored clothing rather than erasing it.
+const preEquipmentWorld = clone(current);
+preEquipmentWorld.schemaVersion = 8;
+preEquipmentWorld.authoringRevision = "6666666666666666666666666666666666666666666666666666666666666666";
+const newEquipmentItemIds = [
+    "travelerClothing_01", "maraClothing_01", "maraHoodedCloak_01", "garrickClothing_01",
+    "priceTacticalClothing_01", "priceBoonieHat_01", "nellClothing_01", "silverChain_01"
+];
+newEquipmentItemIds.forEach(function (itemId) {
+    removeFromAllInventories(preEquipmentWorld, itemId);
+    Object.values(preEquipmentWorld.entities).filter(function (entity) { return entity && entity.type === "character"; }).forEach(function (character) {
+        character.equippedItems = (character.equippedItems || []).filter(function (record) { return record.itemId !== itemId; });
+    });
+    delete preEquipmentWorld.entities[itemId];
+});
+Object.values(preEquipmentWorld.entities).filter(function (entity) { return entity && entity.type === "character"; }).forEach(function (character) {
+    delete character.equippedItems;
+});
+State.variables.world = preEquipmentWorld;
+const migratedPreEquipment = setup.SaveMigration.migrate();
+assert(migratedPreEquipment.ok && migratedPreEquipment.migrated &&
+    State.variables.world.entities.player.equippedItems.some(function (record) { return record.itemId === "travelerClothing_01" && record.slot === "clothing"; }) &&
+    State.variables.world.entities.hoodedWoman.equippedItems.some(function (record) { return record.itemId === "maraHoodedCloak_01" && record.slot === "shoulders"; }) &&
+    State.variables.world.inventories.inventory_player.itemIds.includes("silverChain_01"),
+    "pre-equipment saves should receive the current authored starting clothing and silver-chain item");
+
 // Migration must be transactional: corrupt persistent memory cannot partially replace the active restored save.
 const broken = clone(current);
 delete broken.schemaVersion;

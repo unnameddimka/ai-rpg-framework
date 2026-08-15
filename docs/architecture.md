@@ -70,6 +70,10 @@ The runtime world contains stable entity IDs. Locations, sublocations, character
 
 An item instance references an authored item definition. The definition supplies type-level behavior/metadata; the instance supplies identity and runtime container/state.
 
+Equipment is item-defined rather than character-slot-defined. A definition with non-empty `equipSlots` is equippable and supplies `equippedDescription`; slots are free-form exact-match strings. A character stores `equippedItems` records `{itemId, slot, visible}`. Inventory placement uses `item.containerId = inventoryId`; equipped placement uses `item.containerId = characterId`, and one item may occupy a slot at a time. `equip`/`unequip` are ordinary formal actions from `view.available_actions`; equipped items remain eligible for `use_item`, while transfer/drop/place require unequipping first. The `visible` flag currently defaults true and is reserved for future concealment/layering rules.
+
+Character visual descriptions are intrinsic only. Canonical current appearance is computed from base `playerDescription`, neutral `undressed` state when the exact `clothing` slot is empty, and visible equipped-item descriptions. The canonical view exposes both assembled appearance text and structured `equipped_items` to Human/AI consumers.
+
 Tracked transformations change the instance's definition/subtype deterministically rather than replacing narrative text only.
 
 Item definitions may expose authored `useAction` effects. Most effects are synchronous/deterministic, such as `report_memory_counts`, and may return only grounded public/private feedback without adding stats or buffs.
@@ -149,7 +153,7 @@ The deterministic action registry/CharacterAPI is the sole authority for formal 
 - that action's schema;
 - its current concrete option values.
 
-Examples include movement, moving within a location, item transfer, placement, item use, money transfer, locks, sleep, and character abilities.
+Examples include movement, moving within a location, item transfer, placement, item use, equip/unequip, money transfer, locks, sleep, and character abilities.
 
 Narrative cannot establish a tracked state transition that the engine did not execute.
 
@@ -362,11 +366,11 @@ Normal sidebar may expose read-only scheduler information, but there is no manua
 
 ## 21. Current authored story/world notes
 
-The current authored world includes the tavern, village/street/temple, village edge and Mara's secluded cottage.
+The current authored world includes the tavern, village/street/temple, village edge, a separate Mara's Garden location, and Mara's Cottage (`secludedCottage`) as an interior-only location.
 
 Mara's cottage includes a work table and a stable authored **Slab of Full Arcane Knowledge** instance. `Consult slab` uses deterministic `abstract_study`. Mara/another holder supplies a subject or question in `input_text`; the engine returns authored private feedback for the reader's current study stage. A new line gives broad orientation, a related follow-up gives focused understanding, and continued reading on the same line reaches `saturated` feedback with diminishing theoretical returns. The slab never asks a model to invent or summarize the subject, so it cannot introduce new schools, spells, techniques, taxonomies, history, dates, mechanisms, recipes, or other setting facts through this interaction. It provides no buffs, stats, automatic mastery, or omniscient current/future knowledge.
 
-Mara's cottage also has a normal reciprocal unlocked exit to **Forest stream** (`forestMountainStream`) at the foot of the mountains. The stream has an ordinary bank plus `forestStreamSittingPlace`, a two-capacity sublocation represented by broad smooth stones beside the water. It uses only existing movement/co-location/capacity mechanics and has no scripted date/romance behavior.
+Mara's Garden (`maraCottageGardenLocation`) connects reciprocally to village edge, Mara's Cottage, and **Forest stream** (`forestMountainStream`). The cottage no longer connects directly to village edge or the stream. The stream has an ordinary bank plus `forestStreamSittingPlace`, a capacity-two sublocation represented by broad smooth stones beside the water; its enter action moves only the acting character. Save migration preserves surviving stable sublocation identity and derives its current authored parent, so old garden positions reparent safely while cottage-bed occupants remain on the bed.
 
 Story-specific activation of an existing save is performed by editing that save's runtime observation inbox when desired, not by embedding Mara/slab special cases into migration.
 
@@ -380,5 +384,6 @@ Explicitly deferred:
 - retrieval-based hybrid memory/embeddings;
 - large-crowd optimization beyond current emergency limits;
 - expanded loudness propagation/shouts;
-- equipment/combat/quest systems;
+- equipment stacking/layering/concealment controls;
+- combat/quest systems;
 - narrator grounding redesign.

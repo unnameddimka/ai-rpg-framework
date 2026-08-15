@@ -9,7 +9,7 @@
 - Canonical restricted character view shared by Human UI and ordinary AIController.
 - Locations, sublocations, beds/posture positions, explicit inventories and stable item instances.
 - Atomic formal actions with current-state action catalogs and concrete option validation.
-- Movement, item transfer/placement/transformation/use, money, locks/keys, sleep, and character abilities.
+- Movement, item transfer/placement/transformation/use, item-defined equip/unequip, money, locks/keys, sleep, and character abilities.
 - Single canonical `character_moved` event routed to source/destination perceivers.
 - Locked-passage attempts produce grounded observations on both sides; the far side is anonymized rather than leaking actor identity through a closed door.
 - Recipient pending-observation inbox is authoritative; model-facing observations are compact and omit routing/scheduler metadata.
@@ -20,7 +20,7 @@
 
 - Roadside tavern with Garrick, Nell, Guest Rooms, bar/common-room furniture and keys.
 - Captain Price as a character.
-- Village street/temple/edge, Mara's secluded cottage with garden/bed/table/alchemical shelves, and a reciprocal nearby Forest stream location with a normal two-person sitting sublocation.
+- Village street/temple/edge, separate Mara's Garden and Mara's Cottage locations (cottage floor/bed/table/alchemical shelves), plus a reciprocal nearby Forest stream reached from the garden with a normal capacity-two sitting sublocation.
 - Memory Stone deterministic item/use effect.
 - Deterministic `abstract_study` authored item effect: bounded `use_item.input_text` -> committed item use -> authored private study feedback with `{inputText}` interpolation. Reader progress is owned by the physical item instance and keyed independently per character; related consecutive queries classify as `survey`, `focused`, then `saturated`, while unrelated questions reset that reader's thread. No Utility/model request occurs.
 - Generic `utility_query` authored item effect remains available for genuinely model-backed information sources: bounded `input_text` -> committed physical item use -> deferred Utility-model information request -> private grounded result observation to the reader, with optional per-item output-token cap.
@@ -54,7 +54,7 @@
 
 ### AI inference
 
-- OpenRouter browser client with Character, Utility and Narrator model roles.
+- OpenRouter browser client with Character, Utility and Narrator model roles; Narrator defaults OFF and remains opt-in presentation.
 - Model catalog currently includes Cydonia, Llama Euryale variants, Mistral Small 3.2, DeepSeek V4 Pro and DeepSeek V4 Flash.
 - Utility model default: DeepSeek V4 Flash.
 - Central `AIRequestProfiles` for ordinary decisions, timelapse structural jobs, reflection, consolidation and narrator requests.
@@ -86,12 +86,12 @@
 
 ### UI/editor/debug
 
-- Minimal main Human input with persistent addressee/loudness selection and auto-growing text area.
+- Main scene is split into deterministic static-scene, visible-character, dynamic-item, History, current-tick, quick-action, and player-control panels; empty normal panels collapse.
 - Progressive committed scene rendering while input remains locked.
 - Optional current-turn invisible-event debug display.
 - Sidebar AI-activity admin controls can dismiss pending reactions, clear continuation, combine both, or globally clear non-kept AI characters on a safe idle boundary without emitting story events.
 - Character runtime profile modal plus collapsed **Mind tools** for manual compression and strict JSON export/import of portable character mind (`beliefs`, `relationships`, recent/long-term memories). Import is replace-only and exact-character-ID guarded.
-- Standalone offline world editor for `data/world.json`.
+- Standalone offline world editor for `data/world.json`, including free-form item equipment slots and Inventory/Equipped starting placement.
 - Crystal-sphere/prompt-lab diagnostics, dry runs and AI exchange import/export.
 - No normal gameplay button that manually processes pending AI work.
 
@@ -121,7 +121,7 @@ Timelapse is split into generic core + overnight wrapper.
 - OpenRouter transport is non-streaming.
 - Loudness currently supports noticeable/hidden only; shout propagation is absent.
 - Narrator remains presentation-only and can still embellish incorrectly; deeper narrator grounding is deferred.
-- Combat, equipment, quests, dialogue trees and a full economy are not implemented.
+- Combat, equipment stacking/layering/concealment controls, quests, dialogue trees and a full economy are not implemented.
 - Crystal sphere/temple debug scaffolding remains development-oriented.
 
 ## Next planned product work

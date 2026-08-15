@@ -143,6 +143,12 @@
                 typeof action.amount === "number" && action.amount > options.maximum_amount) {
             errors.push(`${path}.amount exceeds currently available maximum ${options.maximum_amount}.`);
         }
+        if (action.type === "equip" && typeof action.item_id === "string" && typeof action.slot === "string" && Array.isArray(options.items)) {
+            const itemOption = options.items.find(function (candidate) { return candidate.id === action.item_id; });
+            if (!itemOption || !Array.isArray(itemOption.slots) || !itemOption.slots.includes(action.slot)) {
+                errors.push(`${path}.slot selected unavailable option ${JSON.stringify(action.slot)} for item ${JSON.stringify(action.item_id)}.`);
+            }
+        }
         if (action.type === "use_item" && typeof action.item_id === "string" && Array.isArray(options.items)) {
             const itemOption = options.items.find(function (candidate) { return candidate.id === action.item_id; });
             if (itemOption && itemOption.input_required) {

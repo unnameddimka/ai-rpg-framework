@@ -164,7 +164,8 @@ const contextualView = {
     self: {
         id: "player",
         name: "Traveler",
-        inventory: [{ id: "mug", name: "Empty mug" }, { id: "memoryStone_01", name: "Memory Stone", description: "A smooth dark stone." }],
+        inventory: [{ id: "mug", name: "Empty mug" }, { id: "memoryStone_01", name: "Memory Stone", description: "A smooth dark stone." }, { id: "chain", name: "Silver chain" }],
+        equipped_items: [{ id: "hat", name: "Boonie hat", slot: "head", visible: true }],
         abilities: [{ id: "readAura", name: "Read aura", playerDescription: "Sense auras.", actionType: "read_aura" }]
     },
     location: {
@@ -180,6 +181,8 @@ const contextualView = {
         drop_item: { options: { item_ids: ["mug"] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
         place_item: { options: { item_ids: ["mug"], target_inventory_ids: ["cabinet"] }, schema: { properties: { type: {}, item_id: {}, target_inventory_id: {} }, required: ["type", "item_id", "target_inventory_id"] } },
         use_item: { description: "Use an owned item.", options: { item_ids: ["memoryStone_01"], items: [{ id: "memoryStone_01", name: "Memory Stone", action_label: "Squeeze in hand", effect_id: "report_memory_counts" }] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
+        equip: { description: "Equip item.", options: { item_ids: ["chain"], items: [{ id: "chain", name: "Silver chain", slots: ["neck"] }] }, schema: { properties: { type: {}, item_id: {}, slot: {} }, required: ["type", "item_id", "slot"] } },
+        unequip: { description: "Unequip item.", options: { item_ids: ["hat"], items: [{ id: "hat", name: "Boonie hat", slot: "head" }] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
         read_aura: {
             description: "Read nearby auras.",
             options: {},
@@ -194,12 +197,16 @@ assert(groups.characters.length === 1 && groups.characters[0].label === "Talk to
     groups.here.some(function (entry) { return entry.label === "Take Empty mug"; }) &&
     groups.here.some(function (entry) { return entry.label === "Squeeze in hand" && entry.action.type === "use_item" && entry.action.item_id === "memoryStone_01"; }) &&
     groups.here.some(function (entry) { return entry.label === "Read aura"; }) &&
-    groups.travel.length === 1 && groups.travel[0].label === "Go to Village Street",
-    "contextual shortcuts should be grouped into Characters, Here, and Travel from the canonical view");
+    groups.travel.length === 1 && groups.travel[0].label === "Go to Village Street" &&
+    !groups.here.some(function (entry) { return entry.action.type === "equip" || entry.action.type === "unequip"; }),
+    "contextual shortcuts should be grouped into Characters, Here, and Travel without equip/unequip quick buttons");
 assert(gameUIModel.actionAvailableInView({ type: "move", destination_id: "street" }, contextualView) &&
     !gameUIModel.actionAvailableInView({ type: "move", destination_id: "missing" }, contextualView) &&
     gameUIModel.actionAvailableInView({ type: "use_item", item_id: "memoryStone_01" }, contextualView) &&
     !gameUIModel.actionAvailableInView({ type: "use_item", item_id: "mug" }, contextualView) &&
+    gameUIModel.actionAvailableInView({ type: "equip", item_id: "chain", slot: "neck" }, contextualView) &&
+    !gameUIModel.actionAvailableInView({ type: "equip", item_id: "chain", slot: "head" }, contextualView) &&
+    gameUIModel.actionAvailableInView({ type: "unequip", item_id: "hat" }, contextualView) &&
     gameUIModel.actionLabel({ type: "use_item", item_id: "memoryStone_01" }, contextualView) === "Squeeze in hand" &&
     gameUIModel.actionLabel({ type: "take_item", item_id: "cabinetMug" }, contextualView) === "Take Empty mug",
     "selected actions should be validated and labeled from the current canonical view");
@@ -443,12 +450,15 @@ const disabledNarratorPresentation = gameUIModel.currentTurnPresentation({
 assert(!disabledNarratorPresentation.narrated && disabledNarratorPresentation.fragments[0] === "RAW TURN",
     "disabling narrator should immediately select the complete raw dynamic presentation path");
 context.setup.NarratorService.setEnabled(true);
-assert(uiSource.includes("renderNarratedDynamicScene(root, turnPresentation.fragments)") &&
-    uiSource.includes("renderRawDynamicPresentation(root, view, turnPresentation.fragments)") &&
-    uiSource.includes("if (turnPresentation.narrated)") &&
-    uiSource.indexOf("renderStaticScene(root, view)") < uiSource.indexOf("renderNarratedDynamicScene(root, turnPresentation.fragments)") &&
+assert(uiSource.includes("renderCharacterScene(root, view)") &&
+    uiSource.includes("renderDynamicItems(root, view)") &&
+    uiSource.includes("renderCurrentTurn(root, turnPresentation)") &&
+    uiSource.indexOf("renderStaticScene(root, view)") < uiSource.indexOf("renderCharacterScene(root, view)") &&
+    uiSource.indexOf("renderCharacterScene(root, view)") < uiSource.indexOf("renderDynamicItems(root, view)") &&
+    uiSource.indexOf("renderDynamicItems(root, view)") < uiSource.indexOf("renderHistory(root)") &&
+    uiSource.indexOf("renderHistory(root)") < uiSource.indexOf("renderCurrentTurn(root, turnPresentation)") &&
     uiSource.indexOf("renderBusyIndicator(root, busyState)") < uiSource.indexOf("const groups = buildContextualActionGroups(view)"),
-    "location rendering should place static then unified dynamic presentation, raw fallback as one path, and the busy indicator before gameplay shortcut buttons");
+    "location rendering should order static scene, characters, dynamic items, History, current tick, then gameplay shortcuts");
 assert(stylesSource.includes(".framework-narrated-static") && stylesSource.includes(".framework-narrated-dynamic") &&
     stylesSource.includes(".framework-raw-presentation") && stylesSource.includes("rgba(74, 96, 116, 0.16)") &&
     stylesSource.includes("rgba(73, 106, 84, 0.16)") && stylesSource.includes("rgba(116, 76, 76, 0.16)"),

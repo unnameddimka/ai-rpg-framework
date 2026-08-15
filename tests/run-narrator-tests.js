@@ -126,6 +126,8 @@ async function testRuntimeTransportBudgetsHotSwitchingAndLogging() {
     const { context, storage } = narratorContext();
     const settings = context.setup.AIRuntimeSettings;
     const narrator = context.setup.NarratorService;
+    assert(narrator.isEnabled() === false, "Narrator should default to disabled");
+    narrator.setEnabled(true);
     assert(narrator.STATIC_MAX_TOKENS === 400 && narrator.DYNAMIC_MAX_TOKENS === 700,
         "static and dynamic narrator completion ceilings should be 400 and 700 tokens");
     assert(settings.getDefaultNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro",
@@ -267,6 +269,7 @@ async function testTolerantDynamicJsonRecovery() {
 
 async function testNarratorResponseToleranceAndFallback() {
     const { context } = narratorContext();
+    context.setup.NarratorService.setEnabled(true);
     const view = sampleView();
     const entries = [
         { visibleToHuman: true, kind: "narrative", actorId: "nell", text: "Nell: First line." },

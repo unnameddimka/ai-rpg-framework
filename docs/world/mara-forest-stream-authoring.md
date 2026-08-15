@@ -1,5 +1,7 @@
 # Mara's Forest Stream — Authoring Update
 
+> **Superseded topology note (2026-08-15):** this file records the original stream-authoring task. The current world no longer connects the stream directly to `secludedCottage`. `maraCottageGarden` now lives under top-level `maraCottageGardenLocation` (Mara's Garden), and the current graph is Village Edge ↔ Mara's Garden ↔ Mara's Cottage, with Forest Stream ↔ Mara's Garden. `forestStreamSittingPlace` remains capacity 2 but its current enter label is `Sit on the stones by the stream`. See `docs/engine/equippables-clothing-scene-layout.md` for the current specification.
+
 ## Status
 
 Implemented authoring update.

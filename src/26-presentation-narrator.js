@@ -5,7 +5,7 @@
     const DYNAMIC_MAX_TOKENS = 700;
     const NARRATOR_TEMPERATURE = 0.7;
     const IMMUTABLE_KINDS = new Set(["human_narrative", "narrative"]);
-    let enabled = true;
+    let enabled = false;
 
     const STATIC_SYSTEM_PROMPT = [
         "You are the presentation narrator for a role-playing game.",

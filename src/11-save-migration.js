@@ -11,6 +11,7 @@
     const fail = I.fail;
     const createInitialWorld = I.createInitialWorld;
     const getCharacters = I.getCharacters;
+    const getCharacter = I.getCharacter;
     const getLocation = I.getLocation;
     const getSublocation = I.getSublocation;
     const locationExitEntries = I.locationExitEntries;
@@ -132,9 +133,11 @@
         Object.values(candidate.inventories).forEach(function (inventory) {
             inventory.itemIds = inventory.itemIds.filter(function (candidateId) { return candidateId !== itemId; });
         });
-        if (candidate.entities[itemId] && candidate.entities[itemId].type === "item") {
-            delete candidate.entities[itemId];
-        }
+        getCharacters(candidate).forEach(function (character) {
+            character.equippedItems = Array.isArray(character.equippedItems)
+                ? character.equippedItems.filter(function (record) { return record && record.itemId !== itemId; }) : [];
+        });
+        if (candidate.entities[itemId] && candidate.entities[itemId].type === "item") delete candidate.entities[itemId];
     }
 
     function restoreSavedPassageLocks(candidate, savedWorld, report) {
@@ -406,22 +409,26 @@
                     report.warnings.push(`Character ${character.id} had an invalid saved wallet; current authored wallet was used.`);
                 }
 
-                const savedLocation = getLocation(savedCharacter.locationId, candidate);
-                if (!savedLocation) {
-                    const fallbackLocation = getLocation(candidate.startLocationId, candidate);
-                    character.locationId = fallbackLocation.id;
-                    character.sublocationId = fallbackLocation.defaultSublocationId;
-                    report.characterPositionFallbacks += 1;
-                    report.warnings.push(`Character ${character.id} was moved to the start location because saved location ${String(savedCharacter.locationId)} no longer exists.`);
+                const savedSublocation = getSublocation(savedCharacter.sublocationId, candidate);
+                if (savedSublocation) {
+                    character.locationId = savedSublocation.locationId;
+                    character.sublocationId = savedSublocation.id;
+                    if (savedCharacter.locationId !== savedSublocation.locationId) {
+                        report.warnings.push(`Character ${character.id} kept saved sublocation ${savedSublocation.id} under its current authored parent ${savedSublocation.locationId}.`);
+                    }
                 } else {
-                    character.locationId = savedLocation.id;
-                    const savedSublocation = getSublocation(savedCharacter.sublocationId, candidate);
-                    if (savedSublocation && savedSublocation.locationId === savedLocation.id) {
-                        character.sublocationId = savedSublocation.id;
+                    const savedLocation = getLocation(savedCharacter.locationId, candidate);
+                    if (!savedLocation) {
+                        const fallbackLocation = getLocation(candidate.startLocationId, candidate);
+                        character.locationId = fallbackLocation.id;
+                        character.sublocationId = fallbackLocation.defaultSublocationId;
+                        report.characterPositionFallbacks += 1;
+                        report.warnings.push(`Character ${character.id} was moved to the start location because saved location ${String(savedCharacter.locationId)} no longer exists.`);
                     } else {
+                        character.locationId = savedLocation.id;
                         character.sublocationId = savedLocation.defaultSublocationId;
                         report.characterPositionFallbacks += 1;
-                        report.warnings.push(`Character ${character.id} was moved to ${savedLocation.defaultSublocationId} because saved sublocation ${String(savedCharacter.sublocationId)} no longer exists there.`);
+                        report.warnings.push(`Character ${character.id} was moved to ${savedLocation.defaultSublocationId} because saved sublocation ${String(savedCharacter.sublocationId)} no longer exists.`);
                     }
                 }
 
@@ -442,6 +449,18 @@
                 if (!repaired.ok) throw new Error(repaired.error.message);
             }
 
+            const savedEquipmentByItemId = new Map();
+            savedCharacters.forEach(function (savedCharacter) {
+                (Array.isArray(savedCharacter.equippedItems) ? savedCharacter.equippedItems : []).forEach(function (record) {
+                    if (!record || typeof record.itemId !== "string" || savedEquipmentByItemId.has(record.itemId)) return;
+                    savedEquipmentByItemId.set(record.itemId, {
+                        characterId: savedCharacter.id,
+                        slot: String(record.slot || ""),
+                        visible: record.visible !== false
+                    });
+                });
+            });
+
             const savedItems = Object.values(source.entities || {}).filter(function (entity) {
                 return entity && entity.type === "item";
             });
@@ -460,28 +479,50 @@
                     return;
                 }
 
-                const targetInventoryId = candidateInventoryForSavedContainer(source, candidate, savedItem.containerId);
-                if (!targetInventoryId) {
-                    removeItemFromCandidate(candidate, savedItem.id);
-                    report.itemInstancesRemoved += 1;
-                    report.warnings.push(`Item ${savedItem.id} was removed because saved container ${String(savedItem.containerId)} no longer has a safe destination.`);
-                    return;
-                }
-
                 removeItemFromCandidate(candidate, savedItem.id);
                 const migratedItem = clone(savedItem);
                 migratedItem.id = savedItem.id;
                 migratedItem.type = "item";
                 migratedItem.definitionId = savedItem.definitionId;
-                migratedItem.containerId = targetInventoryId;
                 migratedItem.name = definition.name;
                 if (migratedItem.abstractStudyProgressByCharacterId !== undefined) {
                     migratedItem.abstractStudyProgressByCharacterId = migrationItemStudyProgress(savedItem);
                     report.abstractStudyProgressPreserved += Object.keys(migratedItem.abstractStudyProgressByCharacterId).length;
-                    if (Object.keys(migratedItem.abstractStudyProgressByCharacterId).length === 0) {
-                        delete migratedItem.abstractStudyProgressByCharacterId;
+                    if (Object.keys(migratedItem.abstractStudyProgressByCharacterId).length === 0) delete migratedItem.abstractStudyProgressByCharacterId;
+                }
+
+                const savedEquipment = savedEquipmentByItemId.get(savedItem.id);
+                if (savedEquipment) {
+                    const owner = getCharacter(savedEquipment.characterId, candidate);
+                    const allowed = Array.isArray(definition.equipSlots) && definition.equipSlots.includes(savedEquipment.slot);
+                    const occupied = owner && Array.isArray(owner.equippedItems) && owner.equippedItems.some(function (record) { return record.slot === savedEquipment.slot; });
+                    if (owner && allowed && !occupied) {
+                        migratedItem.containerId = owner.id;
+                        candidate.entities[migratedItem.id] = migratedItem;
+                        owner.equippedItems.push({ itemId: migratedItem.id, slot: savedEquipment.slot, visible: savedEquipment.visible });
+                        report.itemInstancesPreserved += 1;
+                        return;
+                    }
+                    if (owner && candidate.inventories[owner.inventoryId]) {
+                        migratedItem.containerId = owner.inventoryId;
+                        candidate.entities[migratedItem.id] = migratedItem;
+                        candidate.inventories[owner.inventoryId].itemIds.push(migratedItem.id);
+                        report.itemInstancesPreserved += 1;
+                        report.itemInstancesRepositioned += 1;
+                        report.warnings.push(`Item ${savedItem.id} could not restore saved equipment slot ${savedEquipment.slot}; it was moved to ${owner.inventoryId}.`);
+                        return;
                     }
                 }
+
+                let targetInventoryId = candidateInventoryForSavedContainer(source, candidate, savedItem.containerId);
+                const savedContainerCharacter = getCharacter(savedItem.containerId, candidate);
+                if (!targetInventoryId && savedContainerCharacter) targetInventoryId = savedContainerCharacter.inventoryId;
+                if (!targetInventoryId) {
+                    report.itemInstancesRemoved += 1;
+                    report.warnings.push(`Item ${savedItem.id} was removed because saved container ${String(savedItem.containerId)} no longer has a safe destination.`);
+                    return;
+                }
+                migratedItem.containerId = targetInventoryId;
                 candidate.entities[migratedItem.id] = migratedItem;
                 candidate.inventories[targetInventoryId].itemIds.push(migratedItem.id);
                 report.itemInstancesPreserved += 1;

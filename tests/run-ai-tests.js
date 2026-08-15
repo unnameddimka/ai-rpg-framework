@@ -325,8 +325,8 @@ async function main() {
     world = fresh();
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "street" }), "item utility fixture reaches street");
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "villageEdge" }), "item utility fixture reaches village edge");
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "maraCottageGardenLocation" }), "item utility fixture reaches Mara garden");
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "secludedCottage" }), "item utility fixture reaches Mara cottage");
-    ok(setup.CharacterAPI.perform("player", { type: "move_within_location", destination_id: "maraCottageFloor" }), "item utility fixture enters cottage");
     ok(setup.CharacterAPI.perform("player", { type: "move_within_location", destination_id: "maraCottageTable" }), "item utility fixture reaches table");
     ok(setup.CharacterAPI.perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }), "item utility fixture takes slab");
     world.itemDefinitions.arcaneKnowledgeSlab.useAction = {
@@ -534,6 +534,7 @@ async function main() {
         place_item: { schema: { properties: { type: {}, item_id: {}, target_inventory_id: {} }, required: ["type", "item_id", "target_inventory_id"] }, options: { item_ids: ["mug"], target_inventory_ids: ["table"] } },
         fill: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["mug"] } },
         consume: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["ale"] } },
+        equip: { schema: { properties: { type: {}, item_id: {}, slot: {} }, required: ["type", "item_id", "slot"] }, options: { item_ids: ["chain", "hornRing"], items: [{ id: "chain", slots: ["neck"] }, { id: "hornRing", slots: ["left_horn", "right_horn"] }] } },
         use_item: { schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] }, options: { item_ids: ["memoryStone_01"] } }
     };
     function optionDecision(action) {
@@ -548,10 +549,13 @@ async function main() {
         !optionDecision({ type: "place_item", item_id: "mug", target_inventory_id: "missing" }).ok &&
         !optionDecision({ type: "fill", item_id: "missing" }).ok &&
         !optionDecision({ type: "consume", item_id: "missing" }).ok &&
+        !optionDecision({ type: "equip", item_id: "chain", slot: "right_horn" }).ok &&
+        optionDecision({ type: "equip", item_id: "chain", slot: "neck" }).ok &&
+        optionDecision({ type: "equip", item_id: "hornRing", slot: "right_horn" }).ok &&
         !optionDecision({ type: "use_item", item_id: "missing" }).ok &&
         optionDecision({ type: "use_item", item_id: "memoryStone_01" }).ok &&
         optionDecision({ type: "give_item", target_id: "player", item_id: "mug" }).ok,
-        "current action options should constrain item, target, destination, inventory, and amount parameters");
+        "current action options should constrain item, target, destination, inventory, amount, and relational equip-slot parameters");
     const utilityQueryCatalog = {
         use_item: {
             schema: { properties: { type: {}, item_id: { type: "string" }, input_text: { type: "string" } }, required: ["type", "item_id"] },

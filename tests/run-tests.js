@@ -60,22 +60,67 @@ assert(world.entities.captainPrice && world.entities.captainPrice.locationId ===
 assert(world.entities.nell && world.entities.nell.locationId === "commonRoom" &&
     world.entities.nell.sublocationId === "commonRoomFloor" && world.control.assignments.nell === "ai",
     "Nell should start AI-controlled on the common-room floor");
-assert(world.entities.villageEdge && world.entities.secludedCottage && world.entities.forestMountainStream &&
+assert(world.entities.villageEdge && world.entities.maraCottageGardenLocation && world.entities.secludedCottage && world.entities.forestMountainStream &&
     world.entities.street.exits.villageEdge === "villageEdge" &&
     world.entities.villageEdge.exits.street === "street" &&
-    world.entities.villageEdge.exits.secludedCottage === "secludedCottage" &&
-    world.entities.secludedCottage.exits.villageEdge === "villageEdge" &&
-    world.entities.secludedCottage.exits.forestMountainStream === "forestMountainStream" &&
-    world.entities.forestMountainStream.exits.secludedCottage === "secludedCottage",
-    "street, village edge, Mara's cottage, and the forest stream should form the authored bidirectional route");
+    world.entities.villageEdge.exits.maraCottageGardenLocation === "maraCottageGardenLocation" &&
+    world.entities.maraCottageGardenLocation.exits.villageEdge === "villageEdge" &&
+    world.entities.maraCottageGardenLocation.exits.secludedCottage === "secludedCottage" &&
+    world.entities.secludedCottage.exits.maraCottageGardenLocation === "maraCottageGardenLocation" &&
+    world.entities.maraCottageGardenLocation.exits.forestMountainStream === "forestMountainStream" &&
+    world.entities.forestMountainStream.exits.maraCottageGardenLocation === "maraCottageGardenLocation",
+    "street, village edge, Mara's garden, Mara's cottage, and the forest stream should form the authored bidirectional route");
 assert(world.entities.forestMountainStream.defaultSublocationId === "forestStreamBank" &&
     world.entities.forestStreamSittingPlace && world.entities.forestStreamSittingPlace.capacity === 2 &&
     world.entities.forestStreamBank.reachableSublocationIds.includes("forestStreamSittingPlace") &&
     world.entities.forestStreamSittingPlace.reachableSublocationIds.includes("forestStreamBank"),
     "the forest stream should expose a default bank and an ordinary two-person sitting place");
+assert(world.entities.forestStreamSittingPlace.enterLabel === "Sit on the stones by the stream",
+    "the stream sitting action should describe a single actor rather than implied group movement");
+assert(world.entities.hoodedWoman.name === "Mara the Hedge Witch" && world.entities.hoodedWoman.equippedItems.length === 2 &&
+    world.entities.captainPrice.equippedItems.some(function (record) { return record.slot === "head"; }) &&
+    world.entities.nell.equippedItems.some(function (record) { return record.slot === "clothing"; }) &&
+    world.inventories.inventory_player.itemIds.includes("silverChain_01"),
+    "authored clothing should start equipped while the silver chain starts in Traveler inventory");
 assert(world.entities.maraCottageBed && world.entities.maraCottageTable && world.entities.maraCottageShelves &&
     world.inventories.inventory_maraCottageTable && world.inventories.inventory_maraCottageShelves,
     "Mara's cottage should contain authored bed, table, and alchemical shelf sublocations using existing inventory mechanics");
+
+const initialEquipView = setup.CharacterAPI.getView("player");
+const chainEquipOption = initialEquipView.available_actions.equip && initialEquipView.available_actions.equip.options.items.find(function (item) { return item.id === "silverChain_01"; });
+assert(chainEquipOption && chainEquipOption.slots.length === 1 && chainEquipOption.slots[0] === "neck",
+    "equip contract should expose the selected item's allowed free slots relationally");
+assertFails(setup.CharacterAPI.perform("player", { type: "equip", item_id: "silverChain_01", slot: "right_horn" }), "EQUIP_SLOT_INVALID",
+    "equip should reject a slot not allowed by the selected item");
+world.itemDefinitions.silverChain.useAction = {
+    actionLabel: "Touch the chain",
+    effectId: "narrative_feedback",
+    publicText: "{actorName} touches {itemName}.",
+    feedbackText: "You touch {itemName}."
+};
+const equipChainResult = perform("player", { type: "equip", item_id: "silverChain_01", slot: "neck" },
+    "player should equip the silver chain");
+assert(equipChainResult.events.some(function (event) { return event.type === "item_equipped"; }) &&
+    !world.inventories.inventory_player.itemIds.includes("silverChain_01") && world.entities.silverChain_01.containerId === "player" &&
+    world.entities.player.equippedItems.some(function (record) { return record.itemId === "silverChain_01" && record.slot === "neck" && record.visible === true; }),
+    "equipping should move the real item from inventory into canonical character equipment");
+const equippedChainView = setup.CharacterAPI.getView("player");
+assert(equippedChainView.self.appearance_text.includes("fine silver chain") &&
+    equippedChainView.self.equipped_items.some(function (item) { return item.id === "silverChain_01" && item.slot === "neck" && item.visible === true; }) &&
+    equippedChainView.available_actions.use_item.options.item_ids.includes("silverChain_01"),
+    "canonical view should expose equipped appearance, structured equipment, and use_item for worn usable items");
+perform("player", { type: "use_item", item_id: "silverChain_01" }, "equipped usable item should remain usable while worn");
+delete world.itemDefinitions.silverChain.useAction;
+perform("player", { type: "unequip", item_id: "silverChain_01" }, "player should unequip the silver chain");
+assert(world.inventories.inventory_player.itemIds.includes("silverChain_01") && world.entities.silverChain_01.containerId === "inventory_player" &&
+    !world.entities.player.equippedItems.some(function (record) { return record.itemId === "silverChain_01"; }),
+    "unequip should return the item to ordinary inventory");
+perform("player", { type: "unequip", item_id: "travelerClothing_01" }, "base clothing should be removable equipment");
+assert(setup.CharacterAPI.getView("player").self.appearance_text.includes("Traveler is undressed."),
+    "absence of the exact clothing slot should expose the neutral canonical undressed state");
+perform("player", { type: "equip", item_id: "travelerClothing_01", slot: "clothing" }, "traveler should be able to put clothing back on");
+assert(!setup.CharacterAPI.getView("player").self.appearance_text.includes("Traveler is undressed."),
+    "occupying the clothing slot should clear the canonical undressed state");
 assert(world.entities.hoodedWoman.mind.knownFacts.some(function (fact) { return fact.id === "mara_home"; }) &&
     world.entities.innkeeper.mind.knownFacts.some(function (fact) { return fact.id === "mara_open_secret"; }) &&
     world.entities.nell.mind.knownFacts.some(function (fact) { return fact.id === "mara_open_secret"; }),
@@ -178,8 +223,8 @@ assert(world.itemDefinitions.arcaneKnowledgeSlab.useAction &&
     "the slab should expose deterministic abstract study without model-generated lore or story-specific migration metadata");
 perform("player", { type: "move", destination_id: "street" }, "arcane-slab fixture walks to the village street");
 perform("player", { type: "move", destination_id: "villageEdge" }, "arcane-slab fixture walks to the village edge");
-perform("player", { type: "move", destination_id: "secludedCottage" }, "arcane-slab fixture enters Mara's cottage garden");
-perform("player", { type: "move_within_location", destination_id: "maraCottageFloor" }, "arcane-slab fixture steps inside Mara's cottage");
+perform("player", { type: "move", destination_id: "maraCottageGardenLocation" }, "arcane-slab fixture enters Mara's garden");
+perform("player", { type: "move", destination_id: "secludedCottage" }, "arcane-slab fixture steps inside Mara's cottage");
 perform("player", { type: "move_within_location", destination_id: "maraCottageTable" }, "arcane-slab fixture sits at Mara's work table");
 const slabTableView = setup.CharacterAPI.getView("player");
 assert(slabTableView.accessible_inventories.some(function (inventory) {
@@ -235,8 +280,8 @@ const playerStudySnapshot = JSON.stringify(world.entities.arcaneKnowledgeSlab_01
 perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "Mara study fixture leaves the common room");
 perform("hoodedWoman", { type: "move", destination_id: "street" }, "Mara study fixture walks to the street");
 perform("hoodedWoman", { type: "move", destination_id: "villageEdge" }, "Mara study fixture walks to the village edge");
-perform("hoodedWoman", { type: "move", destination_id: "secludedCottage" }, "Mara study fixture enters her cottage garden");
-perform("hoodedWoman", { type: "move_within_location", destination_id: "maraCottageFloor" }, "Mara study fixture steps inside");
+perform("hoodedWoman", { type: "move", destination_id: "maraCottageGardenLocation" }, "Mara study fixture enters her garden");
+perform("hoodedWoman", { type: "move", destination_id: "secludedCottage" }, "Mara study fixture steps inside");
 perform("hoodedWoman", { type: "move_within_location", destination_id: "maraCottageTable" }, "Mara study fixture sits at her table");
 perform("player", { type: "give_item", target_id: "hoodedWoman", item_id: "arcaneKnowledgeSlab_01" }, "Traveler gives Mara the studied slab");
 const maraSlabResult = perform("hoodedWoman", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "protective wards around a cottage" },
@@ -757,7 +802,7 @@ world.entities.bar.passage = originalPassage;
 assertOk(setup.Game.validateWorld(), "restored world should remain valid");
 
 const storySource = fs.readFileSync(path.join(root, "src/generated/world-passages.twee"), "utf8");
-for (const passage of ["The Tavern", "The Bar", "The Common Room", "The Street", "The Village Edge", "Mara's Cottage"]) {
+for (const passage of ["The Tavern", "The Bar", "The Common Room", "The Street", "The Village Edge", "Mara's Garden", "Mara's Cottage"]) {
     assert(storySource.includes(`:: ${passage}`), `${passage} physical passage should exist`);
 }
 assert(!storySource.includes("->The Tavern"), "normal story should not contain raw physical navigation links");

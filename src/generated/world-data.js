@@ -651,7 +651,7 @@
       "inventoryId": "inventory_villageEdge",
       "exits": {
         "street": "street",
-        "secludedCottage": "secludedCottage"
+        "maraCottageGardenLocation": "maraCottageGardenLocation"
       },
       "sublocations": {
         "villageEdgePath": {
@@ -669,37 +669,54 @@
         }
       }
     },
-    "secludedCottage": {
-      "id": "secludedCottage",
+    "maraCottageGardenLocation": {
+      "id": "maraCottageGardenLocation",
       "type": "location",
-      "name": "Mara's cottage",
-      "passage": "Mara's Cottage",
+      "name": "Mara's Garden",
+      "passage": "Mara's Garden",
       "description": [
-        "A small cottage stands alone in a forest clearing, well apart from the village's ordinary homes.",
-        "Cultivated beds around it hold mushrooms, medicinal herbs, and other plants tended for remedies and alchemy."
+        "A quiet forest clearing surrounds Mara's small cottage, separated from the village by a narrow woodland path.",
+        "Cultivated beds of herbs, mushrooms, and medicinal plants fill much of the garden, with another path leading away toward the nearby forest stream."
       ],
       "defaultSublocationId": "maraCottageGarden",
-      "inventoryId": "inventory_secludedCottage",
+      "inventoryId": "inventory_maraCottageGardenLocation",
       "exits": {
         "villageEdge": "villageEdge",
+        "secludedCottage": "secludedCottage",
         "forestMountainStream": "forestMountainStream"
       },
       "sublocations": {
         "maraCottageGarden": {
           "id": "maraCottageGarden",
           "type": "sublocation",
-          "locationId": "secludedCottage",
-          "name": "Cottage garden",
-          "publicText": "Narrow beds of herbs and mushrooms surround the cottage, carefully tended beneath the trees.",
-          "enterLabel": "Stand in the cottage garden",
-          "selfText": "You are standing among the cultivated beds outside Mara's cottage.",
-          "occupantTemplate": "{name} stands among the cultivated beds outside Mara's cottage.",
+          "locationId": "maraCottageGardenLocation",
+          "name": "Mara's garden",
+          "publicText": "Narrow beds of medicinal herbs and mushrooms surround the cottage, carefully tended beneath the trees.",
+          "enterLabel": "Stand in Mara's garden",
+          "selfText": "You are standing among the cultivated beds in Mara's garden.",
+          "occupantTemplate": "{name} stands among the cultivated beds in Mara's garden.",
           "capacity": 12,
           "reachableSublocationIds": [
-            "maraCottageGarden",
-            "maraCottageFloor"
+            "maraCottageGarden"
           ]
-        },
+        }
+      }
+    },
+    "secludedCottage": {
+      "id": "secludedCottage",
+      "type": "location",
+      "name": "Mara's Cottage",
+      "passage": "Mara's Cottage",
+      "description": [
+        "Mara's cottage is a small one-room home and workshop, practical rather than comfortable.",
+        "A modest bed, a stove and hearth, a scarred work table, and crowded shelves make the interior serve equally as living space and hedge-witch workshop."
+      ],
+      "defaultSublocationId": "maraCottageFloor",
+      "inventoryId": "inventory_secludedCottage",
+      "exits": {
+        "maraCottageGardenLocation": "maraCottageGardenLocation"
+      },
+      "sublocations": {
         "maraCottageFloor": {
           "id": "maraCottageFloor",
           "type": "sublocation",
@@ -712,7 +729,6 @@
           "capacity": 8,
           "reachableSublocationIds": [
             "maraCottageFloor",
-            "maraCottageGarden",
             "maraCottageBed",
             "maraCottageTable",
             "maraCottageShelves"
@@ -791,7 +807,7 @@
       "defaultSublocationId": "forestStreamBank",
       "inventoryId": "inventory_forestMountainStream",
       "exits": {
-        "secludedCottage": "secludedCottage"
+        "maraCottageGardenLocation": "maraCottageGardenLocation"
       },
       "sublocations": {
         "forestStreamBank": {
@@ -815,7 +831,7 @@
           "locationId": "forestMountainStream",
           "name": "Stones by the stream",
           "publicText": "A pair of broad, smooth stones beside the water make a comfortable place for two people to sit close to the stream.",
-          "enterLabel": "Sit together by the stream",
+          "enterLabel": "Sit on the stones by the stream",
           "selfText": "You are sitting beside the stream.",
           "occupantTemplate": "{name} sits beside the stream.",
           "capacity": 2,
@@ -859,9 +875,9 @@
     },
     "hoodedWoman": {
       "id": "hoodedWoman",
-      "name": "Hooded woman",
-      "playerDescription": "A hooded young woman keeps much of her expression in shadow; what can be seen suggests a striking face and a guarded, self-contained manner.",
-      "interactionLabel": "Speak with the hooded woman",
+      "name": "Mara the Hedge Witch",
+      "playerDescription": "Mara is a striking young woman with a guarded, self-contained manner and an expression that is often difficult to read.",
+      "interactionLabel": "Speak with Mara",
       "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority. You know a great deal about alchemy and medicine, but your magical abilities are limited and you never had an academic magical education. You are quite beautiful, so people sometimes accuse you of cooperating with demons, but that is false. You live alone in a secluded cottage beyond the edge of the village, surrounded by forest. You grow herbs and mushrooms around the cottage and work there as a hedge witch, preparing medicines, remedies, simple alchemical mixtures, and potions for people who seek your help.",
       "locationId": "commonRoom",
       "sublocationId": "commonRoomTableOne",
@@ -993,7 +1009,7 @@
     "captainPrice": {
       "id": "captainPrice",
       "name": "Captain John Price",
-      "playerDescription": "Captain John Price has a weathered face, unmistakable moustache and beard, a boonie hat, and modern tactical clothing and gear that look entirely out of place in this world. He carries himself with the easy alertness of a veteran soldier.",
+      "playerDescription": "Captain John Price has a weathered face, unmistakable moustache and beard, and carries himself with the easy alertness of a veteran soldier.",
       "interactionLabel": "Speak with Captain Price",
       "aiDescription": "You are Captain John Price from Call of Duty, exactly as yourself rather than a fantasy adaptation. You are a seasoned British soldier and commander: calm under pressure, observant, pragmatic, decisive, dryly funny, direct, and capable of rough but genuine friendliness. You habitually assess people and situations without making a show of it. You are not automatically on a mission in this world; act according to the circumstances, commitments, and interests actually established in play. Do not assume that you are currently drinking, resting, fighting, travelling, or pursuing a task unless the canonical view, observations, or memory establish it. Do not invent an explanation for why you are in this fantasy world; treat your presence here as ordinary fact.",
       "locationId": "commonRoom",
@@ -1022,7 +1038,7 @@
     "nell": {
       "id": "nell",
       "name": "Nell",
-      "playerDescription": "A young tavern waitress of about eighteen wears a cheap, repeatedly mended dress and apron, all kept clean and carefully neat. She has an open, cheerful face, with a trace of caution around unfamiliar people.",
+      "playerDescription": "A young woman of about eighteen has an open, cheerful face, with a trace of caution around unfamiliar people.",
       "interactionLabel": "Speak with Nell",
       "aiDescription": "You are Nell, an eighteen-year-old waitress at this roadside tavern. A few years ago bandits raided your nearby village, killed your parents, and burned your family home. You eventually reached Garrick the Innkeeper’s tavern with almost nothing. Garrick took you in and gave you food, shelter, and safety; you now sleep in the cramped nook beneath the stairs and work hard to earn your place. You are cheerful, friendly, helpful, and good-natured without being pushy. You understand your low social position and are somewhat nervous around customers, especially armed, wealthy, drunk, angry, or threatening strangers, but you try to remain polite. Your past matters when relevant, but you do not make every conversation about tragedy. Your ordinary work is to move around the tavern, collect empty mugs, carry them back toward the bar, keep an eye on the room, and sometimes politely ask guests whether they want anything else. When a patron clearly gives you money to buy ale for them, you normally take the payment to Garrick, obtain the ale from him, and bring the drink back to the patron. You are deeply grateful to Garrick and try to be useful and dependable. The tavern is more than an arbitrary job: it gives you food, warmth, shelter, safety, familiar people, a useful role, and a place where you belong. Outside it you currently have no obvious safe destination. Some part of you may hope that one day a genuinely better life could appear, perhaps through love, marriage, a new home, or another good opportunity, but this is not an active quest and you do not spend your days trying to escape or find a husband. For now the tavern is home, and you try to live up to your role there.",
       "locationId": "commonRoom",
@@ -1112,6 +1128,137 @@
     }
   },
   "itemDefinitions": {
+    "travelerClothing": {
+      "id": "travelerClothing",
+      "name": "Traveler's clothes",
+      "description": "Practical road-worn travelling clothes.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Practical, road-worn travelling clothes show the wear of long journeys and unfamiliar roads."
+    },
+    "maraClothing": {
+      "id": "maraClothing",
+      "name": "Mara's clothes",
+      "description": "Simple practical clothes for everyday work.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Simple, practical clothes are suited to herb-gathering, medicine making, and solitary work around a woodland cottage."
+    },
+    "maraHoodedCloak": {
+      "id": "maraHoodedCloak",
+      "name": "Mara's hooded cloak",
+      "description": "A dark hooded cloak.",
+      "familyId": "cloak",
+      "tags": [
+        "clothing",
+        "cloak"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "shoulders"
+      ],
+      "equippedDescription": "A dark hooded cloak hangs from her shoulders, its deep hood casting much of her face into shadow."
+    },
+    "garrickClothing": {
+      "id": "garrickClothing",
+      "name": "Garrick's clothes",
+      "description": "Plain sturdy tavern clothes.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Plain, sturdy clothes suited to long hours of practical tavern work are kept serviceable rather than decorative."
+    },
+    "priceTacticalClothing": {
+      "id": "priceTacticalClothing",
+      "name": "Price's tactical clothing and gear",
+      "description": "Modern tactical clothing and field gear.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing",
+        "tactical"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Modern tactical clothing, webbing, pouches, and practical field gear look unmistakably military and entirely out of place in this world."
+    },
+    "priceBoonieHat": {
+      "id": "priceBoonieHat",
+      "name": "Boonie hat",
+      "description": "A weathered military boonie hat.",
+      "familyId": "hat",
+      "tags": [
+        "clothing",
+        "hat"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "head"
+      ],
+      "equippedDescription": "A weathered boonie hat sits low on his head."
+    },
+    "nellClothing": {
+      "id": "nellClothing",
+      "name": "Nell's dress and apron",
+      "description": "A cheap, carefully mended dress and apron.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "A cheap, repeatedly mended dress and apron are kept clean and carefully neat."
+    },
+    "silverChain": {
+      "id": "silverChain",
+      "name": "Silver chain",
+      "description": "A fine silver chain, simple and delicate.",
+      "familyId": "jewelry",
+      "tags": [
+        "jewelry"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "neck"
+      ],
+      "equippedDescription": "A fine silver chain rests around the wearer's neck."
+    },
     "cleaningRagType": {
       "id": "cleaningRagType",
       "name": "Cleaning rag",
@@ -1271,6 +1418,53 @@
     }
   },
   "items": {
+    "travelerClothing_01": {
+      "id": "travelerClothing_01",
+      "definitionId": "travelerClothing",
+      "equippedByCharacterId": "player",
+      "equippedSlot": "clothing"
+    },
+    "maraClothing_01": {
+      "id": "maraClothing_01",
+      "definitionId": "maraClothing",
+      "equippedByCharacterId": "hoodedWoman",
+      "equippedSlot": "clothing"
+    },
+    "maraHoodedCloak_01": {
+      "id": "maraHoodedCloak_01",
+      "definitionId": "maraHoodedCloak",
+      "equippedByCharacterId": "hoodedWoman",
+      "equippedSlot": "shoulders"
+    },
+    "garrickClothing_01": {
+      "id": "garrickClothing_01",
+      "definitionId": "garrickClothing",
+      "equippedByCharacterId": "innkeeper",
+      "equippedSlot": "clothing"
+    },
+    "priceTacticalClothing_01": {
+      "id": "priceTacticalClothing_01",
+      "definitionId": "priceTacticalClothing",
+      "equippedByCharacterId": "captainPrice",
+      "equippedSlot": "clothing"
+    },
+    "priceBoonieHat_01": {
+      "id": "priceBoonieHat_01",
+      "definitionId": "priceBoonieHat",
+      "equippedByCharacterId": "captainPrice",
+      "equippedSlot": "head"
+    },
+    "nellClothing_01": {
+      "id": "nellClothing_01",
+      "definitionId": "nellClothing",
+      "equippedByCharacterId": "nell",
+      "equippedSlot": "clothing"
+    },
+    "silverChain_01": {
+      "id": "silverChain_01",
+      "definitionId": "silverChain",
+      "inventoryId": "inventory_player"
+    },
     "cleaningRag": {
       "id": "cleaningRag",
       "definitionId": "cleaningRagType",
@@ -1382,6 +1576,6 @@
       "inventoryId": "inventory_maraCottageTable"
     }
   },
-  "authoringRevision": "aaa3d146c4959494a74eea63a99f3859897307a3c37d9bb5fac2817fc3341d27"
+  "authoringRevision": "621097df2802be74b9473bbd9b172666718c68c59ed3b1462043c7fe05789100"
 };
 }());

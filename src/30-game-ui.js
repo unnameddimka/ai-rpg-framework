@@ -197,10 +197,11 @@
 
     function findViewItem(view, itemId) {
         const owned = view && view.self && Array.isArray(view.self.inventory) ? view.self.inventory : [];
+        const equipped = view && view.self && Array.isArray(view.self.equipped_items) ? view.self.equipped_items : [];
         const accessible = view && Array.isArray(view.accessible_inventories)
             ? view.accessible_inventories.flatMap(function (inventory) { return inventory.items || []; })
             : [];
-        return owned.concat(accessible).find(function (item) { return item.id === itemId; }) || null;
+        return owned.concat(equipped, accessible).find(function (item) { return item.id === itemId; }) || null;
     }
 
     function useItemOption(view, itemId) {
@@ -245,6 +246,8 @@
         if (action.type === "take_item") return `Take ${item ? item.name : action.item_id}`;
         if (action.type === "drop_item") return `Drop ${item ? item.name : action.item_id}`;
         if (action.type === "give_item") return `Give ${item ? item.name : action.item_id} to ${target ? target.name : action.target_id}`;
+        if (action.type === "equip") return `Equip ${item ? item.name : action.item_id} (${action.slot})`;
+        if (action.type === "unequip") return `Unequip ${item ? item.name : action.item_id}`;
         if (action.type === "give_money") return `Give ${action.amount} gold to ${target ? target.name : action.target_id}`;
         if (action.type === "place_item") return `Place ${item ? item.name : action.item_id} on ${inventory ? inventory.name : action.target_inventory_id}`;
         if (action.type === "fill" || action.type === "consume" || action.type === "use_item") {
@@ -267,6 +270,11 @@
         if (action.type === "take_item") return (options.item_ids || []).includes(action.item_id);
         if (action.type === "drop_item") return (options.item_ids || []).includes(action.item_id);
         if (action.type === "give_item") return (options.item_ids || []).includes(action.item_id) && (options.target_ids || []).includes(action.target_id);
+        if (action.type === "equip") {
+            const itemOption = (options.items || []).find(function (candidate) { return candidate.id === action.item_id; });
+            return Boolean(itemOption && (itemOption.slots || []).includes(action.slot));
+        }
+        if (action.type === "unequip") return (options.item_ids || []).includes(action.item_id);
         if (action.type === "give_money") return (options.target_ids || []).includes(action.target_id) && Number.isFinite(Number(action.amount)) && Number(action.amount) > 0 && Number(action.amount) <= Number(options.maximum_amount || 0);
         if (action.type === "place_item") return (options.item_ids || []).includes(action.item_id) && (options.target_inventory_ids || []).includes(action.target_inventory_id);
         if (action.type === "fill" || action.type === "consume" || action.type === "use_item") return (options.item_ids || []).includes(action.item_id);
@@ -357,6 +365,11 @@
             setControlValue("action-give-item", selected.item_id);
             setControlValue("action-give-item-target", selected.target_id);
         }
+        if (selected.type === "equip") {
+            setControlValue("action-equip-item", selected.item_id);
+            syncEquipSlotSelect(view, selected.item_id, selected.slot);
+        }
+        if (selected.type === "unequip") setControlValue("action-unequip-item", selected.item_id);
         if (selected.type === "give_money") {
             setControlValue("action-money-amount", selected.amount);
             setControlValue("action-money-target", selected.target_id);
@@ -629,15 +642,9 @@
 
     function currentTurnPresentation(uiState) {
         const narrationValid = isNarratorEnabled() && Boolean(uiState.dynamicNarrationValid);
-        const narrated = narrationValid && Array.isArray(uiState.narratedTurnNarrative)
-            ? uiState.narratedTurnNarrative
-            : [];
-        if (narrationValid) {
-            return { fragments: narrated, narrated: true };
-        }
-        const raw = Array.isArray(uiState.rawTurnNarrative) && uiState.rawTurnNarrative.length
-            ? uiState.rawTurnNarrative
-            : uiState.turnNarrative || [];
+        const narrated = narrationValid && Array.isArray(uiState.narratedTurnNarrative) ? uiState.narratedTurnNarrative : [];
+        if (narrationValid) return { fragments: narrated, narrated: true };
+        const raw = Array.isArray(uiState.rawTurnNarrative) && uiState.rawTurnNarrative.length ? uiState.rawTurnNarrative : uiState.turnNarrative || [];
         return { fragments: raw, narrated: false };
     }
 
@@ -650,7 +657,6 @@
         const key = staticNarrationKey(view);
         if (staticNarrationState.key !== key) resetStaticNarration(key);
         if (!isNarratorEnabled() || staticNarrationState.status !== "idle") return;
-
         const serial = staticNarrationState.requestSerial;
         staticNarrationState.status = "pending";
         setup.NarratorService.describeLocation(view).then(function (result) {
@@ -664,17 +670,13 @@
                 staticNarrationState.fragments = [];
                 staticNarrationState.error = cloneUIValue(result && result.error || null);
             }
-            renderSidebar();
-            renderLocationView();
-            renderActionPanel();
+            renderSidebar(); renderLocationView(); renderActionPanel();
         }).catch(function () {
             if (staticNarrationState.key !== key || staticNarrationState.requestSerial !== serial) return;
             staticNarrationState.status = "failed";
             staticNarrationState.fragments = [];
             staticNarrationState.error = { code: "NARRATOR_REQUEST_FAILED", message: "Narrator request failed." };
-            renderSidebar();
-            renderLocationView();
-            renderActionPanel();
+            renderSidebar(); renderLocationView(); renderActionPanel();
         });
     }
 
@@ -682,44 +684,67 @@
         const key = staticNarrationKey(view);
         ensureStaticNarration(view);
         const narrated = isNarratorEnabled() && staticNarrationState.key === key && staticNarrationState.status === "ready"
-            ? staticNarrationState.fragments
-            : [];
+            ? staticNarrationState.fragments : [];
         const fragments = narrated.length ? narrated : rawStaticFragments(view);
-        if (!fragments.length) return;
+        if (!fragments.length && !(view && view.self && view.self.position_text)) return;
         const section = document.createElement("section");
-        section.className = narrated.length
-            ? "framework-presentation-block framework-narrated-static"
+        section.className = narrated.length ? "framework-presentation-block framework-narrated-static"
             : "framework-presentation-block framework-raw-presentation framework-raw-static";
-        fragments.forEach(function (fragment) {
-            appendRPElement(section, "p", fragment);
-        });
+        fragments.forEach(function (fragment) { appendRPElement(section, "p", fragment); });
+        if (view && view.self && view.self.position_text) appendTextElement(section, "p", view.self.position_text, "framework-position-text");
         root.appendChild(section);
     }
 
-    function renderRawDynamicScene(root, view) {
-        rawDynamicFragments(view).forEach(function (fragment, index) {
-            appendTextElement(root, "p", fragment, index === 0 ? "framework-position-text" : "");
-        });
-    }
-
-    function renderNarratedDynamicScene(root, fragments) {
+    function renderCharacterScene(root, view) {
+        const characters = view && view.location && view.location.characters || [];
+        if (!characters.length) return;
         const section = document.createElement("section");
-        section.className = "framework-presentation-block framework-narrated-dynamic";
-        (Array.isArray(fragments) ? fragments : []).forEach(function (fragment) {
-            appendRPElement(section, "p", fragment);
+        section.className = "framework-presentation-block framework-character-scene";
+        characters.forEach(function (character) {
+            const text = [character.presence_text, character.position_text].filter(Boolean).join(" ");
+            if (text) appendTextElement(section, "p", text);
         });
-        if (section.childNodes.length > 0) root.appendChild(section);
+        if (section.childNodes.length) root.appendChild(section);
     }
 
-    function renderRawDynamicPresentation(root, view, fragments) {
-        const hasTurn = Array.isArray(fragments) && fragments.length > 0;
-        const hasScene = rawDynamicFragments(view).length > 0;
+    function renderDynamicItems(root, view) {
+        const seen = new Set();
+        const rows = [];
+        function add(item, inventoryName) {
+            if (!item || seen.has(item.id)) return;
+            seen.add(item.id);
+            const description = String(item.description || "").trim();
+            rows.push((inventoryName ? `${inventoryName}: ` : "") + item.name + (description ? ` — ${description}` : ""));
+        }
+        (view && view.location && view.location.items || []).forEach(function (item) { add(item, ""); });
+        (view && view.accessible_inventories || []).forEach(function (inventory) {
+            if (!inventory || inventory.owner_id === view.location.id) return;
+            (inventory.items || []).forEach(function (item) { add(item, inventory.name || ""); });
+        });
+        if (!rows.length) return;
+        const section = document.createElement("section");
+        section.className = "framework-presentation-block framework-dynamic-items";
+        rows.forEach(function (row) { appendTextElement(section, "p", row); });
+        root.appendChild(section);
+    }
+
+    function renderCurrentTurn(root, presentation) {
+        const fragments = presentation && Array.isArray(presentation.fragments) ? presentation.fragments : [];
         const hasDebug = showInvisibleEvents && currentTurnHiddenNarrative.length > 0;
-        if (!hasTurn && !hasScene && !hasDebug) return;
+        if (!fragments.length && !hasDebug) return;
         const section = document.createElement("section");
-        section.className = "framework-presentation-block framework-raw-presentation framework-raw-dynamic";
-        renderLegacyLatestTurn(section, fragments);
-        renderRawDynamicScene(section, view);
+        section.className = "framework-presentation-block framework-turn-narrative" + (presentation.narrated ? " framework-narrated-dynamic" : " framework-raw-presentation");
+        fragments.forEach(function (fragment) { appendRPElement(section, "p", fragment); });
+        if (showInvisibleEvents) {
+            currentTurnHiddenNarrative.forEach(function (entry) {
+                const row = document.createElement("div");
+                row.className = "framework-invisible-debug-entry";
+                const context = [entry.actorName, entry.locationName].filter(Boolean).join(", ");
+                appendTextElement(row, "strong", `[DEBUG — NOT VISIBLE TO PLAYER]${context ? ` ${context}` : ""}`);
+                appendRPElement(row, "p", entry.text || "");
+                section.appendChild(row);
+            });
+        }
         root.appendChild(section);
     }
 
@@ -1177,17 +1202,13 @@
         status.id = "location-status";
         uiState.locationStatus = "";
 
-        renderHistory(root);
-
         const turnPresentation = currentTurnPresentation(uiState);
 
         renderStaticScene(root, view);
-        if (turnPresentation.narrated) {
-            renderNarratedDynamicScene(root, turnPresentation.fragments);
-            renderInvisibleDebugEntries(root);
-        } else {
-            renderRawDynamicPresentation(root, view, turnPresentation.fragments);
-        }
+        renderCharacterScene(root, view);
+        renderDynamicItems(root, view);
+        renderHistory(root);
+        renderCurrentTurn(root, turnPresentation);
 
         renderPrivateFeedback(root, actorId, view);
         renderPromptLab(root, view);
@@ -1244,6 +1265,7 @@
         const view = setup.CharacterAPI.getView(actorId);
         if (!view || view.ok === false) return;
         const inventory = view.self.inventory || [];
+        const equipment = view.self.equipped_items || [];
         const overlay = document.createElement("div");
         overlay.id = "framework-character-overlay";
         overlay.className = "framework-character-overlay";
@@ -1260,6 +1282,8 @@
                     <textarea id="framework-character-description" rows="6" maxlength="2000">${escapeHtml(view.self.playerDescription || "")}</textarea>
                 </label>
                 <section class="framework-character-inventory">
+                    <h3>Equipment</h3>
+                    ${equipment.length ? `<ul>${equipment.map(function (item) { return `<li><strong>${escapeHtml(item.name)}</strong> — ${escapeHtml(item.slot)}</li>`; }).join("")}</ul>` : `<p>Empty</p>`}
                     <h3>Inventory</h3>
                     ${inventory.length
                         ? `<ul>${inventory.map(function (item) {
@@ -1897,6 +1921,18 @@
         }, navigateOnMove);
     }
 
+    function syncEquipSlotSelect(view, itemId, preferredSlot) {
+        const select = document.getElementById("action-equip-slot");
+        if (!select) return;
+        const options = view.available_actions.equip && view.available_actions.equip.options && view.available_actions.equip.options.items || [];
+        const item = options.find(function (candidate) { return candidate.id === itemId; });
+        select.replaceChildren();
+        (item && item.slots || []).forEach(function (slot) {
+            const option = document.createElement("option"); option.value = slot; option.textContent = slot; select.appendChild(option);
+        });
+        if (preferredSlot && item && item.slots.includes(preferredSlot)) select.value = preferredSlot;
+    }
+
     function renderActionPanel() {
         const oldRoot = document.getElementById("framework-action-panel");
         if (oldRoot) oldRoot.remove();
@@ -1928,11 +1964,13 @@
         const fillItems = view.available_actions.fill ? view.available_actions.fill.options.items : [];
         const consumableItems = view.available_actions.consume ? view.available_actions.consume.options.items : [];
         const usableItems = view.available_actions.use_item ? view.available_actions.use_item.options.items : [];
+        const equipItems = view.available_actions.equip ? view.available_actions.equip.options.items : [];
+        const unequipItems = view.available_actions.unequip ? view.available_actions.unequip.options.items : [];
         const unlockIds = view.available_actions.unlock ? view.available_actions.unlock.options.destination_ids : [];
         const lockIds = view.available_actions.lock ? view.available_actions.lock.options.destination_ids : [];
         const unlockDestinations = moveOptions.filter(function (destination) { return unlockIds.includes(destination.id); });
         const lockDestinations = moveOptions.filter(function (destination) { return lockIds.includes(destination.id); });
-        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume", "use_item", "sleep"]);
+        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume", "use_item", "equip", "unequip", "sleep"]);
         const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
             return !knownActionTypes.has(entry[0]) && isZeroInputAbilityAction(entry[1]);
         });
@@ -1951,6 +1989,11 @@
             </fieldset>`;
         }
 
+        function equipSlotMarkup(itemId) {
+            const item = equipItems.find(function (candidate) { return candidate.id === itemId; });
+            return optionMarkup((item && item.slots || []).map(function (slot) { return { id: slot, name: slot }; }), "No free slot");
+        }
+
         const formalMarkup = [
             radioField("move", "Move", `<select id="action-move-destination"${disabledAttribute}>${optionMarkup(moveOptions, "No connected locations")}</select>`, moveOptions.length === 0),
             radioField("unlock", "Unlock passage", `<select id="action-unlock-destination"${disabledAttribute}>${optionMarkup(unlockDestinations, "No lockable passage can be unlocked")}</select>`, unlockDestinations.length === 0),
@@ -1964,6 +2007,8 @@
             radioField("fill", "Fill item", `<select id="action-fill-item"${disabledAttribute}>${itemActionOptionMarkup(fillItems, "No fillable item here")}</select>`, fillItems.length === 0),
             radioField("consume", "Consume item", `<select id="action-consume-item"${disabledAttribute}>${itemActionOptionMarkup(consumableItems, "No consumable item")}</select>`, consumableItems.length === 0),
             radioField("use_item", "Use item", `<select id="action-use-item"${disabledAttribute}>${itemActionOptionMarkup(usableItems, "No usable item")}</select><label id="action-use-item-input-wrap" hidden><span id="action-use-item-input-label">Input</span><input id="action-use-item-input" type="text" maxlength="600"${disabledAttribute}></label>`, usableItems.length === 0),
+            radioField("equip", "Equip item", `<select id="action-equip-item"${disabledAttribute}>${optionMarkup(equipItems, "No wearable item")}</select><select id="action-equip-slot"${disabledAttribute}>${equipSlotMarkup(equipItems[0] && equipItems[0].id)}</select>`, equipItems.length === 0),
+            radioField("unequip", "Unequip item", `<select id="action-unequip-item"${disabledAttribute}>${optionMarkup(unequipItems, "Nothing equipped")}</select>`, unequipItems.length === 0),
             radioField("sleep", "Sleep till morning", "<p>No parameters.</p>", !view.available_actions.sleep)
         ].concat(zeroInputExtras.map(function (entry) {
             return radioField(entry[0], entry[1].description || entry[0], "<p>No parameters.</p>", false);
@@ -2026,6 +2071,8 @@
             if (type === "give_item") return { type: type, item_id: $("#action-give-item").val(), target_id: $("#action-give-item-target").val() };
             if (type === "give_money") return { type: type, target_id: $("#action-money-target").val(), amount: Number($("#action-money-amount").val()) };
             if (type === "place_item") return { type: type, item_id: $("#action-place-item").val(), target_inventory_id: $("#action-place-inventory").val() };
+            if (type === "equip") return { type: type, item_id: $("#action-equip-item").val(), slot: $("#action-equip-slot").val() };
+            if (type === "unequip") return { type: type, item_id: $("#action-unequip-item").val() };
             if (type === "fill") return { type: type, item_id: $("#action-fill-item").val() };
             if (type === "consume") return { type: type, item_id: $("#action-consume-item").val() };
             if (type === "use_item") {
@@ -2044,6 +2091,7 @@
         $("#action-use-item").on("change", function () {
             syncUseItemInputUI(view, { type: "use_item", item_id: $(this).val(), input_text: "" });
         });
+        $("#action-equip-item").on("change", function () { syncEquipSlotSelect(view, $(this).val(), null); });
 
         $("#action-narrative-target").on("change", function () {
             uiState.interactionTargetId = $(this).val() || "";
