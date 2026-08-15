@@ -27,10 +27,12 @@ function place(world, itemId, inventoryId) {
 }
 
 load("src/generated/world-data.js");
+load("src/08-mind-validators.js");
 load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js");
+load("src/14-event-perception.js");
 
 assert(typeof setup.GeneratedWorldData.authoringRevision === "string" && setup.GeneratedWorldData.authoringRevision.length === 64,
     "generated world data should carry a deterministic authoring revision");

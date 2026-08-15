@@ -39,10 +39,12 @@ function perform(actorId, action, message) {
 }
 
 load("src/generated/world-data.js");
+load("src/08-mind-validators.js");
 load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js");
+load("src/14-event-perception.js");
 load("src/20-controllers.js");
 
 assertOk(setup.Game.bootstrap(), "bootstrap should produce a valid world");
@@ -352,9 +354,11 @@ assert(upstairsView.available_actions.move.options.destination_ids.includes("gue
     "blocked room transitions should remain visible and selectable through the canonical action contract");
 const blockedEventCount = world.events.length;
 const blockedMove = setup.CharacterAPI.perform("player", { type: "move", destination_id: "guestRoom1" });
-assertFails(blockedMove, "TRANSITION_BLOCKED", "locked guest-room entry should resolve as an in-world movement failure");
-assert(world.entities.player.locationId === "upstairsCorridor" && world.events.length === blockedEventCount &&
-    !blockedMove.events.length, "blocked movement must not change location or emit character_moved");
+assertFails(blockedMove, "PASSAGE_LOCKED", "locked guest-room entry should resolve as an in-world movement failure");
+assert(world.entities.player.locationId === "upstairsCorridor" && world.events.length === blockedEventCount + 1 &&
+    blockedMove.events.length === 1 && blockedMove.events[0].type === "passage_interaction_attempted" &&
+    !blockedMove.events.some(function (event) { return event.type === "character_moved"; }),
+    "blocked movement must not change location and should emit only the grounded locked-passage attempt");
 perform("captainPrice", { type: "move", destination_id: "upstairsCorridor" }, "AI blocked-transition fixture climbs upstairs");
 const priceUpstairsView = setup.CharacterAPI.getView("captainPrice");
 assert(priceUpstairsView.available_actions.move.options.destination_ids.includes("guestRoom1"),
@@ -383,7 +387,7 @@ assert(priceInsideView.available_actions.lock &&
     "Price's matching key should grant lock from the room side");
 perform("captainPrice", { type: "lock", destination_id: "upstairsCorridor" }, "Price locks his room from inside");
 assertFails(setup.CharacterAPI.perform("captainPrice", { type: "move", destination_id: "upstairsCorridor" }),
-    "TRANSITION_BLOCKED", "locked movement should still be a grounded in-world failure from inside the room");
+    "PASSAGE_LOCKED", "locked movement should still be a grounded in-world failure from inside the room");
 perform("captainPrice", { type: "unlock", destination_id: "upstairsCorridor" }, "Price unlocks his room from inside");
 perform("captainPrice", { type: "move", destination_id: "upstairsCorridor" }, "Price leaves after unlocking");
 setup.Game.resetWorld();

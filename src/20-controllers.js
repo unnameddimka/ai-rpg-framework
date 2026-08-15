@@ -88,6 +88,8 @@
         setup.AITransientDebug.lastSafeError = safe;
         const normalized = { code: error && error.code || "AI_TURN_FAILED", message: safe };
         if (error && Array.isArray(error.details)) normalized.details = clone(error.details);
+        if (error && Number.isFinite(error.status)) normalized.status = error.status;
+        if (error && Number.isFinite(error.retryAfterMs)) normalized.retryAfterMs = error.retryAfterMs;
         if (error && error.providerResponse) normalized.providerResponse = clone(error.providerResponse);
         return { ok: false, error: normalized };
     }
@@ -140,6 +142,8 @@
         if (!actionFailed && (decision.action || narrativeText)) {
             intentResult = setup.CharacterAPI.submitIntent(actorId, {
                 text: narrativeText,
+                publicNarrative: decision.publicNarrative,
+                spokenText: decision.spokenText,
                 target_id: decision.spokenTargetId || "",
                 noticeability: decision.spokenLoudness || undefined,
                 action: decision.action

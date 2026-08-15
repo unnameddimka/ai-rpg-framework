@@ -10,6 +10,7 @@
     let activeTransportCalls = 0;
     let activePurpose = null;
     let nextTransportAt = 0;
+    let rateLimitUntil = 0;
     let lastStartedAt = 0;
     let lastFinishedAt = 0;
     let nextExchangeId = 1;
@@ -28,6 +29,41 @@
         return !client || client === setup.OpenRouterClient || client.enforceRequestTiming === true;
     }
 
+    function isOptionalPresentationPurpose(purpose) {
+        return purpose === "presentation-location" || purpose === "presentation-tick";
+    }
+
+    function rateLimitCooldownRemainingMs() {
+        return Math.max(0, rateLimitUntil - Date.now());
+    }
+
+    function skippedRateLimitResult(spec) {
+        const retryAfterMs = rateLimitCooldownRemainingMs();
+        return {
+            ok: false,
+            skipped: true,
+            attempted: false,
+            fallbackUsed: true,
+            value: null,
+            error: {
+                code: "NARRATOR_SKIPPED_RATE_LIMIT",
+                message: "Optional presentation narration was skipped while the AI provider is rate-limited.",
+                retryAfterMs: retryAfterMs
+            },
+            modelId: null,
+            usage: null,
+            rawContent: "",
+            trace: null,
+            execution: {
+                purpose: spec && spec.purpose || "unspecified",
+                actorId: spec && spec.actorId || null,
+                modelId: null,
+                attempted: false,
+                fallbackUsed: true
+            }
+        };
+    }
+
     function safeResult(result) {
         return {
             ok: Boolean(result && result.ok),
@@ -35,6 +71,8 @@
             error: result && !result.ok ? clone(result.error) : null,
             repaired: Boolean(result && result.repaired),
             fallbackUsed: Boolean(result && result.fallbackUsed),
+            skipped: Boolean(result && result.skipped),
+            attempted: result && result.attempted === false ? false : true,
             modelId: result && result.modelId || null,
             usage: result && result.usage ? clone(result.usage) : null,
             rawContent: result && typeof result.rawContent === "string" ? result.rawContent : "",
@@ -101,9 +139,12 @@
         if (timed) {
             let delay = MIN_INTERVAL_MS;
             if (result && !result.ok && result.error && result.error.code === "RATE_LIMITED") {
-                delay = Math.max(delay, Number.isFinite(result.retryAfterMs)
+                const providerRetry = Number.isFinite(result.retryAfterMs)
                     ? result.retryAfterMs
-                    : DEFAULT_RATE_LIMIT_MS);
+                    : (Number.isFinite(result.error.retryAfterMs) ? result.error.retryAfterMs : null);
+                const rateDelay = Math.max(0, providerRetry === null ? DEFAULT_RATE_LIMIT_MS : providerRetry);
+                rateLimitUntil = Math.max(rateLimitUntil, Date.now() + rateDelay);
+                delay = Math.max(delay, rateDelay);
             }
             nextTransportAt = Math.max(nextTransportAt, Date.now() + delay);
         }
@@ -111,6 +152,12 @@
     }
 
     async function runExecution(spec, operation) {
+        if (isOptionalPresentationPurpose(spec && spec.purpose) && rateLimitCooldownRemainingMs() > 0) {
+            const now = Date.now();
+            const skipped = skippedRateLimitResult(spec);
+            recordExchange(spec || {}, skipped, now, now);
+            return skipped;
+        }
         activeExecutions++;
         activePurpose = activeExecutions > 1 ? "parallel" : (spec.purpose || "unspecified");
         const executionStartedAt = Date.now();
@@ -230,6 +277,8 @@
             minIntervalMs: MIN_INTERVAL_MS,
             nextTransportAt: nextTransportAt,
             cooldownRemainingMs: Math.max(0, nextTransportAt - now),
+            rateLimitUntil: rateLimitUntil,
+            rateLimitCooldownRemainingMs: Math.max(0, rateLimitUntil - now),
             lastStartedAt: lastStartedAt,
             lastFinishedAt: lastFinishedAt,
             exchangeHistoryCount: exchangeHistory.length
@@ -257,6 +306,8 @@
         execute: execute,
         executeCustom: executeCustom,
         executeCustomConcurrent: executeCustomConcurrent,
+        isRateLimitCooldownActive: function () { return rateLimitCooldownRemainingMs() > 0; },
+        getRateLimitCooldownRemainingMs: rateLimitCooldownRemainingMs,
         getStatus: getStatus,
         getExchangeHistory: getExchangeHistory,
         clearExchangeHistory: clearExchangeHistory

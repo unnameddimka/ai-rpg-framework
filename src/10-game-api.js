@@ -88,6 +88,7 @@
             character.mind = clone(character.initialMind || {});
             delete character.initialMind;
             character.mind.pendingObservations = [];
+            character.recentDialogue = [];
             character.sleeping = character.sleeping === true;
             world.entities[characterId] = character;
             if (world.inventories[character.inventoryId]) {
@@ -805,6 +806,44 @@
                     return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.${partition} must be an array.`);
                 }
             }
+            if (!Array.isArray(character.recentDialogue)) {
+                return fail("CHARACTER_DIALOGUE_INVALID", `Character ${character.id} recentDialogue must be an array.`);
+            }
+            if (character.recentDialogue.length > setup.MindValidators.RECENT_DIALOGUE_LIMIT) {
+                return fail("CHARACTER_DIALOGUE_INVALID", `Character ${character.id} recentDialogue exceeds the bounded dialogue window.`);
+            }
+            const beliefIds = new Set();
+            for (const belief of character.mind.beliefs) {
+                const recordValidation = setup.MindValidators.validateBeliefRecord(belief);
+                if (!recordValidation.ok || beliefIds.has(belief.id)) {
+                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate belief.`);
+                }
+                beliefIds.add(belief.id);
+            }
+            const relationshipTargets = new Set();
+            for (const relationship of character.mind.relationships) {
+                const recordValidation = setup.MindValidators.validateRelationshipRecord(relationship, character.id, world, { requireTargetExists: false });
+                if (!recordValidation.ok || relationshipTargets.has(relationship.targetCharacterId)) {
+                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate relationship.`);
+                }
+                relationshipTargets.add(relationship.targetCharacterId);
+            }
+            const memoryIds = new Set();
+            for (const partition of ["recentMemories", "longTermMemories"]) {
+                for (const memory of character.mind[partition]) {
+                    const recordValidation = setup.MindValidators.validateMemoryRecord(memory);
+                    if (!recordValidation.ok || memoryIds.has(memory.id)) {
+                        return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate memory.`);
+                    }
+                    memoryIds.add(memory.id);
+                }
+            }
+            for (const dialogue of character.recentDialogue) {
+                const recordValidation = setup.MindValidators.validateRecentDialogueRecord(dialogue, world, { requireSpeakerExists: false });
+                if (!recordValidation.ok) {
+                    return fail("CHARACTER_DIALOGUE_INVALID", `Character ${character.id} contains an invalid recent dialogue record.`);
+                }
+            }
             for (const abilityId of character.abilityIds || []) {
                 if (!world.abilities[abilityId]) {
                     return fail("ABILITY_REFERENCE_INVALID", `Character ${character.id} references missing ability ${abilityId}.`);
@@ -885,6 +924,15 @@
             if (!controlResult.ok) repairControlInvariant(world, controlResult.error.message);
         }
         if (!Number.isInteger(world.nextIntentId) || world.nextIntentId < 1) world.nextIntentId = 1;
+        if (!Array.isArray(world.events)) world.events = [];
+        world.events.forEach(function (event) {
+            if (!event || typeof event !== "object") return;
+            delete event.pendingFor;
+            if (!Array.isArray(event.processedBy)) event.processedBy = [];
+        });
+        getCharacters(world).forEach(function (character) {
+            character.recentDialogue = setup.MindValidators.sanitizeRecentDialogue(character.recentDialogue, world);
+        });
         if (!world.ai || typeof world.ai !== "object") world.ai = { turnQueue: [], continuations: {} };
         if (typeof world.ai.inferenceSessionId !== "string" || !world.ai.inferenceSessionId.trim()) {
             world.ai.inferenceSessionId = createInferenceSessionId();
@@ -1031,145 +1079,27 @@
     }
 
     function recipientsForEvent(event, world) {
-        if (event.noticeability === "hidden") {
-            return event.targetId ? [event.targetId] : [];
-        }
-
-        if (event.type === "character_moved") {
-            const visibleLocationIds = new Set([event.fromLocationId, event.toLocationId].filter(Boolean));
-            return getCharacters(world)
-                .filter(function (character) {
-                    return character.id !== event.actorId && visibleLocationIds.has(character.locationId);
-                })
-                .map(function (character) { return character.id; });
-        }
-
-        return getCharacters(world)
-            .filter(function (character) {
-                return character.id !== event.actorId &&
-                    character.locationId === event.locationId;
-            })
-            .map(function (character) {
-                return character.id;
-            });
+        return setup.EventPerception.recipientsForEvent(event, world);
     }
 
     function enqueueObservation(recipientId, observation, world) {
-        const recipient = getCharacter(recipientId, world);
-        if (!recipient) {
-            return;
-        }
-        const record = Object.assign({ id: world.nextObservationId++ }, clone(observation));
-        recipient.mind.pendingObservations.push(record);
-        if (world.control.assignments[recipientId] === "ai") enqueueAITurn(recipientId, observation.kind || "observation", world);
-        return record;
+        return setup.EventPerception.enqueueObservation(recipientId, observation, world);
     }
 
     function routeFeedback(feedback, action, world, metadata) {
-        for (const entry of feedback) {
-            enqueueObservation(entry.recipientId, {
-                kind: "action_feedback",
-                actionType: action.type,
-                turn: world.nextEventId,
-                actorId: entry.recipientId,
-                targetId: entry.data && entry.data.targetId ? entry.data.targetId : null,
-                text: entry.text,
-                data: clone(entry.data || {}),
-                code: entry.code,
-                interactionId: metadata && metadata.interactionId || null
-            }, world);
-        }
+        return setup.EventPerception.routeFeedback(feedback, action, world, metadata);
     }
 
     function acknowledgeEvent(eventId, characterId) {
-        const world = ensureWorld();
-        const event = world.events.find(function (candidate) {
-            return candidate.id === eventId;
-        });
-
-        if (!event) {
-            return fail("EVENT_NOT_FOUND", "Event does not exist.");
-        }
-
-        event.pendingFor = event.pendingFor.filter(function (id) {
-            return id !== characterId;
-        });
-
-        if (!event.processedBy.includes(characterId)) {
-            event.processedBy.push(characterId);
-        }
-
-        return ok();
+        return setup.EventPerception.acknowledgeEvent(eventId, characterId, ensureWorld());
     }
 
     function dispatchEvent(event, world) {
-        if (!setup.Controllers) {
-            return;
-        }
-
-        for (const characterId of event.recipients) {
-            const controllerId = world.control.assignments[characterId];
-            const controller = setup.Controllers[controllerId];
-
-            if (!controller || typeof controller.onEvent !== "function") {
-                continue;
-            }
-
-            try {
-                const result = controller.onEvent(characterId, clone(event));
-                if (result && result.processed) {
-                    acknowledgeEvent(event.id, characterId);
-                }
-            } catch (error) {
-                pushDebugLog(world, {
-                    controllerId: controllerId,
-                    actorId: characterId,
-                    message: `Controller event error: ${error.message}`
-                });
-            }
-        }
+        return setup.EventPerception.dispatchEvent(event, world);
     }
 
     function emitEvent(eventData, world) {
-        const event = Object.assign({
-            id: world.nextEventId++,
-            targetId: "",
-            noticeability: "noticeable",
-            text: "",
-            processedBy: []
-        }, eventData);
-        if (!event.sourceControllerId && event.actorId && world.control.assignments[event.actorId]) {
-            event.sourceControllerId = world.control.assignments[event.actorId];
-        }
-
-        event.recipients = recipientsForEvent(event, world);
-        event.pendingFor = event.recipients.slice();
-        world.events.push(event);
-
-        const observationRecipients = event.recipients.slice();
-        if (event.targetId && observationRecipients.includes(event.targetId)) {
-            observationRecipients.splice(observationRecipients.indexOf(event.targetId), 1);
-            observationRecipients.unshift(event.targetId);
-        }
-        for (const recipientId of observationRecipients) {
-            enqueueObservation(recipientId, {
-                kind: "event",
-                sourceEventId: event.id,
-                turn: event.id,
-                actorId: event.actorId || null,
-                targetId: event.targetId || null,
-                sourceControllerId: event.sourceControllerId || null,
-                text: event.text,
-                data: clone(event)
-            }, world);
-        }
-
-        if (world.events.length > 200) {
-            world.events = world.events.slice(-200);
-        }
-
-        dispatchEvent(event, world);
-        return event;
+        return setup.EventPerception.emitEvent(eventData, world);
     }
 
     function renderItemActionText(template, values) {
@@ -1592,7 +1522,7 @@
                     return fail("TRANSITION_BLOCKED", transition.blockedReason.trim() || "The way is blocked.");
                 }
                 if (transition.lockId && transition.locked) {
-                    return fail("TRANSITION_BLOCKED", transition.lockedReason.trim() || "The door is locked.");
+                    return fail("PASSAGE_LOCKED", transition.lockedReason.trim() || "The door is locked.");
                 }
 
                 const defaultPosition = getSublocation(destination.defaultSublocationId, world);
@@ -2599,7 +2529,12 @@
                 text: validation.error.message, data: clone(action)
             }];
             routeFeedback(feedback, action, world, metadata);
-            const result = { ok: false, action: clone(action), events: [], feedback: feedback, error: clone(validation.error) };
+            const events = [];
+            if (action.type === "move" && validation.error.code === "PASSAGE_LOCKED") {
+                const attemptEvent = setup.EventPerception.emitLockedPassageAttempt(actor.id, action.destination_id, world, metadata);
+                if (attemptEvent) events.push(clone(attemptEvent));
+            }
+            const result = { ok: false, action: clone(action), events: events, feedback: feedback, error: clone(validation.error) };
             world.debug.lastActionResult = result;
             return result;
         }
@@ -2668,6 +2603,15 @@
         if (!text) {
             return fail("EMPTY_NARRATIVE", "Narrative text is empty.");
         }
+        const parsed = setup.EventPerception.parseStructuredNarrative(text);
+        const hasStructuredSpeech = input && Object.prototype.hasOwnProperty.call(input, "spokenText");
+        const hasStructuredNarrative = input && Object.prototype.hasOwnProperty.call(input, "publicNarrative");
+        const spokenText = hasStructuredSpeech
+            ? (typeof input.spokenText === "string" ? input.spokenText.trim() : "")
+            : parsed.spokenText;
+        const publicNarrative = hasStructuredNarrative
+            ? (typeof input.publicNarrative === "string" ? input.publicNarrative.trim() : "")
+            : parsed.publicNarrative;
 
         const targetId = input.target_id || "";
         const narrativeLocationId = metadata && metadata.locationId || actor.locationId;
@@ -2691,7 +2635,11 @@
             locationId: narrativeLocationId,
             noticeability: noticeability,
             interactionId: metadata && metadata.interactionId || null,
-            text: text
+            text: text,
+            publicNarrative: publicNarrative || null,
+            spokenText: spokenText || null,
+            spokenTargetId: spokenText ? (targetId || null) : null,
+            spokenLoudness: spokenText ? noticeability : null
         }, world);
 
         const result = ok({ event: clone(event) });
@@ -2725,7 +2673,9 @@
                 narrativeResult = submitNarrative(actorId, {
                     text: text,
                     target_id: input.target_id || "",
-                    noticeability: input.noticeability || "noticeable"
+                    noticeability: input.noticeability || "noticeable",
+                    publicNarrative: Object.prototype.hasOwnProperty.call(input, "publicNarrative") ? input.publicNarrative : undefined,
+                    spokenText: Object.prototype.hasOwnProperty.call(input, "spokenText") ? input.spokenText : undefined
                 }, {
                     interactionId: interactionId,
                     locationId: actor.locationId
@@ -2753,10 +2703,7 @@
     }
 
     function getPendingEventsFor(characterId) {
-        const world = ensureWorld();
-        return world.events.filter(function (event) {
-            return event.pendingFor.includes(characterId);
-        });
+        return setup.EventPerception.getPendingEventsFor(characterId, ensureWorld());
     }
 
     function updateCharacterProfile(characterId, input) {
@@ -2806,6 +2753,9 @@
         repairAIQueue: repairAIQueue,
         hydrateAIQueueFromPendingObservations: hydrateAIQueueFromPendingObservations,
         currentAuthoringRevision: currentAuthoringRevision,
+        ensureWorld: ensureWorld,
+        enqueueAITurn: enqueueAITurn,
+        pushDebugLog: pushDebugLog,
         enqueueObservation: enqueueObservation,
         createInferenceSessionId: createInferenceSessionId
     };
@@ -2870,7 +2820,7 @@
         peek: function () { return getAIQueueStatus(ensureWorld()).head; },
         remove: function (characterId) { const world = ensureWorld(); world.ai.turnQueue = world.ai.turnQueue.filter(function (entry) { return entry.characterId !== characterId; }); return ok(); },
         getStatus: function () { return getAIQueueStatus(ensureWorld()); },
-        repair: function () { const world = ensureWorld(); repairAIQueue(world); return getAIQueueStatus(world); }
+        repair: function () { const world = ensureWorld(); hydrateAIQueueFromPendingObservations(world); return getAIQueueStatus(world); }
     };
 
     setup.TimelapseAPI = {

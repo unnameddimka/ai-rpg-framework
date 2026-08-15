@@ -216,33 +216,36 @@
     }
 
 
-    function validateMemoryConsolidation(value, existingLongTermIds) {
-        const errors = exactKeyErrors(value, ["longTermMemoriesToUpsert", "longTermMemoriesToAdd"], "response");
+    function validateMemoryConsolidation(value, existingLongTermIds, existingBeliefIds, protectedLongTermIds) {
+        const keys = ["longTermMemoriesToUpsert", "longTermMemoriesToAdd", "longTermMemoryIdsToRemove", "beliefsToUpsert", "beliefIdsToRemove"];
+        const errors = exactKeyErrors(value, keys, "response");
         if (!isPlainObject(value)) return finishValidation(value, errors);
 
-        if (!Array.isArray(value.longTermMemoriesToUpsert)) {
-            errors.push("response.longTermMemoriesToUpsert must be an array.");
-        }
-        if (!Array.isArray(value.longTermMemoriesToAdd)) {
-            errors.push("response.longTermMemoriesToAdd must be an array.");
-        }
+        keys.forEach(function (key) {
+            if (!Array.isArray(value[key])) errors.push(`response.${key} must be an array.`);
+        });
 
-        const allowedIds = new Set(Array.isArray(existingLongTermIds) ? existingLongTermIds : []);
-        const seenIds = new Set();
+        const allowedMemoryIds = new Set(Array.isArray(existingLongTermIds) ? existingLongTermIds : []);
+        const allowedBeliefIds = new Set(Array.isArray(existingBeliefIds) ? existingBeliefIds : []);
+        const protectedIds = new Set(Array.isArray(protectedLongTermIds) ? protectedLongTermIds : []);
+        const seenMemoryUpserts = new Set();
+        const seenMemoryRemovals = new Set();
+        const seenBeliefUpserts = new Set();
+        const seenBeliefRemovals = new Set();
+
         (Array.isArray(value.longTermMemoriesToUpsert) ? value.longTermMemoriesToUpsert : []).forEach(function (memory, index) {
             const path = `response.longTermMemoriesToUpsert[${index}]`;
             errors.push.apply(errors, exactKeyErrors(memory, ["id", "summary", "importance"], path));
             if (!isPlainObject(memory)) return;
-            if (typeof memory.id !== "string" || !allowedIds.has(memory.id)) {
+            if (typeof memory.id !== "string" || !allowedMemoryIds.has(memory.id)) {
                 errors.push(`${path}.id must match an existing long-term-memory ID supplied in the request.`);
-            } else if (seenIds.has(memory.id)) {
+            } else if (seenMemoryUpserts.has(memory.id)) {
                 errors.push(`${path}.id may be upserted only once.`);
             } else {
-                seenIds.add(memory.id);
+                seenMemoryUpserts.add(memory.id);
             }
             errors.push.apply(errors, requiredTextErrors(memory.summary, `${path}.summary`, 2000));
-            if (typeof memory.importance !== "number" || !Number.isFinite(memory.importance) ||
-                    memory.importance < 0 || memory.importance > 1) {
+            if (typeof memory.importance !== "number" || !Number.isFinite(memory.importance) || memory.importance < 0 || memory.importance > 1) {
                 errors.push(`${path}.importance must be a finite number from 0 to 1.`);
             }
         });
@@ -252,10 +255,41 @@
             errors.push.apply(errors, exactKeyErrors(memory, ["summary", "importance"], path));
             if (!isPlainObject(memory)) return;
             errors.push.apply(errors, requiredTextErrors(memory.summary, `${path}.summary`, 2000));
-            if (typeof memory.importance !== "number" || !Number.isFinite(memory.importance) ||
-                    memory.importance < 0 || memory.importance > 1) {
+            if (typeof memory.importance !== "number" || !Number.isFinite(memory.importance) || memory.importance < 0 || memory.importance > 1) {
                 errors.push(`${path}.importance must be a finite number from 0 to 1.`);
             }
+        });
+
+        (Array.isArray(value.longTermMemoryIdsToRemove) ? value.longTermMemoryIdsToRemove : []).forEach(function (id, index) {
+            const path = `response.longTermMemoryIdsToRemove[${index}]`;
+            if (typeof id !== "string" || !allowedMemoryIds.has(id)) errors.push(`${path} must match an existing long-term-memory ID supplied in the request.`);
+            else if (seenMemoryRemovals.has(id)) errors.push(`${path} may be removed only once.`);
+            else if (seenMemoryUpserts.has(id)) errors.push(`${path} cannot be both removed and upserted.`);
+            else if (protectedIds.has(id)) errors.push(`${path} cannot remove a protected long-term memory.`);
+            else seenMemoryRemovals.add(id);
+        });
+
+        (Array.isArray(value.beliefsToUpsert) ? value.beliefsToUpsert : []).forEach(function (belief, index) {
+            const path = `response.beliefsToUpsert[${index}]`;
+            errors.push.apply(errors, exactKeyErrors(belief, ["id", "text", "confidence"], path));
+            if (!isPlainObject(belief)) return;
+            if (typeof belief.id !== "string" || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(belief.id)) {
+                errors.push(`${path}.id must start with a letter and contain only letters, digits, underscores, or hyphens.`);
+            } else if (seenBeliefUpserts.has(belief.id)) {
+                errors.push(`${path}.id may be upserted only once.`);
+            } else {
+                seenBeliefUpserts.add(belief.id);
+            }
+            errors.push.apply(errors, requiredTextErrors(belief.text, `${path}.text`, 2000));
+            if (!["low", "medium", "high"].includes(belief.confidence)) errors.push(`${path}.confidence must be low, medium, or high.`);
+        });
+
+        (Array.isArray(value.beliefIdsToRemove) ? value.beliefIdsToRemove : []).forEach(function (id, index) {
+            const path = `response.beliefIdsToRemove[${index}]`;
+            if (typeof id !== "string" || !allowedBeliefIds.has(id)) errors.push(`${path} must match an existing belief ID supplied in the request.`);
+            else if (seenBeliefRemovals.has(id)) errors.push(`${path} may be removed only once.`);
+            else if (seenBeliefUpserts.has(id)) errors.push(`${path} cannot be both removed and upserted.`);
+            else seenBeliefRemovals.add(id);
         });
 
         return finishValidation(value, errors);
@@ -263,19 +297,18 @@
 
     function memoryConsolidationSystem() {
         return [
-            "You are consolidating one character's autobiographical memory.",
-            "You are not taking a game turn and you cannot act in the world.",
-            "Use only the supplied character context, existing long-term memories, and recent memories selected for consolidation.",
-            "Produce durable long-term memories that preserve what this character would meaningfully remember about important episodes, relationships, discoveries, conflicts, changes in understanding, and other experiences likely to matter later.",
-            "Long-term memory is thematic rather than chronological. When new material belongs to an existing long-term topic, update that existing memory by its supplied ID instead of creating a duplicate. Add a new long-term memory only when the material represents a genuinely distinct durable topic or episode.",
-            "Preserve the character's subjective perspective, including uncertainty, mistakes, suspicions, conflicting interpretations, and unresolved contradictions. Do not replace remembered experience with objective world truth unless the supplied memories themselves show that the character learned the correction.",
-            "Do not invent events or conclusions. Do not preserve routine detail merely because it occurred. Preserve important nuance that could affect future behavior, relationships, decisions, or understanding.",
-            "You may update existing long-term memories or propose new ones. You may not delete an existing long-term memory.",
-            "Do not modify known facts, beliefs, relationships, continuation, controller state, world state, recent memories, or any other state.",
-            "Do not mention memory consolidation, summarization, prompts, AI models, or the framework as an experience of the character.",
-            "Return exactly one JSON object with the keys longTermMemoriesToUpsert and longTermMemoriesToAdd, and nothing else.",
-            "longTermMemoriesToUpsert must contain records shaped exactly as {\"id\":\"existing_id\",\"summary\":\"...\",\"importance\":0.0}. The id must be one of the supplied existing long-term-memory IDs.",
-            "longTermMemoriesToAdd must contain records shaped exactly as {\"summary\":\"...\",\"importance\":0.0}; do not invent IDs. importance must be from 0 to 1. Both arrays must always be present, even when empty."
+            "You are maintaining one character's autobiographical mind state.",
+            "You are not taking a game turn and cannot act in the world.",
+            "Use only the supplied character context, existing beliefs, existing long-term memories, and recent memories selected for consolidation.",
+            "Preserve identity, important commitments, relationships, discoveries, conflicts, uncertainties, and meaningful experiences. Prefer updating or merging redundant records over deleting unique important information.",
+            "Long-term memory is thematic rather than chronological. Fold new material into an existing topic when appropriate. Add a new long-term memory only for genuinely distinct durable material.",
+            "You may remove a redundant or superseded long-term memory only when the meaningful autobiographical content that should remain is preserved elsewhere in the resulting long-term memory set. Never remove protected memories.",
+            "Beliefs are subjective propositions, not objective facts. You may update a belief, add a useful durable belief, or remove an obsolete, contradicted, redundant, or superseded belief. Preserve uncertainty instead of rewriting uncertain beliefs as facts.",
+            "Do not modify knownFacts, relationships, continuation, controller state, world state, recent memories directly, or any other partition not named in the output contract.",
+            "Do not invent events or conclusions merely to make the state cleaner, and do not mention memory maintenance, prompts, AI models, or the framework as an in-world experience.",
+            "Return exactly one JSON object with the keys longTermMemoriesToUpsert, longTermMemoriesToAdd, longTermMemoryIdsToRemove, beliefsToUpsert, and beliefIdsToRemove, and nothing else.",
+            "longTermMemoriesToUpsert records are exactly {\"id\":\"existing_id\",\"summary\":\"...\",\"importance\":0.0}; additions are exactly {\"summary\":\"...\",\"importance\":0.0}.",
+            "beliefsToUpsert records are exactly {\"id\":\"letter_started_id\",\"text\":\"...\",\"confidence\":\"low|medium|high\"}. Removal arrays contain only existing IDs. All five arrays must always be present, even when empty."
         ].join(" ");
     }
 
@@ -286,7 +319,7 @@
 
         const loudness = speechLoudnessValues().map(function (value) { return JSON.stringify(value); }).join(" or ");
         const contract = `Return exactly the keys action, publicNarrative, spokenText, spokenTargetId, spokenLoudness, continuation, and memoryUpdates. action is null or exactly one action from context.view.available_actions using only currently offered option values. Available actions are capabilities, not recommendations: do not choose one merely because it exists. spokenTargetId is null or the id of one character currently listed in context.view.location.characters. spokenLoudness is per utterance, not persistent state: when spokenText is present it must be ${loudness}; when spokenText is null, spokenTargetId and spokenLoudness must both be null.`;
-        const state = "First understand the current situation. context.view is authoritative for what is publicly and operationally true now. Pending observations have already passed deterministic perception and delivery rules; if one was delivered, treat it as perceived and do not second-guess audibility or visibility from distance, loudness, posture, or room layout. Character IDs are persistent identities: the same character id is the same person after leaving and returning, so location changes do not reset familiarity, prior interaction, memories, beliefs, or relationships. A character absent from context.view.location.characters is not currently visible here. context.view.self.position_text and visible characters' position_text override stale spatial memories.";
+        const state = "First understand the current situation. context.view is authoritative for what is publicly and operationally true now. Pending observations have already passed deterministic perception and delivery rules; if one was delivered, treat it as perceived and do not second-guess audibility or visibility from distance, loudness, posture, or room layout. context.recentDialogue is a short-lived record of recently spoken dialogue actually available to this character, including the character's own prior speech; use it for conversational continuity, not as objective physical world state, and do not copy routine lines into persistent memory merely because they appear there. Character IDs are persistent identities: the same character id is the same person after leaving and returning, so location changes do not reset familiarity, prior interaction, memories, beliefs, or relationships. A character absent from context.view.location.characters is not currently visible here. context.view and grounded engine results override stale conversational claims about location, possession, posture, or other physical facts.";
         const decision = "Then decide whether there is a character-level reason to react or act. Directly addressed meaningful speech normally deserves an in-character response through dialogue, visible behavior, a formal action, or intentional silence; a completely empty no-op after direct address should be deliberate and character-driven, not accidental. Spontaneous initiative is valid: characters may work, prepare things, clean, watch people, investigate, move, joke, refuse, or otherwise act on their own. Keep initiative coherent with personality, duties, current observations, and existing intentions. Do not invent a task merely because an action is available. If the character has adopted a concrete purpose and a currently available formal action clearly advances it, normally choose that action rather than only narrating or promising progress, unless personality or circumstances justify postponing, refusing, revising, or abandoning the purpose. context.view.available_actions describes only what is possible right now; a later step may appear after a prerequisite grounded action changes the world. Work one atomic grounded step at a time. Choose the action type from its semantic description first, then choose every parameter only from that action's own current options. Never reuse an option value from a different action type. If no action is warranted, speech, a small visible reaction, or a genuine no-op may be natural.";
         const continuation = "continuation is your nullable, free-form, private working intention. It records an unfinished purpose, never an action queue or predetermined sequence, and the framework does not interpret it. continuation never overrides the current canonical view: before following it, re-check possession, item state, money, current location/position, visible characters, grounded results or failures, and any other mechanical facts it depends on. If those facts changed, adapt, recover, revise, abandon, or clear the purpose instead of narrating stale assumptions as true. If you choose an atomic action as one step toward a purpose that remains unfinished after this response, keep that purpose in continuation; do not start a purposive movement or task and immediately discard why you are doing it. A complete local action may leave continuation null. On every later reaction reevaluate the current view, available actions, new observations, engine-confirmed results or failures, priorities, and continuation. If a still-relevant continuation has an obvious available step and nothing more important overrides it, normally make progress rather than return an accidental no-op. After failure, use the grounded feedback and do not blindly repeat the same action.";
         const speech = `Use spokenText for dialogue in the character's own voice. Choose spokenLoudness structurally for this utterance using ${loudness}; writing *whispers*, *in a low voice*, or similar prose does not change mechanical loudness. The framework owns who receives the resulting observation. spokenTargetId and a formal-action target may differ. publicNarrative is brief visible behavior or atmosphere and is already narration. Scene text uses one RP convention: ordinary text is spoken dialogue, while text inside paired single asterisks is visible narration or behavior and is not spoken; spokenText may include short *inline narration* between spoken phrases. Small visible behavior that does not change canonical state may stay narrative, such as a glance, smile, sigh, gesture, wiping part of a counter, adjusting clothing, hesitation, or a small sip that does not mechanically consume the whole drink. Narrated behavior never mutates canonical state.`;
@@ -337,6 +370,22 @@
             : [];
     }
 
+    function protectedLongTermIdsFromMessages(messages) {
+        const payload = requestPayloadFromMessages(messages);
+        const records = payload && payload.context && payload.context.existingLongTermMemories;
+        return Array.isArray(records)
+            ? records.filter(function (memory) { return memory && memory.protected === true; }).map(function (memory) { return memory.id; }).filter(Boolean)
+            : [];
+    }
+
+    function existingBeliefIdsFromMessages(messages) {
+        const payload = requestPayloadFromMessages(messages);
+        const records = payload && payload.context && payload.context.mindContext && payload.context.mindContext.beliefs;
+        return Array.isArray(records)
+            ? records.map(function (belief) { return belief && belief.id; }).filter(function (id) { return typeof id === "string"; })
+            : [];
+    }
+
     function decisionMessages(context) {
         return [{ role: "system", content: baseSystem("decision") }, { role: "user", content: JSON.stringify({
             stage: "decision",
@@ -354,7 +403,10 @@
                 context: clone(context || {}),
                 requiredResponseShape: {
                     longTermMemoriesToUpsert: [],
-                    longTermMemoriesToAdd: []
+                    longTermMemoriesToAdd: [],
+                    longTermMemoryIdsToRemove: [],
+                    beliefsToUpsert: [],
+                    beliefIdsToRemove: []
                 }
             }) }
         ];
@@ -399,6 +451,8 @@
         const actionCatalog = actionCatalogFromMessages(messages);
         const spokenTargetIds = spokenTargetIdsFromMessages(messages);
         const existingLongTermIds = existingLongTermIdsFromMessages(messages);
+        const existingBeliefIds = existingBeliefIdsFromMessages(messages);
+        const protectedLongTermIds = protectedLongTermIdsFromMessages(messages);
         const trace = {
             stage: stage,
             originalMessages: clone(messages),
@@ -434,7 +488,7 @@
                 validation = stage === "decision"
                     ? validateDecision(value, actionCatalog, spokenTargetIds)
                     : stage === "memory-consolidation"
-                        ? validateMemoryConsolidation(value, existingLongTermIds)
+                        ? validateMemoryConsolidation(value, existingLongTermIds, existingBeliefIds, protectedLongTermIds)
                         : validateResult(value);
             } catch (error) {
                 validation = { ok: false, message: error.message, errors: [error.message] };
@@ -477,6 +531,8 @@
         actionCatalogFromMessages: actionCatalogFromMessages,
         spokenTargetIdsFromMessages: spokenTargetIdsFromMessages,
         existingLongTermIdsFromMessages: existingLongTermIdsFromMessages,
+        existingBeliefIdsFromMessages: existingBeliefIdsFromMessages,
+        protectedLongTermIdsFromMessages: protectedLongTermIdsFromMessages,
         decisionMessages: decisionMessages,
         memoryConsolidationMessages: memoryConsolidationMessages,
         resultMessages: resultMessages,

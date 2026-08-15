@@ -23,6 +23,8 @@ TEST_FILES=(
     tests/run-editor-tests.js
     tests/run-ui-tests.js
     tests/run-ai-tests.js
+    tests/run-quality-pass-tests.js
+    tests/run-ai-liveness-tests.js
     tests/run-generator-tests.js
     tests/run-narrator-tests.js
     tests/run-memory-consolidation-tests.js

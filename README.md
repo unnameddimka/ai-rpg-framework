@@ -81,7 +81,7 @@ Timelapse is a separate coarse-time framework. It may parallelize independent pl
 
 Production model calls resolve through named request profiles. OpenRouter requests prefer providers sorted by latency, keep provider fallbacks enabled, and use stable non-secret `session_id` values to improve sticky routing/cache locality where supported.
 
-The shared executor intentionally leaves at least one second between live transport calls and honors `Retry-After` after HTTP 429. Safe timelapse maintenance work may execute concurrently, but ordinary causal character reactions do not.
+The shared executor intentionally leaves at least one second between live transport calls, applies a hard 180-second timeout to every OpenRouter transport (including response-body reads), and honors `Retry-After` after HTTP 429. Provider 429 cooldown is shared across request roles; optional static/end-of-turn narrator requests skip immediately to deterministic/raw presentation while that cooldown is active, while canonical character reactions remain queued for a later attempt. Safe timelapse maintenance work may execute concurrently, but ordinary causal character reactions do not.
 
 `abstract_study` is a deterministic text-input item effect for cases where gameplay needs to record that a character studied a freely chosen subject without generating new lore. The controller supplies bounded `input_text`; the engine commits `use_item` and returns authored private feedback that may interpolate `{inputText}`. Reader-specific runtime progress tracks the immediately active study thread. Lexically related follow-ups advance through `survey` → `focused` → `saturated`; an unrelated question starts a new survey. Authored focused/saturated feedback can signal diminishing theoretical returns and suggest practice or a different question without inventing the subject matter. No model call is made.
 
@@ -95,10 +95,13 @@ data/model_list.json            Supported model catalog/defaults
 editor/world-editor.html        Standalone world editor
 dist/game.html                  Standalone playable build
 
-src/10-game-api.js              Main deterministic GameAPI facade/action/event engine
+src/08-mind-validators.js       Shared canonical mind/dialogue record validators
+src/10-game-api.js              Main deterministic GameAPI facade/action engine
 src/11-save-migration.js        Fresh-world + runtime-overlay migration
 src/12-character-context.js     Canonical character view/context construction
-src/13-character-memory.js      Runtime mind/continuation helpers
+src/13-character-memory.js      Runtime mind/continuation + maintenance helpers
+src/14-event-perception.js       Canonical event routing/perception/observation/dialogue projection
+src/15-ai-admin.js              Safe admin cleanup for pending AI activity
 src/20-controllers.js           Human/Dummy/AI controllers
 src/21-ai-request-profiles.js   Purpose-specific AI request profiles/model roles
 src/21-ai-settings.js           API key + Character/Utility/Narrator model settings
@@ -109,7 +112,7 @@ src/24-item-model-effects.js    Deferred non-character Utility item information 
 src/24-ai-turn-scheduler.js     Causal AI reaction-wave scheduler
 src/24-timelapse-core.js        Generic coarse-time planning/encounter/reflection core
 src/24-night-timelapse.js       Overnight wrapper/policy
-src/24-memory-consolidator.js   Transactional memory consolidation
+src/24-memory-consolidator.js   Transactional mind maintenance/consolidation
 src/24-prompt-lab.js            Crystal-sphere debug/prompt tools
 src/25-turn-flow.js             Human tick orchestration/progressive committed output
 src/26-presentation-narrator.js Optional presentation narrator

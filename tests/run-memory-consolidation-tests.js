@@ -37,21 +37,30 @@ function fillRecent(character, count, prefix) {
     }
 }
 function successfulClient(value, seenMessages) {
+    const normalized = Object.assign({
+        longTermMemoriesToUpsert: [],
+        longTermMemoriesToAdd: [],
+        longTermMemoryIdsToRemove: [],
+        beliefsToUpsert: [],
+        beliefIdsToRemove: []
+    }, value || {});
     return {
         enforceRequestTiming: false,
         chat: async function (messages) {
             if (seenMessages) seenMessages.push(clone(messages));
-            return { ok: true, modelId: "test-character-model", content: JSON.stringify(value), usage: { prompt_tokens: 100, completion_tokens: 20 } };
+            return { ok: true, modelId: "test-character-model", content: JSON.stringify(normalized), usage: { prompt_tokens: 100, completion_tokens: 20 } };
         }
     };
 }
 
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
+load("src/08-mind-validators.js");
 load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js");
+load("src/14-event-perception.js");
 load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
 load("src/22-openrouter-client.js");
@@ -125,8 +134,8 @@ async function main() {
     assert(payload.stage === "memory-consolidation" && payload.context.memoriesToConsolidate.length === 5 &&
         payload.context.existingLongTermMemories.length === 1,
         "consolidation request should carry structured memory context and existing long-term memory");
-    assert(seenMessages[0][0].content.includes("subjective perspective") && seenMessages[0][0].content.includes("may not delete"),
-        "consolidation system prompt should preserve subjective memory and forbid deletion");
+    assert(seenMessages[0][0].content.includes("Preserve identity") && seenMessages[0][0].content.includes("Never remove protected memories"),
+        "maintenance system prompt should preserve identity and protect important memories");
 
     const exchange = setup.AIRequestExecutor.getExchangeHistory().entries.slice(-1)[0];
     assert(exchange.request.purpose === "memory-consolidation" && exchange.request.stage === "memory-consolidation" &&
@@ -147,7 +156,10 @@ async function main() {
     const staleBeforeCommit = clone(world.entities.nell.mind);
     const staleCommit = setup.AIMemory.commitConsolidation("nell", stalePlan.sourceState, {
         longTermMemoriesToUpsert: [],
-        longTermMemoriesToAdd: [{ summary: "Should never commit.", importance: 0.5 }]
+        longTermMemoriesToAdd: [{ summary: "Should never commit.", importance: 0.5 }],
+        longTermMemoryIdsToRemove: [],
+        beliefsToUpsert: [],
+        beliefIdsToRemove: []
     });
     assert(!staleCommit.ok && staleCommit.error.code === "MEMORY_CONSOLIDATION_STALE" &&
         JSON.stringify(setup.Game.getWorld().entities.nell.mind) === JSON.stringify(staleBeforeCommit),
@@ -155,8 +167,11 @@ async function main() {
 
     const invalidProtocol = setup.AIProtocol.validateMemoryConsolidation({
         longTermMemoriesToUpsert: [{ id: "missing_ltm", summary: "Invalid", importance: 0.5 }],
-        longTermMemoriesToAdd: []
-    }, ["real_ltm"]);
+        longTermMemoriesToAdd: [],
+        longTermMemoryIdsToRemove: [],
+        beliefsToUpsert: [],
+        beliefIdsToRemove: []
+    }, ["real_ltm"], []);
     assert(!invalidProtocol.ok, "protocol must reject upserts for IDs not supplied as existing long-term memories");
 
     // Auto OFF by default / explicit off: no compression even above threshold.

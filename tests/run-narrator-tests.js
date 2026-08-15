@@ -173,7 +173,9 @@ async function testRuntimeTransportBudgetsHotSwitchingAndLogging() {
         "changing narrator model during gameplay should affect the next narrator request without changing character transport defaults");
 
     const history = context.setup.AIRequestExecutor.getExchangeHistory();
-    const narrationEntries = history.entries.filter(function (entry) { return entry.request.purpose === "narration"; });
+    const narrationEntries = history.entries.filter(function (entry) {
+        return entry.request.purpose === "presentation-location" || entry.request.purpose === "presentation-tick";
+    });
     assert(narrationEntries.length === 2 && narrationEntries[0].request.stage === "location" && narrationEntries[1].request.stage === "tick" &&
         narrationEntries[1].request.modelId === "deepseek/deepseek-v4-pro" &&
         narrationEntries[1].result.trace.presentationInput && Array.isArray(narrationEntries[1].result.trace.presentationInput.snapshot) &&

@@ -8,6 +8,7 @@
     let historyInitialized = false;
     let staticNarrationState = { key: "", status: "idle", fragments: [], error: null, requestSerial: 0 };
     let migrationUiInFlight = false;
+    let runtimeTurnBusy = false;
 
     function optionMarkup(items, emptyLabel) {
         if (!items || items.length === 0) {
@@ -108,15 +109,18 @@
                 moment.variables.frameworkUI = {};
             }
             moment.variables.frameworkUI.history = index === activeIndex ? cloneUIValue(mirror) : [];
+            delete moment.variables.frameworkUI.turnBusy;
         });
     }
 
     function restoreHistoryFromSave(save) {
+        runtimeTurnBusy = false;
         historyEntries = savedHistoryEntries(save);
         historyInitialized = true;
         resetStaticNarration("");
         currentTurnHiddenNarrative = [];
         if (State.variables.frameworkUI) {
+            delete State.variables.frameworkUI.turnBusy;
             State.variables.frameworkUI.narratedTurnNarrative = [];
             State.variables.frameworkUI.dynamicNarrationValid = false;
         }
@@ -139,7 +143,6 @@
                 rawTurnNarrative: [],
                 narratedTurnNarrative: [],
                 dynamicNarrationValid: false,
-                turnBusy: false,
                 abilityResultsByActor: {},
                 history: []
             };
@@ -168,12 +171,12 @@
         State.variables.frameworkUI.narrativeNoticeability = State.variables.frameworkUI.narrativeNoticeability === "hidden"
             ? "hidden"
             : "noticeable";
-        State.variables.frameworkUI.turnBusy = Boolean(State.variables.frameworkUI.turnBusy);
+        delete State.variables.frameworkUI.turnBusy;
         return State.variables.frameworkUI;
     }
 
     function getBusyState() {
-        const uiState = getUIState();
+        getUIState();
         const controllerBusy = Boolean(setup.AIController && setup.AIController.isInFlight && setup.AIController.isInFlight());
         const executorStatus = setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus
             ? setup.AIRequestExecutor.getStatus()
@@ -182,7 +185,7 @@
         const waveBusy = Boolean(setup.AITurnScheduler && setup.AITurnScheduler.isWaveInFlight && setup.AITurnScheduler.isWaveInFlight());
         const migrationBusy = Boolean(setup.SaveMigration && setup.SaveMigration.isInFlight && setup.SaveMigration.isInFlight());
         const aiBusy = controllerBusy || executorBusy || waveBusy;
-        const busy = uiState.turnBusy || aiBusy || migrationBusy || migrationUiInFlight;
+        const busy = runtimeTurnBusy || aiBusy || migrationBusy || migrationUiInFlight;
         return { busy: busy, aiBusy: aiBusy, text: busy ? "Thinking..." : "" };
     }
 
@@ -638,8 +641,10 @@
 
     function ensureStaticNarration(view) {
         if (!view || !view.location || !view.self || !setup.NarratorService) return;
-        const uiState = getUIState();
-        if (uiState.turnBusy) return;
+        getUIState();
+        if (getBusyState().busy) return;
+        const queueStatus = setup.AITurnQueue && setup.AITurnQueue.getStatus ? setup.AITurnQueue.getStatus() : null;
+        if (queueStatus && queueStatus.count > 0) return;
         const key = staticNarrationKey(view);
         if (staticNarrationState.key !== key) resetStaticNarration(key);
         if (!isNarratorEnabled() || staticNarrationState.status !== "idle") return;
@@ -1006,7 +1011,7 @@
             const characterId = $(this).closest(".prompt-lab-queue-entry").attr("data-character-id");
             const uiState = getUIState();
             if (getBusyState().busy) return;
-            uiState.turnBusy = true;
+            runtimeTurnBusy = true;
             showImmediateStatus(`The crystal sphere is dry-running the queued request for ${characterId}...`);
             redraw();
             try {
@@ -1014,7 +1019,7 @@
                 redraw();
                 await pending;
             } finally {
-                uiState.turnBusy = false;
+                runtimeTurnBusy = false;
             }
             redraw();
         });
@@ -1022,7 +1027,7 @@
         $(".prompt-lab-process-live").on("click", async function () {
             const uiState = getUIState();
             if (getBusyState().busy) return;
-            uiState.turnBusy = true;
+            runtimeTurnBusy = true;
             showImmediateStatus("The crystal sphere is processing the next scheduler entry live...");
             redraw();
             try {
@@ -1030,7 +1035,7 @@
                 redraw();
                 await pending;
             } finally {
-                uiState.turnBusy = false;
+                runtimeTurnBusy = false;
             }
             redraw();
         });
@@ -1300,6 +1305,9 @@
         const characters = Object.values(world.entities).filter(function (entity) {
             return entity.type === "character";
         });
+        const aiCharacters = characters.filter(function (character) {
+            return world.control && world.control.assignments && world.control.assignments[character.id] === "ai";
+        });
         if (!aiSettingsInitialized && setup.AIRuntimeSettings) {
             setup.AIRuntimeSettings.readSaved();
             aiSettingsInitialized = true;
@@ -1347,10 +1355,26 @@
                 <button id="open-character-window" type="button">Character</button>
                 <details class="framework-mind-tools">
                     <summary>Mind tools</summary>
-                    <button id="compress-memory-button" type="button"${aiBusy ? " disabled" : ""}>Compress memory</button>
+                    <button id="compress-memory-button" type="button"${aiBusy ? " disabled" : ""}>Maintain mind</button>
                     <button id="export-character-mind" type="button"${aiBusy ? " disabled" : ""}>Export mind</button>
                     <button id="import-character-mind" type="button"${aiBusy ? " disabled" : ""}>Import mind</button>
                     <input id="import-character-mind-file" type="file" accept="application/json,.json" hidden>
+                </details>
+                <details class="framework-ai-admin-tools">
+                    <summary>AI activity tools</summary>
+                    <button id="dismiss-pending-reactions" type="button"${aiBusy ? " disabled" : ""}>Dismiss pending reactions</button>
+                    <button id="clear-current-intention" type="button"${aiBusy ? " disabled" : ""}>Clear current intention</button>
+                    <button id="clear-selected-ai-activity" type="button"${aiBusy ? " disabled" : ""}>Clear AI activity</button>
+                    <details class="framework-ai-admin-global">
+                        <summary>Clear AI activity...</summary>
+                        <div class="framework-ai-admin-keep-list">
+                            ${aiCharacters.length ? aiCharacters.map(function (character) {
+                                return `<label><input class="framework-ai-admin-keep" type="checkbox" value="${escapeHtml(character.id)}"> Keep ${escapeHtml(character.name)} active</label><br>`;
+                            }).join("") : "No AI-controlled characters."}
+                        </div>
+                        <button id="clear-global-ai-activity" type="button"${aiBusy || !aiCharacters.length ? " disabled" : ""}>Clear everyone else</button>
+                    </details>
+                    <p class="framework-sidebar-note">Queue-only removal is diagnostic; pending observations can enqueue the character again.</p>
                 </details>
             </div>
             <div class="framework-sidebar-block">
@@ -1422,6 +1446,58 @@
             resetStaticNarration("");
             const passage = currentPassageForHuman();
             Engine.play(passage);
+        });
+
+
+        function runSelectedAdminOperation(methodName, label) {
+            const targetId = String($("#human-character-select").val() || "");
+            if (!targetId || !setup.AIAdmin || typeof setup.AIAdmin[methodName] !== "function") {
+                $("#sidebar-status").text("AI admin tools are unavailable.");
+                return;
+            }
+            if (getBusyState().busy) {
+                $("#sidebar-status").text("AI activity cannot be changed while model or migration work is in progress.");
+                return;
+            }
+            const result = setup.AIAdmin[methodName](targetId);
+            if (!result || !result.ok) {
+                $("#sidebar-status").text(result && result.error && result.error.message || `${label} failed.`);
+                return;
+            }
+            renderSidebar();
+            $("#human-character-select").val(targetId);
+            renderLocationView();
+            renderActionPanel();
+            $("#sidebar-status").text(`${label} complete.`);
+        }
+
+        $("#dismiss-pending-reactions").on("click", function () {
+            runSelectedAdminOperation("dismissPendingReactions", "Pending reactions dismissed");
+        });
+
+        $("#clear-current-intention").on("click", function () {
+            runSelectedAdminOperation("clearCurrentIntention", "Current intention cleared");
+        });
+
+        $("#clear-selected-ai-activity").on("click", function () {
+            runSelectedAdminOperation("clearAIActivity", "AI activity cleared");
+        });
+
+        $("#clear-global-ai-activity").on("click", function () {
+            if (!setup.AIAdmin || getBusyState().busy) return;
+            const keepCharacterIds = Array.from(document.querySelectorAll(".framework-ai-admin-keep:checked"))
+                .map(function (input) { return input.value; });
+            const affectedCount = aiCharacters.filter(function (character) { return !keepCharacterIds.includes(character.id); }).length;
+            if (!window.confirm(`Clear pending reactions and current intentions for ${affectedCount} AI character(s)? Sleeping and persistent mind state will not change.`)) return;
+            const result = setup.AIAdmin.clearAllAIActivity({ keepCharacterIds: keepCharacterIds });
+            if (!result || !result.ok) {
+                $("#sidebar-status").text(result && result.error && result.error.message || "Global AI activity cleanup failed.");
+                return;
+            }
+            renderSidebar();
+            renderLocationView();
+            renderActionPanel();
+            $("#sidebar-status").text(`Cleared AI activity for ${result.affectedCharacterIds.length} character(s).`);
         });
 
 
@@ -1694,7 +1770,7 @@
         }
 
         resetProgressiveTurnPresentation(uiState);
-        uiState.turnBusy = true;
+        runtimeTurnBusy = true;
         uiState.locationStatus = "Processing turn...";
         renderSidebar();
         renderLocationView();
@@ -1709,7 +1785,7 @@
             });
             result = await pending;
         } finally {
-            uiState.turnBusy = false;
+            runtimeTurnBusy = false;
         }
 
         if (!result || !result.ok) {
@@ -1778,7 +1854,7 @@
             return { ok: false, error: { code: "TURN_IN_FLIGHT", message: "A turn is already being processed." } };
         }
         resetProgressiveTurnPresentation(uiState);
-        uiState.turnBusy = true;
+        runtimeTurnBusy = true;
         uiState.locationStatus = "Processing queued AI reactions...";
         renderSidebar();
         renderLocationView();
@@ -1792,7 +1868,7 @@
                 }
             });
         } finally {
-            uiState.turnBusy = false;
+            runtimeTurnBusy = false;
         }
         appendHistory(result && result.historyEntries || []);
         uiState.selectedAction = null;
@@ -2058,7 +2134,7 @@
         uiState.rawTurnNarrative = [];
         uiState.narratedTurnNarrative = [];
         uiState.dynamicNarrationValid = false;
-        uiState.turnBusy = false;
+        runtimeTurnBusy = false;
         uiState.abilityResultsByActor = {};
     }
 

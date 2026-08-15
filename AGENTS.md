@@ -7,7 +7,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - The deterministic engine owns objective world state.
 - Models/controllers choose intentions; they do not directly mutate canonical mechanics or mind arrays.
 - `data/world.json` is authored/static source data. Generated world files are build products.
-- A save owns compatible runtime state.
+- A save owns compatible runtime state. Active Promises/HTTP requests/UI busy flags are transient process state and are never authoritative save state.
 - Save migration is always **fresh current authored world + compatible saved runtime overlay**.
 - Current authored definitions/descriptions/known facts win over stale saved authored copies.
 - Compatible runtime position, inventory/item state, money, sleeping, beliefs, relationships, memories, continuations, dynamic lock state, committed events, pending observations, queue state, and counters survive migration.
@@ -28,7 +28,9 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 ## 3. Canonical view and AI context
 
 - Ordinary HumanController and AIController use the same canonical restricted character `view` for public/operational truth.
-- AI ordinary-decision context may add private identity instructions, private mind state, continuation, and prepared pending observations, but must not create an alternate public world projection.
+- AI ordinary-decision context may add private identity instructions, private mind state, continuation, prepared pending observations, and bounded engine-owned recent dialogue, but must not create an alternate public world projection.
+- Recipient `pendingObservations` are the authoritative reaction inbox. Event-journal recipient/processed metadata is diagnostic/history bookkeeping and must not become a second eligibility queue.
+- Model-facing observations must be compact recipient-safe projections; never leak event routing/scheduler/provider metadata such as `recipients`, `pendingFor`, `processedBy`, controller IDs, or provider diagnostics.
 - Do not duplicate large data already present in the view under aliases.
 - Maintenance workflows (timelapse planning, reflection, consolidation, narrator work) are not ordinary controller decisions and may use purpose-specific compact contexts.
 - Do not build a full ordinary character view only to discard most of it for a maintenance request.
@@ -78,6 +80,9 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Do not enable response caching for gameplay responses.
 - Preserve stable prompt prefixes where practical to benefit provider prompt caching.
 - The one-second live transport pacing guard is intentional and must remain unless explicitly redesigned.
+- Every OpenRouter transport has a hard liveness timeout (default 180 seconds) covering fetch plus full response-body read. Timeout returns structured `AI_REQUEST_TIMEOUT` and must unwind all executor/controller/wave busy counters.
+- HTTP 429 preserves provider status/`Retry-After` and drives a shared provider cooldown. Optional presentation narrator work must skip instead of waiting/sending during that cooldown; canonical character work remains retryable and is never discarded.
+- UI turn-busy state is transient runtime state. Never serialize or resurrect a saved `frameworkUI.turnBusy` as evidence of live asynchronous work.
 - Ordinary causal reaction waves must not be parallelized for latency.
 
 ## 8. Model protocol and safety
@@ -94,8 +99,10 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Authored `knownFacts` come from current world authoring.
 - Runtime beliefs, relationships, recent memories, long-term memories, continuation, and pending observations live in the save/runtime.
 - Engine-owned memory updates support bounded recent-memory append, belief upsert, and relationship upsert.
-- Memory consolidation is transactional and may run as maintenance work.
+- Mind maintenance/consolidation is transactional and may run as maintenance work. It may upsert/remove obsolete beliefs and upsert/add/remove non-protected long-term memories under strict validation; authored `knownFacts` are never rewritten by maintenance.
+- Shared canonical validators govern stored belief, relationship, memory, and recent-dialogue records across live updates, migration, portable import, and world validation.
 - Portable character-mind transfer carries only persistent model-authored mind partitions: beliefs, relationships, recent memories, and long-term memories. Version 1 import is replace-only, exact-character-ID guarded, clears continuation, and never transfers authored facts or physical/world state.
+- Engine-owned `recentDialogue` is bounded ephemeral conversational working context outside `mind`. It records the character's own validated speech plus only speech actually delivered through perception, survives ordinary save/load, is excluded from portable mind transfer, and is not cleared merely by changing location.
 - Retrieval-based old-memory selection/embeddings are future work; do not add them incidentally.
 
 ## 10. Movement, perception, sleeping
@@ -105,6 +112,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Do not split one movement into separate departure/arrival canonical events.
 - Sleeping is explicit canonical state, separate from lying on a bed.
 - Observation alone does not mechanically wake a character.
+- A blocked attempt to traverse a locked passage emits a grounded physical-attempt observation to perceivers on both sides. Far-side recipients must not learn the actor identity unless another rule independently establishes it; use anonymous wording such as “Someone tried the door from the other side.”
 - Existing wake-on-own-action/speech semantics remain authoritative.
 
 ## 11. Items and authored content
@@ -125,7 +133,8 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 ## 12. UI/editor
 
 - Normal gameplay UI is generated from canonical state/action availability.
-- Do not add alternate manual execution paths for pending AI work. Read-only/debug visibility is acceptable.
+- Do not add alternate manual execution paths for pending AI work. Read-only/debug visibility and safe admin cancellation/cleanup are acceptable.
+- Admin cleanup may dismiss pending reactions and/or clear opaque continuation, but must be rejected while live AI/migration work is in flight, must not emit story events, and must not implicitly sleep/wake characters or mutate persistent physical/mind state.
 - The standalone editor edits `data/world.json`; it does not need Node/server/build tooling.
 - Do not hand-edit `src/generated/` artifacts.
 
@@ -134,10 +143,13 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Keep the public `setup.GameAPI`/`CharacterAPI` facade stable where practical.
 - Prefer extraction over broad rewrites.
 - Current internal split:
-  - `10-game-api.js`: deterministic facade/actions/events/world helpers;
+  - `08-mind-validators.js`: shared mind/dialogue record validation;
+  - `10-game-api.js`: deterministic facade/actions/world helpers;
   - `11-save-migration.js`: save reconciliation;
   - `12-character-context.js`: restricted views/context;
-  - `13-character-memory.js`: mind/continuation state helpers.
+  - `13-character-memory.js`: mind/continuation/maintenance state helpers;
+  - `14-event-perception.js`: event routing, perception, observations, dialogue projection;
+  - `15-ai-admin.js`: safe AI-activity cleanup.
 - Preserve stable IDs, JSON field names, save compatibility, event order, and available-action shapes during structural refactors.
 
 ## 14. Validation before completion

@@ -401,7 +401,7 @@
         const modelId = setup.AIRuntimeSettings.getSelectedNarratorModelId();
         return setup.AIRequestExecutor.executeCustom({
             actorId: null,
-            purpose: "narration",
+            purpose: stage === "location" ? "presentation-location" : "presentation-tick",
             stage: stage,
             messages: clone(messages),
             client: clientOverride || narratorTransport(stage, modelId),
@@ -485,6 +485,17 @@
     }
 
     function describeLocation(view, clientOverride) {
+        if (setup.AIRequestExecutor && setup.AIRequestExecutor.isRateLimitCooldownActive
+                && setup.AIRequestExecutor.isRateLimitCooldownActive()) {
+            return Promise.resolve({
+                ok: false, skipped: true, attempted: false, fallbackUsed: true,
+                error: {
+                    code: "NARRATOR_SKIPPED_RATE_LIMIT",
+                    message: "Static narration skipped during provider cooldown.",
+                    retryAfterMs: setup.AIRequestExecutor.getRateLimitCooldownRemainingMs()
+                }
+            });
+        }
         if (!enabled) {
             return Promise.resolve({
                 ok: false,
@@ -502,6 +513,17 @@
     }
 
     function narrateTick(input, clientOverride) {
+        if (setup.AIRequestExecutor && setup.AIRequestExecutor.isRateLimitCooldownActive
+                && setup.AIRequestExecutor.isRateLimitCooldownActive()) {
+            return Promise.resolve({
+                ok: false, skipped: true, attempted: false, fallbackUsed: true,
+                error: {
+                    code: "NARRATOR_SKIPPED_RATE_LIMIT",
+                    message: "Turn narration skipped during provider cooldown.",
+                    retryAfterMs: setup.AIRequestExecutor.getRateLimitCooldownRemainingMs()
+                }
+            });
+        }
         if (!enabled) {
             return Promise.resolve({
                 ok: false,

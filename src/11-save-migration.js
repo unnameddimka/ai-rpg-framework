@@ -61,11 +61,21 @@
         });
     }
 
-    function migrationArray(savedCharacter, partition) {
+    function migrationArray(savedCharacter, partition, candidate) {
         if (!savedCharacter || !savedCharacter.mind || !Array.isArray(savedCharacter.mind[partition])) {
             throw new Error(`Character ${savedCharacter && savedCharacter.id || "unknown"} has invalid saved mind.${partition}.`);
         }
-        return clone(savedCharacter.mind[partition]);
+        const records = clone(savedCharacter.mind[partition]);
+        const actorId = savedCharacter.id;
+        const validators = setup.MindValidators;
+        records.forEach(function (record) {
+            let validation = { ok: true };
+            if (partition === "beliefs") validation = validators.validateBeliefRecord(record, { maxTextLength: 2000 });
+            else if (partition === "relationships") validation = validators.validateRelationshipRecord(record, actorId, candidate, { requireTargetExists: false, maxSummaryLength: 2000 });
+            else if (partition === "recentMemories" || partition === "longTermMemories") validation = validators.validateMemoryRecord(record, { maxSummaryLength: 2000 });
+            if (!validation.ok) throw new Error(`Character ${actorId} has invalid saved mind.${partition}: ${validation.error.message}`);
+        });
+        return records;
     }
 
     function migrationAbstractStudyProgress(savedCharacter) {
@@ -190,12 +200,13 @@
             return null;
         }
         const copy = clone(event);
-        ["recipients", "pendingFor", "processedBy"].forEach(function (field) {
+        ["recipients", "processedBy"].forEach(function (field) {
             if (!Array.isArray(copy[field])) copy[field] = [];
             copy[field] = Array.from(new Set(copy[field].filter(function (id) {
                 return runtimeCharacterRefIsValid(candidate, id) && Boolean(id);
             })));
         });
+        delete copy.pendingFor;
         if (copy.locationId && !runtimeEntityRefIsValid(candidate, copy.locationId)) copy.locationId = null;
         if (copy.fromLocationId && !runtimeEntityRefIsValid(candidate, copy.fromLocationId)) copy.fromLocationId = null;
         if (copy.toLocationId && !runtimeEntityRefIsValid(candidate, copy.toLocationId)) copy.toLocationId = null;
@@ -377,10 +388,11 @@
                 if (!savedCharacter || savedCharacter.type !== "character") return;
 
                 report.charactersPreserved += 1;
-                character.mind.beliefs = migrationArray(savedCharacter, "beliefs");
-                character.mind.relationships = migrationArray(savedCharacter, "relationships");
-                character.mind.recentMemories = migrationArray(savedCharacter, "recentMemories");
-                character.mind.longTermMemories = migrationArray(savedCharacter, "longTermMemories");
+                character.mind.beliefs = migrationArray(savedCharacter, "beliefs", candidate);
+                character.mind.relationships = migrationArray(savedCharacter, "relationships", candidate);
+                character.mind.recentMemories = migrationArray(savedCharacter, "recentMemories", candidate);
+                character.mind.longTermMemories = migrationArray(savedCharacter, "longTermMemories", candidate);
+                character.recentDialogue = setup.MindValidators.sanitizeRecentDialogue(savedCharacter.recentDialogue, candidate);
                 delete character.mind.abstractStudyProgress;
                 character.mind.pendingObservations = [];
                 character.sleeping = savedCharacter.sleeping === true;

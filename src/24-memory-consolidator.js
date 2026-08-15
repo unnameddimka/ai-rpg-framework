@@ -3,6 +3,8 @@
 
     const RETAIN_RECENT_COUNT = 10;
     const AUTO_THRESHOLD = 30;
+    const BELIEF_MAINTENANCE_THRESHOLD = 60;
+    const LONG_TERM_MAINTENANCE_THRESHOLD = 30;
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -40,12 +42,13 @@
                 ok: true,
                 actorId: characterId,
                 nothingToCompress: true,
+                nothingToMaintain: true,
                 consolidation: clone(plan.summary)
             };
         }
 
         if (setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
-            return failure("AI_KEY_MISSING", "Enter an OpenRouter API key before compressing character memory.");
+            return failure("AI_KEY_MISSING", "Enter an OpenRouter API key before maintaining character mind state.");
         }
 
         const messages = setup.AIProtocol.memoryConsolidationMessages(plan.context);
@@ -108,12 +111,14 @@
 
         recordTransientResult(characterId, messages, result);
         if (!result.ok) return result;
-        return Object.assign({ actorId: characterId, nothingToCompress: false }, result);
+        return Object.assign({ actorId: characterId, nothingToCompress: false, nothingToMaintain: false }, result);
     }
 
     setup.MemoryConsolidator = {
         RETAIN_RECENT_COUNT: RETAIN_RECENT_COUNT,
         AUTO_THRESHOLD: AUTO_THRESHOLD,
+        BELIEF_MAINTENANCE_THRESHOLD: BELIEF_MAINTENANCE_THRESHOLD,
+        LONG_TERM_MAINTENANCE_THRESHOLD: LONG_TERM_MAINTENANCE_THRESHOLD,
         compress: compress
     };
 }());

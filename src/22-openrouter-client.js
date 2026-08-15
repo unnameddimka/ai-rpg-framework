@@ -5,6 +5,7 @@
     const MAX_TOKENS = 6000;
     const REASONING_MAX_TOKENS = 1500;
     const TEMPERATURE = 0.4;
+    const DEFAULT_REQUEST_TIMEOUT_MS = 180000;
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -47,6 +48,8 @@
             code: code,
             message: redactSecretText(message)
         };
+        if (status) error.status = status;
+        if (Number.isFinite(additions.retryAfterMs)) error.retryAfterMs = additions.retryAfterMs;
         if (providerResponse) error.providerResponse = clone(providerResponse);
         return Object.assign({
             ok: false,
@@ -195,6 +198,9 @@
         const sessionId = typeof source.sessionId === "string" && source.sessionId.trim()
             ? source.sessionId.trim().slice(0, 256)
             : null;
+        const timeoutMs = Number.isFinite(source.timeoutMs) && source.timeoutMs > 0
+            ? Math.floor(source.timeoutMs)
+            : DEFAULT_REQUEST_TIMEOUT_MS;
         return {
             modelId: modelId,
             maxTokens: maxTokens,
@@ -203,7 +209,8 @@
             temperature: temperature,
             providerSort: providerSort,
             allowProviderFallbacks: allowProviderFallbacks,
-            sessionId: sessionId
+            sessionId: sessionId,
+            timeoutMs: timeoutMs
         };
     }
 
@@ -236,13 +243,48 @@
         }
 
         let response;
-        try {
+        let retryAfterMs = null;
+        let body = null;
+        let timeoutHandle = null;
+        let timedOut = false;
+        const controller = typeof AbortController === "function" ? new AbortController() : null;
+        const transportPromise = (async function () {
             response = await fetchFunction(ENDPOINT, {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-                body: JSON.stringify(requestBody)
+                body: JSON.stringify(requestBody),
+                signal: controller ? controller.signal : undefined
             });
+            retryAfterMs = retryAfterMilliseconds(response);
+            body = await readBody(response);
+        }());
+        const timeoutPromise = new Promise(function (resolve, reject) {
+            timeoutHandle = setTimeout(function () {
+                timedOut = true;
+                try { if (controller) controller.abort(); } catch (error) {}
+                const timeoutError = new Error("OpenRouter request exceeded the hard timeout.");
+                timeoutError.code = "AI_REQUEST_TIMEOUT";
+                reject(timeoutError);
+            }, requestOptions.timeoutMs);
+        });
+        try {
+            await Promise.race([transportPromise, timeoutPromise]);
         } catch (error) {
+            if (timedOut || error && error.code === "AI_REQUEST_TIMEOUT") {
+                return failure("AI_REQUEST_TIMEOUT", `OpenRouter request timed out after ${requestOptions.timeoutMs} ms.`, 0, {
+                    providerResponse: {
+                        endpoint: ENDPOINT,
+                        url: ENDPOINT,
+                        status: 0,
+                        statusText: "",
+                        headers: {},
+                        retryAfterMs: null,
+                        rawBody: "",
+                        parsedBody: null,
+                        timeoutMs: requestOptions.timeoutMs
+                    }
+                });
+            }
             return failure("NETWORK_ERROR", "OpenRouter could not be reached. Check browser network or CORS access.", 0, {
                 providerResponse: {
                     endpoint: ENDPOINT,
@@ -259,10 +301,10 @@
                     }
                 }
             });
+        } finally {
+            if (timeoutHandle !== null) clearTimeout(timeoutHandle);
         }
 
-        const retryAfterMs = retryAfterMilliseconds(response);
-        const body = await readBody(response);
         const diagnostics = providerDiagnostics(response, body, retryAfterMs);
 
         if (!response.ok) {
@@ -319,6 +361,7 @@
         ENDPOINT: ENDPOINT,
         MAX_TOKENS: MAX_TOKENS,
         REASONING_MAX_TOKENS: REASONING_MAX_TOKENS,
+        DEFAULT_REQUEST_TIMEOUT_MS: DEFAULT_REQUEST_TIMEOUT_MS,
         getModelId: selectedModelId,
         chat: chat,
         chatWithOptions: chatWithOptions

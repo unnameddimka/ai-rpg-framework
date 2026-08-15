@@ -1,3 +1,4 @@
 dist/game.html
 *.log
 .vscode/settings.json
+data/*.bak

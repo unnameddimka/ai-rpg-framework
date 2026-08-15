@@ -391,21 +391,28 @@ assert(typeof historyOnSave === "function" && typeof historyOnLoad === "function
 const savedHistoryFixture = Array.from({ length: 120 }, function (_, index) {
     return { text: "Entry " + index, visibleToHuman: index % 2 === 0, actorName: "Actor", locationName: "Room" };
 });
-historyOnLoad({ state: { index: 0, history: [{ variables: { frameworkUI: { history: savedHistoryFixture } } }] } });
+gameUIModel.busyState();
+context.State.variables.frameworkUI.turnBusy = true;
+historyOnLoad({ state: { index: 0, history: [{ variables: { frameworkUI: { history: savedHistoryFixture, turnBusy: true } } }] } });
+assert(!Object.prototype.hasOwnProperty.call(context.State.variables.frameworkUI, "turnBusy") && gameUIModel.busyState().busy === false,
+    "loading a save with stale serialized turnBusy must initialize the UI unlocked when no live operation exists");
 const restoredHistory = gameUIModel.getHistoryEntries();
 assert(restoredHistory.length === 100 && restoredHistory[0].text === "Entry 20" &&
     restoredHistory.some(function (entry) { return entry.visibleToHuman === false; }),
     "loading should restore only the most recent 100 History entries while preserving visibility metadata");
 const saveObject = { state: { index: 2, history: [
-    { variables: { frameworkUI: { history: [{ text: "old" }] } } },
-    { variables: { frameworkUI: { history: [{ text: "older" }] } } },
-    { variables: { frameworkUI: { history: [] } } }
+    { variables: { frameworkUI: { history: [{ text: "old" }], turnBusy: true } } },
+    { variables: { frameworkUI: { history: [{ text: "older" }], turnBusy: true } } },
+    { variables: { frameworkUI: { history: [], turnBusy: true } } }
 ] } };
 historyOnSave(saveObject);
 assert(saveObject.state.history[0].variables.frameworkUI.history.length === 0 &&
     saveObject.state.history[1].variables.frameworkUI.history.length === 0 &&
     saveObject.state.history[2].variables.frameworkUI.history.length === 100,
     "save serialization should keep History only in the active save moment and cap it at 100 entries total");
+assert(saveObject.state.history.every(function (moment) {
+    return !Object.prototype.hasOwnProperty.call(moment.variables.frameworkUI, "turnBusy");
+}), "save serialization must strip transient turnBusy from every history moment");
 
 // Unified narrator presentation mode: successful tick narration replaces both Latest turn and raw dynamic scene.
 context.setup.NarratorService.setEnabled(true);

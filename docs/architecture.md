@@ -116,7 +116,7 @@ A character mind contains:
 
 `continuation` is stored under AI runtime state and is model-authored opaque working intention. The framework stores/returns it but does not interpret its semantics.
 
-Memory updates from ordinary AI decisions are bounded structured operations: recent-memory append, belief upsert, relationship upsert. Consolidation is a separate transactional maintenance job.
+Memory updates from ordinary AI decisions are bounded structured operations: recent-memory append, belief upsert, relationship upsert. Mind maintenance/consolidation is a separate transactional maintenance job. It may merge/update/add non-protected long-term memories, remove redundant non-protected long-term memories, and upsert/remove runtime beliefs. Authored `knownFacts` are never writable through maintenance. All changes are validated against a captured source snapshot and applied transactionally; stale source state rejects the entire result.
 
 Portable character-mind export/import is an admin/runtime operation, not an in-world action. Version 1 carries exactly the persistent model-authored partitions `beliefs`, `relationships`, `recentMemories`, and `longTermMemories`. Import is strict replace-only and requires an exact stable `characterId` match; there is no force-import or merge path. Current authored `knownFacts`, descriptions, controller/physical state, inventory/equipment, pending observations, continuation, and item-owned mechanic state remain in the destination world. Import clears the target continuation, preserves imported memory IDs, advances `nextMemoryId` beyond imported `memory_ai_*` IDs, and does not emit a transition event/observation or schedule a turn.
 
@@ -191,7 +191,13 @@ character_moved { actorId, fromLocationId, toLocationId, ... }
 
 The same event is delivered to the union of recipients who can perceive the actor from source or destination. It is not split into separate departure/arrival canonical events.
 
-Events generate recipient-specific pending observations. Pending observations are already perception-filtered; the model must treat a delivered observation as perceived.
+Events generate recipient-specific pending observations. `character.mind.pendingObservations` is the authoritative reaction inbox. Event-journal recipient/processed metadata is retained only for diagnostics/history and must not drive a second independent pending queue. Pending observations are already perception-filtered; the model must treat a delivered observation as perceived.
+
+Model context receives a compact recipient-safe observation projection rather than a cloned event envelope. Routing/scheduler/provider bookkeeping (`recipients`, legacy `pendingFor`, `processedBy`, controller/provider metadata) is excluded.
+
+A failed attempt to traverse a locked passage is itself a grounded physical event. Perceivers on the actor side can identify the actor normally; perceivers on the far side receive an anonymous form such as `Someone tried the door from the other side.` The lock remains unchanged, and observation alone does not mechanically wake a sleeping character.
+
+Each character also owns a bounded engine-managed `recentDialogue` window (currently eight utterances) outside `mind`. It contains the character's own validated speech and speech actually delivered to that character through normal perception. It survives save/load, does not clear merely on movement, and is intentionally excluded from portable character-mind export/import. This is conversational working context, not autobiographical long-term memory.
 
 Observation IDs are consumed explicitly rather than clearing an inbox indiscriminately.
 
@@ -301,7 +307,9 @@ The shared executor provides:
 - serialized causal request execution by default;
 - an explicit concurrent path used only by workflows that prove requests independent;
 - at least one second between live transport calls;
-- `Retry-After` aware cooldown after 429;
+- `Retry-After` aware shared provider cooldown after 429;
+- a hard per-transport liveness timeout (default 180 seconds) covering both fetch and complete response-body read;
+- optional presentation-request suppression while provider rate-limit cooldown is active;
 - no automatic rate-limit retry loop;
 - sanitized exchange logging (latest 100 exchanges);
 - request purpose/stage/model/options and provider diagnostics.
@@ -348,7 +356,9 @@ The editor mirrors authored data but is not a runtime/save editor.
 
 The crystal sphere/prompt lab exposes scheduler/request state, dry runs, exchange import/export, replay and diagnostics. Debug tooling must observe normal architecture rather than offer alternate gameplay commit paths.
 
-Normal sidebar may expose read-only scheduler information, but there is no manual gameplay “process pending AI request” button.
+Normal sidebar may expose read-only scheduler information, but there is no manual gameplay “process pending AI request” button. Admin/debug controls may safely dismiss pending reactions, clear continuation, or clear both (including a global keep-list operation) only when no AI/executor/wave/migration work is live. Such cleanup is runtime administration, emits no story event, and never implicitly sleeps/wakes a character.
+
+`frameworkUI.turnBusy` is obsolete as persisted state. Busy UI derives only from live runtime operations. Save/load strips or ignores stale serialized busy flags; rendering (`Engine.show()`) is not recovery logic because passage rendering may itself request optional narration.
 
 ## 21. Current authored story/world notes
 

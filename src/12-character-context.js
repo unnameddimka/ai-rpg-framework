@@ -33,6 +33,19 @@
         };
     }
 
+
+    function recentDialogueContext(actor, world) {
+        const records = setup.MindValidators.sanitizeRecentDialogue(actor.recentDialogue, world);
+        return records.map(function (record) {
+            const speaker = world.entities[record.speakerId];
+            return {
+                speakerId: record.speakerId,
+                speakerName: speaker && speaker.type === "character" ? speaker.name : record.speakerId || "Unknown speaker",
+                text: record.text
+            };
+        });
+    }
+
     function build(actorId, options) {
         const world = setup.Game.getWorld();
         const actor = world.entities[actorId];
@@ -45,6 +58,7 @@
             character: privateCharacter(actor, world),
             mind: mindContext(actor),
             continuation: setup.AIWorkingState.getContinuation(actorId),
+            recentDialogue: recentDialogueContext(actor, world),
             pendingObservations: preparedObservations
         });
     }
@@ -83,7 +97,10 @@
             },
             character: privateCharacter(actor, world),
             mind: mindContext(actor),
-            pendingObservations: Array.isArray(options.pendingObservations) ? clone(options.pendingObservations) : []
+            recentDialogue: recentDialogueContext(actor, world),
+            pendingObservations: Array.isArray(options.pendingObservations)
+                ? setup.EventPerception.projectObservationsForModel(actorId, options.pendingObservations, world)
+                : []
         });
     }
 

@@ -20,14 +20,26 @@ if errorlevel 1 exit /b 1
 
 "%NODE_EXE%" tests\run-tests.js
 if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-migration-tests.js
+if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-persistence-tests.js
+if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-editor-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-ui-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-ai-tests.js
 if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-quality-pass-tests.js
+if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-ai-liveness-tests.js
+if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-generator-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-narrator-tests.js
+if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-memory-consolidation-tests.js
+if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-night-timelapse-tests.js
 if errorlevel 1 exit /b 1
 endlocal

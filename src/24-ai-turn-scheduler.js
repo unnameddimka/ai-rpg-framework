@@ -22,9 +22,11 @@
     }
 
     function observationType(observation) {
-        return observation && observation.data && observation.data.type
-            ? observation.data.type
-            : (observation && observation.actionType) || (observation && observation.kind) || "observation";
+        return observation && observation.eventType
+            ? observation.eventType
+            : observation && observation.data && observation.data.type
+                ? observation.data.type
+                : (observation && observation.actionType) || (observation && observation.kind) || "observation";
     }
 
     function interactionIdOf(observation) {
@@ -80,13 +82,12 @@
                 actorId: actorId,
                 targetId: mechanicalTargetId || narrativeTargetId || null,
                 text: textParts.join(" "),
+                eventType: "combined_intent",
                 data: {
                     type: "combined_intent",
-                    interactionId: entry.interactionId,
                     formalActionTargetId: mechanicalTargetId,
                     spokenTargetId: narrativeTargetId,
-                    targetIds: Array.from(new Set([mechanicalTargetId, narrativeTargetId].filter(Boolean))),
-                    observations: clone(items)
+                    targetIds: Array.from(new Set([mechanicalTargetId, narrativeTargetId].filter(Boolean)))
                 }
             };
         });
@@ -142,7 +143,8 @@
             return { ok: false, error: { code: "AI_SCHEDULER_ENTRY_STALE", message: "The selected AI queue entry is no longer eligible." } };
         }
         const originalObservations = clone(actor.mind.pendingObservations.slice(0, 50));
-        const observations = combineInteractionObservations(originalObservations, world);
+        const projectedObservations = setup.EventPerception.projectObservationsForModel(actor.id, originalObservations, world);
+        const observations = combineInteractionObservations(projectedObservations, world);
         const context = setup.ContextBuilder.build(actor.id, { pendingObservations: observations });
         if (context && context.ok === false) return context;
         return {
@@ -287,12 +289,16 @@
 
     function automaticMemoryCandidates() {
         if (!setup.MemoryConsolidator) return [];
-        const threshold = setup.MemoryConsolidator.AUTO_THRESHOLD;
+        const recentThreshold = setup.MemoryConsolidator.AUTO_THRESHOLD;
+        const beliefThreshold = setup.MemoryConsolidator.BELIEF_MAINTENANCE_THRESHOLD;
+        const longTermThreshold = setup.MemoryConsolidator.LONG_TERM_MAINTENANCE_THRESHOLD;
         const world = setup.Game.getWorld();
         return Object.values(world.entities).filter(function (entity) {
-            return entity && entity.type === "character" && entity.mind &&
-                Array.isArray(entity.mind.recentMemories) &&
-                entity.mind.recentMemories.length >= threshold;
+            if (!entity || entity.type !== "character" || !entity.mind) return false;
+            const recentCount = Array.isArray(entity.mind.recentMemories) ? entity.mind.recentMemories.length : 0;
+            const beliefCount = Array.isArray(entity.mind.beliefs) ? entity.mind.beliefs.length : 0;
+            const longTermCount = Array.isArray(entity.mind.longTermMemories) ? entity.mind.longTermMemories.length : 0;
+            return recentCount >= recentThreshold || beliefCount >= beliefThreshold || longTermCount >= longTermThreshold;
         }).map(function (character) {
             return { characterId: character.id, characterName: character.name };
         });
@@ -322,7 +328,7 @@
                 report.compressedCharacterIds.push(candidate.characterId);
             } else if (!result.ok) {
                 report.warnings.push(
-                    `Memory consolidation failed for ${candidate.characterName}: ${result.error && result.error.message || "unknown error"}`
+                    `Mind maintenance failed for ${candidate.characterName}: ${result.error && result.error.message || "unknown error"}`
                 );
             }
         }
@@ -385,13 +391,23 @@
                 const result = await setup.AIController.takeQueuedTurn(next.entry.characterId, client || setup.OpenRouterClient);
                 results.push(clone(result));
                 if (!result.ok) {
+                    const remainingQueue = getQueueView();
+                    const error = clone(result.error);
+                    if (error && error.code === "RATE_LIMITED") {
+                        const remaining = remainingQueue.count;
+                        const retryAfterMs = Number.isFinite(error.retryAfterMs) ? error.retryAfterMs : null;
+                        const suffix = retryAfterMs === null
+                            ? ""
+                            : ` Retry after about ${Math.max(1, Math.ceil(retryAfterMs / 1000))} second(s).`;
+                        error.message = `OpenRouter rate limit reached. ${remaining} AI reaction(s) remain queued.${suffix}`;
+                    }
                     return {
                         ok: false,
-                        error: clone(result.error),
+                        error: error,
                         processedCount: reacted.size,
                         reactedCharacterIds: Array.from(reacted),
                         results: results,
-                        remainingQueue: getQueueView(),
+                        remainingQueue: remainingQueue,
                         memoryConsolidation: clone(memoryConsolidation)
                     };
                 }

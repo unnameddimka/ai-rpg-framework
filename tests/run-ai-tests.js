@@ -35,10 +35,11 @@ function queueHooded() {
     return world;
 }
 
-load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/10-game-api.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/08-mind-validators.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
-load("src/13-character-memory.js"); load("src/21-ai-settings.js");
+load("src/13-character-memory.js");
+load("src/14-event-perception.js"); load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
 load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-item-model-effects.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
 
@@ -168,7 +169,7 @@ async function main() {
     setup.AITurnScheduler.processAfterSubmit = originalProcessAfterSubmit;
     assert(failedHumanAttempt.ok && failedHumanAttempt.turnConsumed === true &&
         failedHumanAttempt.intentResult.actionResult && failedHumanAttempt.intentResult.actionResult.ok === false &&
-        failedHumanAttempt.intentResult.actionResult.error.code === "TRANSITION_BLOCKED" &&
+        failedHumanAttempt.intentResult.actionResult.error.code === "PASSAGE_LOCKED" &&
         failedHumanAttempt.intentResult.actionResult.error.message === "The door is locked." && automaticTickCalls === 1 &&
         setup.Game.getWorld().entities.player.locationId === "upstairsCorridor",
         "an authored blocked transition must consume the HumanController turn, preserve location, and start the AI world tick");
