@@ -181,7 +181,9 @@
         const executorStatus = setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus
             ? setup.AIRequestExecutor.getStatus()
             : { busy: false, activePurpose: null };
-        const executorBusy = Boolean(executorStatus && executorStatus.busy);
+        const executorBusy = Boolean(executorStatus && (executorStatus.blockingBusy !== undefined
+            ? executorStatus.blockingBusy
+            : executorStatus.busy));
         const waveBusy = Boolean(setup.AITurnScheduler && setup.AITurnScheduler.isWaveInFlight && setup.AITurnScheduler.isWaveInFlight());
         const migrationBusy = Boolean(setup.SaveMigration && setup.SaveMigration.isInFlight && setup.SaveMigration.isInFlight());
         const aiBusy = controllerBusy || executorBusy || waveBusy;

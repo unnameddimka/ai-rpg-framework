@@ -223,10 +223,11 @@ assert(uiSource.includes("framework-contextual-actions") && uiSource.includes('t
     !uiSource.includes("Back to location"),
     "normal location shortcuts should select shared turn state without immediate action execution or obsolete interaction panels");
 assert(uiSource.includes("framework-spinner") && uiSource.includes("AIRequestExecutor.getStatus") &&
-    uiSource.includes("AITurnScheduler.isWaveInFlight") && uiSource.includes('text: busy ? "Thinking..." : ""') &&
+    uiSource.includes("executorStatus.blockingBusy") && uiSource.includes("AITurnScheduler.isWaveInFlight") &&
+    uiSource.includes('text: busy ? "Thinking..." : ""') &&
     uiSource.includes('appendTextElement(row, "span", "Thinking...", "framework-busy-text")') &&
     !uiSource.includes("Narrator is writing…") && !uiSource.includes("is thinking…"),
-    "busy presentation should use one generic Thinking indicator regardless of which character or narrator request is active");
+    "busy presentation should use one generic Thinking indicator only for blocking canonical work, not optional narrator requests");
 assert(uiSource.includes('renderMigrationOverlay("Migrating save..."') &&
     uiSource.includes("setup.SaveMigration.migrate()") && uiSource.includes("yieldForMigrationPaint") &&
     uiSource.includes('"Save migration failed. Your original save was not changed."'),
@@ -396,6 +397,13 @@ context.State.variables.frameworkUI.turnBusy = true;
 historyOnLoad({ state: { index: 0, history: [{ variables: { frameworkUI: { history: savedHistoryFixture, turnBusy: true } } }] } });
 assert(!Object.prototype.hasOwnProperty.call(context.State.variables.frameworkUI, "turnBusy") && gameUIModel.busyState().busy === false,
     "loading a save with stale serialized turnBusy must initialize the UI unlocked when no live operation exists");
+context.setup.AIRequestExecutor = { getStatus: function () { return { busy: true, blockingBusy: false, activePurpose: "presentation-location" }; } };
+assert(gameUIModel.busyState().busy === false,
+    "an optional static narrator request started after save load must not lock the game or show Thinking");
+context.setup.AIRequestExecutor = { getStatus: function () { return { busy: true, blockingBusy: true, activePurpose: "game-decision" }; } };
+assert(gameUIModel.busyState().busy === true,
+    "a canonical executor request must still lock the game and show Thinking");
+delete context.setup.AIRequestExecutor;
 const restoredHistory = gameUIModel.getHistoryEntries();
 assert(restoredHistory.length === 100 && restoredHistory[0].text === "Entry 20" &&
     restoredHistory.some(function (entry) { return entry.visibleToHuman === false; }),

@@ -68,6 +68,33 @@ async function main() {
         bodyReadStarted && bodyTransportCalls === 1, "hard timeout should cover a body read that never completes");
     assert(idleStatus(), `all busy counters should return to idle after timeout: ${JSON.stringify(setup.AIRequestExecutor.getStatus())}`);
 
+    // Optional presentation work is diagnostically busy but must never count as blocking game work.
+    let releaseOptional;
+    const optionalHold = setup.AIRequestExecutor.executeCustom({
+        actorId: null, purpose: "presentation-location", stage: "location",
+        run: function () { return new Promise(function (resolve) { releaseOptional = resolve; }); }
+    });
+    await new Promise(function (resolve) { setImmediate(resolve); });
+    let optionalStatus = setup.AIRequestExecutor.getStatus();
+    assert(optionalStatus.busy === true && optionalStatus.blockingBusy === false &&
+        optionalStatus.blockingActiveExecutions === 0 && optionalStatus.blockingQueuedExecutions === 0,
+        `optional narrator execution must not become blocking busy: ${JSON.stringify(optionalStatus)}`);
+    releaseOptional({ ok: true, value: { fragments: ["fixture"] }, error: null });
+    await optionalHold;
+
+    let releaseCanonical;
+    const canonicalHold = setup.AIRequestExecutor.executeCustom({
+        actorId: "hoodedWoman", purpose: "game-decision", stage: "decision",
+        run: function () { return new Promise(function (resolve) { releaseCanonical = resolve; }); }
+    });
+    await new Promise(function (resolve) { setImmediate(resolve); });
+    const canonicalStatus = setup.AIRequestExecutor.getStatus();
+    assert(canonicalStatus.busy === true && canonicalStatus.blockingBusy === true && canonicalStatus.blockingActiveExecutions === 1,
+        `canonical execution must remain blocking busy: ${JSON.stringify(canonicalStatus)}`);
+    releaseCanonical({ ok: true, value: null, error: null });
+    await canonicalHold;
+    assert(idleStatus(), "busy classification fixtures must return executor state to idle");
+
     // A real OpenRouter 429 preserves Retry-After and sanitized diagnostics.
     const direct429 = await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "rate fixture" }], { timeoutMs: 1000 }, async function () {
         return response(429, { error: { message: "slow down" } }, { "Retry-After": "0.2" });

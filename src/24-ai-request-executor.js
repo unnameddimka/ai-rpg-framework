@@ -7,6 +7,8 @@
     let chain = Promise.resolve();
     let queuedExecutions = 0;
     let activeExecutions = 0;
+    let blockingQueuedExecutions = 0;
+    let blockingActiveExecutions = 0;
     let activeTransportCalls = 0;
     let activePurpose = null;
     let nextTransportAt = 0;
@@ -158,7 +160,9 @@
             recordExchange(spec || {}, skipped, now, now);
             return skipped;
         }
+        const blocking = !isOptionalPresentationPurpose(spec && spec.purpose);
         activeExecutions++;
+        if (blocking) blockingActiveExecutions++;
         activePurpose = activeExecutions > 1 ? "parallel" : (spec.purpose || "unspecified");
         const executionStartedAt = Date.now();
         let result;
@@ -206,6 +210,7 @@
                 recordExchange(spec, result, executionStartedAt, executionFinishedAt);
             }
             activeExecutions--;
+            if (blocking) blockingActiveExecutions--;
             if (activeExecutions === 0) activePurpose = null;
             else if (activeExecutions > 1) activePurpose = "parallel";
         }
@@ -213,9 +218,12 @@
 
     function enqueue(specification, operation) {
         const spec = specification || {};
+        const blocking = !isOptionalPresentationPurpose(spec.purpose);
         queuedExecutions++;
+        if (blocking) blockingQueuedExecutions++;
         const work = chain.catch(function () {}).then(async function () {
             queuedExecutions--;
+            if (blocking) blockingQueuedExecutions--;
             return runExecution(spec, operation);
         });
         chain = work.then(function () {}, function () {});
@@ -270,8 +278,11 @@
         const now = Date.now();
         return {
             busy: activeExecutions > 0 || queuedExecutions > 0,
+            blockingBusy: blockingActiveExecutions > 0 || blockingQueuedExecutions > 0,
             activeExecutions: activeExecutions,
             queuedExecutions: queuedExecutions,
+            blockingActiveExecutions: blockingActiveExecutions,
+            blockingQueuedExecutions: blockingQueuedExecutions,
             activeTransportCalls: activeTransportCalls,
             activePurpose: activePurpose,
             minIntervalMs: MIN_INTERVAL_MS,
