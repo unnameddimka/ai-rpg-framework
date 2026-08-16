@@ -28,7 +28,7 @@ function clone(value) { return value === undefined ? undefined : JSON.parse(JSON
 function assert(value, message) { if (!value) throw new Error(message); }
 function ok(result, message) { assert(result && result.ok, `${message}: ${JSON.stringify(result)}`); return result; }
 function known(character, factId) { return character.mind.knownFacts.some(function (fact) { return fact.id === factId; }); }
-function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [], relationshipsToUpsert: [] }; }
+function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] }; }
 
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
@@ -55,6 +55,8 @@ assert(!timelapseCoreSource.includes("The current mode is overnight") && !timela
 
 function fresh() {
     setup.Game.resetWorld();
+    // These tests exercise the original overnight cast explicitly; keep the newly authored blacksmith out of unrelated fixtures.
+    setup.Game.assignNonHumanController("blacksmith", "dummy");
     setup.AITurnQueue.repair();
     setup.AIRequestExecutor.clearExchangeHistory();
     return setup.Game.getWorld();

@@ -3,6 +3,7 @@
 
     const I = setup.GameInternals;
     const V = setup.MindValidators;
+    const MAINTENANCE_SNAPSHOT_LIMIT = 5;
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -20,6 +21,53 @@
         const world = setup.Game.getWorld();
         const actor = I.getCharacter(actorId, world);
         return { world: world, actor: actor };
+    }
+
+
+    function sanitizeMaintenanceSnapshots(records) {
+        const source = Array.isArray(records) ? records : [];
+        return source.filter(function (snapshot) {
+            return snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) &&
+                typeof snapshot.createdAt === "string" && snapshot.createdAt.trim() &&
+                Number.isInteger(snapshot.turn) && snapshot.turn >= 1 &&
+                ["manual", "automatic"].includes(snapshot.trigger) &&
+                snapshot.mind && typeof snapshot.mind === "object" && !Array.isArray(snapshot.mind);
+        }).slice(-MAINTENANCE_SNAPSHOT_LIMIT).map(function (snapshot) {
+            return {
+                createdAt: snapshot.createdAt,
+                turn: snapshot.turn,
+                trigger: snapshot.trigger,
+                mind: clone(snapshot.mind)
+            };
+        });
+    }
+
+    function sanitizeMindMaintenanceState(state) {
+        const source = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+        const cursor = source.reconciliationCursor && typeof source.reconciliationCursor === "object" && !Array.isArray(source.reconciliationCursor)
+            ? source.reconciliationCursor
+            : {};
+        const afterBeliefId = typeof cursor.afterBeliefId === "string" && V.ID_PATTERN.test(cursor.afterBeliefId)
+            ? cursor.afterBeliefId
+            : null;
+        return { reconciliationCursor: { afterBeliefId: afterBeliefId } };
+    }
+
+    function recordMaintenanceSnapshot(actorId, trigger) {
+        const pair = worldAndActor(actorId);
+        if (!pair.actor || !pair.actor.mind || typeof pair.actor.mind !== "object") {
+            return fail("MEMORY_SNAPSHOT_INVALID", "Character mind state is unavailable for a maintenance snapshot.");
+        }
+        const normalizedTrigger = trigger === "automatic" ? "automatic" : "manual";
+        const existing = sanitizeMaintenanceSnapshots(pair.actor.mindMaintenanceSnapshots);
+        existing.push({
+            createdAt: new Date().toISOString(),
+            turn: Number.isInteger(pair.world.nextEventId) && pair.world.nextEventId > 0 ? pair.world.nextEventId : 1,
+            trigger: normalizedTrigger,
+            mind: clone(pair.actor.mind)
+        });
+        pair.actor.mindMaintenanceSnapshots = existing.slice(-MAINTENANCE_SNAPSHOT_LIMIT);
+        return ok({ actorId: actorId, snapshotCount: pair.actor.mindMaintenanceSnapshots.length });
     }
 
     function setContinuation(actorId, continuation) {
@@ -53,9 +101,10 @@
         updates = updates || {};
         const memories = updates.recentMemoriesToAdd || [];
         const beliefs = updates.beliefsToUpsert || [];
+        const beliefRemovals = updates.beliefIdsToRemove || [];
         const relationships = updates.relationshipsToUpsert || [];
-        if (!Array.isArray(memories) || !Array.isArray(beliefs) || !Array.isArray(relationships) ||
-            memories.length > 5 || beliefs.length > 5 || relationships.length > 5) {
+        if (!Array.isArray(memories) || !Array.isArray(beliefs) || !Array.isArray(beliefRemovals) || !Array.isArray(relationships) ||
+            memories.length > 5 || beliefs.length > 5 || beliefRemovals.length > 5 || relationships.length > 5) {
             return fail("MEMORY_UPDATE_INVALID", "Memory updates exceed the allowed record limits.");
         }
         for (const memory of memories) {
@@ -72,6 +121,15 @@
                 return fail("MEMORY_UPDATE_INVALID", "A belief update is invalid.");
             }
         }
+        const beliefUpsertIds = new Set(beliefs.map(function (belief) { return belief && belief.id; }));
+        const seenBeliefRemovals = new Set();
+        for (const beliefId of beliefRemovals) {
+            if (typeof beliefId !== "string" || !V.ID_PATTERN.test(beliefId) || seenBeliefRemovals.has(beliefId) || beliefUpsertIds.has(beliefId) ||
+                    !actor.mind.beliefs.some(function (belief) { return belief.id === beliefId; })) {
+                return fail("MEMORY_UPDATE_INVALID", "A belief removal is invalid.");
+            }
+            seenBeliefRemovals.add(beliefId);
+        }
         for (const relationship of relationships) {
             if (!V.validateRelationshipRecord(relationship, actorId, world, { requireTargetExists: true, maxSummaryLength: 500 }).ok) {
                 return fail("MEMORY_UPDATE_INVALID", "A relationship update is invalid.");
@@ -82,6 +140,10 @@
             const existingMemoryIds = new Set(actor.mind.recentMemories.concat(actor.mind.longTermMemories).map(function (item) { return item.id; }));
             do { memoryId = `memory_ai_${world.nextMemoryId++}`; } while (existingMemoryIds.has(memoryId));
             actor.mind.recentMemories.push({ id: memoryId, summary: memory.summary.trim(), importance: memory.importance, protected: false });
+        }
+        if (beliefRemovals.length) {
+            const removeIds = new Set(beliefRemovals);
+            actor.mind.beliefs = actor.mind.beliefs.filter(function (belief) { return !removeIds.has(belief.id); });
         }
         for (const belief of beliefs) {
             const record = { id: belief.id, text: belief.text.trim(), confidence: belief.confidence };
@@ -96,62 +158,152 @@
         return ok();
     }
 
-    function prepareConsolidation(actorId, retainRecentCount) {
+    function sanitizeMaintenanceArchive(archive) {
+        const source = archive && typeof archive === "object" && !Array.isArray(archive) ? archive : {};
+        const memories = Array.isArray(source.memories) ? source.memories : [];
+        const beliefs = Array.isArray(source.beliefs) ? source.beliefs : [];
+        return {
+            memories: memories.filter(function (entry) {
+                return entry && typeof entry === "object" && !Array.isArray(entry) &&
+                    typeof entry.archivedAt === "string" && entry.archivedAt.trim() &&
+                    ["recentMemories", "longTermMemories"].includes(entry.sourcePartition) &&
+                    entry.record && V.validateMemoryRecord(entry.record, { maxSummaryLength: 2000 }).ok;
+            }).map(function (entry) {
+                return { archivedAt: entry.archivedAt, sourcePartition: entry.sourcePartition, record: clone(entry.record) };
+            }),
+            beliefs: beliefs.filter(function (entry) {
+                return entry && typeof entry === "object" && !Array.isArray(entry) &&
+                    typeof entry.archivedAt === "string" && entry.archivedAt.trim() &&
+                    entry.record && V.validateBeliefRecord(entry.record, { maxTextLength: 2000 }).ok;
+            }).map(function (entry) {
+                return { archivedAt: entry.archivedAt, record: clone(entry.record) };
+            })
+        };
+    }
+
+    function captureMaintenanceState(actorId) {
+        const pair = worldAndActor(actorId);
+        const actor = pair.actor;
+        if (!actor || !actor.mind) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        const archive = sanitizeMaintenanceArchive(actor.mind.maintenanceArchive);
+        const sourceMind = clone(actor.mind);
+        sourceMind.maintenanceArchive = clone(archive);
+        return ok({
+            actorId: actorId,
+            sourceState: {
+                recentMemories: clone(actor.mind.recentMemories || []),
+                longTermMemories: clone(actor.mind.longTermMemories || []),
+                beliefs: clone(actor.mind.beliefs || []),
+                maintenanceArchive: clone(archive),
+                mindMaintenanceState: sanitizeMindMaintenanceState(actor.mindMaintenanceState),
+                nextMemoryId: pair.world.nextMemoryId,
+                mindForSnapshot: sourceMind
+            },
+            candidateState: {
+                recentMemories: clone(actor.mind.recentMemories || []),
+                longTermMemories: clone(actor.mind.longTermMemories || []),
+                beliefs: clone(actor.mind.beliefs || []),
+                maintenanceArchive: clone(archive),
+                mindMaintenanceState: sanitizeMindMaintenanceState(actor.mindMaintenanceState),
+                nextMemoryId: pair.world.nextMemoryId
+            },
+            readOnlyContext: {
+                character: { id: actor.id, name: actor.name, aiDescription: typeof actor.aiDescription === "string" ? actor.aiDescription : "" },
+                knownFacts: clone(actor.mind.knownFacts || []),
+                relationships: clone(actor.mind.relationships || [])
+            }
+        });
+    }
+
+    function archiveMemory(candidateState, memory, sourcePartition, archivedAt) {
+        candidateState.maintenanceArchive = sanitizeMaintenanceArchive(candidateState.maintenanceArchive);
+        candidateState.maintenanceArchive.memories.push({
+            archivedAt: archivedAt || new Date().toISOString(),
+            sourcePartition: sourcePartition,
+            record: clone(memory)
+        });
+    }
+
+    function archiveBelief(candidateState, belief, archivedAt) {
+        candidateState.maintenanceArchive = sanitizeMaintenanceArchive(candidateState.maintenanceArchive);
+        candidateState.maintenanceArchive.beliefs.push({ archivedAt: archivedAt || new Date().toISOString(), record: clone(belief) });
+    }
+
+    function nextMaintenanceMemoryId(candidateState) {
+        const existing = new Set(candidateState.recentMemories.concat(candidateState.longTermMemories).map(function (memory) { return memory.id; }));
+        let memoryId;
+        do { memoryId = `memory_ai_${candidateState.nextMemoryId++}`; } while (existing.has(memoryId));
+        return memoryId;
+    }
+
+    function maintenanceMindChanged(sourceState, candidateState) {
+        return JSON.stringify(sourceState.recentMemories) !== JSON.stringify(candidateState.recentMemories) ||
+            JSON.stringify(sourceState.longTermMemories) !== JSON.stringify(candidateState.longTermMemories) ||
+            JSON.stringify(sourceState.beliefs) !== JSON.stringify(candidateState.beliefs) ||
+            JSON.stringify(sourceState.maintenanceArchive) !== JSON.stringify(candidateState.maintenanceArchive) ||
+            sourceState.nextMemoryId !== candidateState.nextMemoryId;
+    }
+
+    function maintenanceOperationalStateChanged(sourceState, candidateState) {
+        return JSON.stringify(sanitizeMindMaintenanceState(sourceState.mindMaintenanceState)) !==
+            JSON.stringify(sanitizeMindMaintenanceState(candidateState.mindMaintenanceState));
+    }
+
+    function commitMaintenanceCandidate(actorId, sourceState, candidateState, trigger) {
         const pair = worldAndActor(actorId);
         const actor = pair.actor;
         if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
-        const retainCount = Number.isInteger(retainRecentCount) && retainRecentCount >= 0 ? retainRecentCount : 10;
-        if (!actor.mind || !Array.isArray(actor.mind.recentMemories) || !Array.isArray(actor.mind.longTermMemories) ||
-                !Array.isArray(actor.mind.beliefs) || !Array.isArray(actor.mind.relationships)) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Character mind state is invalid.");
+        if (!sourceState || !candidateState) return fail("MEMORY_CONSOLIDATION_INVALID", "Mind maintenance state is invalid.");
+        const currentArchive = sanitizeMaintenanceArchive(actor.mind.maintenanceArchive);
+        const currentMaintenanceState = sanitizeMindMaintenanceState(actor.mindMaintenanceState);
+        if (JSON.stringify(actor.mind.recentMemories) !== JSON.stringify(sourceState.recentMemories) ||
+                JSON.stringify(actor.mind.longTermMemories) !== JSON.stringify(sourceState.longTermMemories) ||
+                JSON.stringify(actor.mind.beliefs) !== JSON.stringify(sourceState.beliefs) ||
+                JSON.stringify(currentArchive) !== JSON.stringify(sourceState.maintenanceArchive) ||
+                JSON.stringify(currentMaintenanceState) !== JSON.stringify(sanitizeMindMaintenanceState(sourceState.mindMaintenanceState)) ||
+                pair.world.nextMemoryId !== sourceState.nextMemoryId) {
+            return fail("MEMORY_CONSOLIDATION_STALE", "Character mind changed while maintenance was in progress; the result was not applied.");
         }
-        const recentMemories = clone(actor.mind.recentMemories);
-        const longTermMemories = clone(actor.mind.longTermMemories);
-        const beliefs = clone(actor.mind.beliefs);
-        const splitIndex = Math.max(0, recentMemories.length - retainCount);
-        const memoriesToConsolidate = recentMemories.slice(0, splitIndex);
-        const retainedRecentMemories = recentMemories.slice(splitIndex);
-        const beliefMaintenanceEligible = beliefs.length >= 60;
-        const longTermMaintenanceEligible = longTermMemories.length >= 30;
-        const summary = {
-            consolidatedRecentCount: memoriesToConsolidate.length,
-            retainedRecentCount: retainedRecentMemories.length,
-            existingLongTermCount: longTermMemories.length,
-            existingBeliefCount: beliefs.length,
-            beliefMaintenanceEligible: beliefMaintenanceEligible,
-            longTermMaintenanceEligible: longTermMaintenanceEligible
-        };
-        const nothingToMaintain = memoriesToConsolidate.length === 0 && !beliefMaintenanceEligible && !longTermMaintenanceEligible;
-        if (nothingToMaintain) {
-            return ok({ actorId: actorId, nothingToCompress: true, nothingToMaintain: true, summary: summary });
+        const mindChanged = maintenanceMindChanged(sourceState, candidateState);
+        const operationalChanged = maintenanceOperationalStateChanged(sourceState, candidateState);
+        if (!mindChanged && !operationalChanged) {
+            return ok({ actorId: actorId, committed: false, changed: false, cursorChanged: false, snapshotCount: sanitizeMaintenanceSnapshots(actor.mindMaintenanceSnapshots).length });
         }
+
+        const candidateWorld = clone(pair.world);
+        const candidateActor = I.getCharacter(actorId, candidateWorld);
+        candidateActor.mind.recentMemories = clone(candidateState.recentMemories);
+        candidateActor.mind.longTermMemories = clone(candidateState.longTermMemories);
+        candidateActor.mind.beliefs = clone(candidateState.beliefs);
+        candidateActor.mind.maintenanceArchive = sanitizeMaintenanceArchive(candidateState.maintenanceArchive);
+        candidateActor.mindMaintenanceState = sanitizeMindMaintenanceState(candidateState.mindMaintenanceState);
+        candidateWorld.nextMemoryId = candidateState.nextMemoryId;
+
+        const snapshots = sanitizeMaintenanceSnapshots(candidateActor.mindMaintenanceSnapshots);
+        if (mindChanged) {
+            snapshots.push({
+                createdAt: new Date().toISOString(),
+                turn: Number.isInteger(candidateWorld.nextEventId) && candidateWorld.nextEventId > 0 ? candidateWorld.nextEventId : 1,
+                trigger: trigger === "automatic" ? "automatic" : "manual",
+                mind: clone(sourceState.mindForSnapshot)
+            });
+        }
+        candidateActor.mindMaintenanceSnapshots = snapshots.slice(-MAINTENANCE_SNAPSHOT_LIMIT);
+
+        const validation = I.validateWorld(candidateWorld);
+        if (!validation.ok) return validation;
+        State.variables.world = candidateWorld;
         return ok({
             actorId: actorId,
-            nothingToCompress: false,
-            nothingToMaintain: false,
-            summary: summary,
-            context: {
-                character: { id: actor.id, name: actor.name, aiDescription: typeof actor.aiDescription === "string" ? actor.aiDescription : "" },
-                mindContext: {
-                    knownFacts: clone(actor.mind.knownFacts || []),
-                    beliefs: beliefs,
-                    relationships: clone(actor.mind.relationships || [])
-                },
-                existingLongTermMemories: longTermMemories,
-                memoriesToConsolidate: memoriesToConsolidate,
-                maintenanceEligibility: {
-                    recentMemoryConsolidation: memoriesToConsolidate.length > 0,
-                    beliefs: beliefMaintenanceEligible,
-                    longTermMemories: longTermMaintenanceEligible
-                }
-            },
-            sourceState: {
-                recentMemories: recentMemories,
-                longTermMemories: longTermMemories,
-                beliefs: beliefs,
-                memoriesToConsolidate: memoriesToConsolidate,
-                retainedRecentMemories: retainedRecentMemories
-            }
+            committed: true,
+            changed: mindChanged,
+            cursorChanged: operationalChanged,
+            snapshotCount: candidateActor.mindMaintenanceSnapshots.length,
+            recentMemories: candidateActor.mind.recentMemories.length,
+            longTermMemories: candidateActor.mind.longTermMemories.length,
+            beliefs: candidateActor.mind.beliefs.length,
+            archivedMemories: candidateActor.mind.maintenanceArchive.memories.length,
+            archivedBeliefs: candidateActor.mind.maintenanceArchive.beliefs.length
         });
     }
 
@@ -161,161 +313,10 @@
         return actual.length === keys.length && actual.every(function (key) { return keys.includes(key); });
     }
 
-    function validateConsolidationChanges(actor, changes) {
-        if (!changes || typeof changes !== "object" || Array.isArray(changes)) return fail("MEMORY_CONSOLIDATION_INVALID", "Mind maintenance result must be an object.");
-        const allowedTopKeys = [
-            "longTermMemoriesToUpsert",
-            "longTermMemoriesToAdd",
-            "longTermMemoryIdsToRemove",
-            "beliefsToUpsert",
-            "beliefIdsToRemove"
-        ];
-        const topKeys = Object.keys(changes);
-        if (topKeys.length !== allowedTopKeys.length || topKeys.some(function (key) { return !allowedTopKeys.includes(key); })) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Mind maintenance result has invalid fields.");
-        }
-        const upserts = changes.longTermMemoriesToUpsert;
-        const additions = changes.longTermMemoriesToAdd;
-        const memoryRemovals = changes.longTermMemoryIdsToRemove;
-        const beliefUpserts = changes.beliefsToUpsert;
-        const beliefRemovals = changes.beliefIdsToRemove;
-        if (![upserts, additions, memoryRemovals, beliefUpserts, beliefRemovals].every(Array.isArray)) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Mind maintenance updates must be arrays.");
-        }
-        if (upserts.length > 50 || additions.length > 50 || memoryRemovals.length > 100 || beliefUpserts.length > 100 || beliefRemovals.length > 200) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Mind maintenance update count is unreasonably large.");
-        }
-
-        const existingLongTerm = new Map((actor.mind.longTermMemories || []).map(function (memory) { return [memory.id, memory]; }));
-        const existingBeliefs = new Map((actor.mind.beliefs || []).map(function (belief) { return [belief.id, belief]; }));
-        const seenUpserts = new Set();
-        const seenMemoryRemovals = new Set();
-        const seenBeliefUpserts = new Set();
-        const seenBeliefRemovals = new Set();
-
-        for (const record of upserts) {
-            const existing = record && existingLongTerm.get(record.id);
-            const validationRecord = existing ? {
-                id: record.id,
-                summary: record.summary,
-                importance: record.importance,
-                protected: Boolean(existing.protected)
-            } : null;
-            if (!exactKeys(record, ["id", "summary", "importance"]) || !existing || seenUpserts.has(record.id) ||
-                    !V.validateMemoryRecord(validationRecord, { maxSummaryLength: 2000 }).ok) {
-                return fail("MEMORY_CONSOLIDATION_INVALID", "A long-term memory upsert is invalid.");
-            }
-            seenUpserts.add(record.id);
-        }
-        for (const record of additions) {
-            const validationRecord = record && {
-                id: "memory_ai_validation",
-                summary: record.summary,
-                importance: record.importance,
-                protected: false
-            };
-            if (!exactKeys(record, ["summary", "importance"]) || !V.validateMemoryRecord(validationRecord, { maxSummaryLength: 2000 }).ok) {
-                return fail("MEMORY_CONSOLIDATION_INVALID", "A new long-term memory is invalid.");
-            }
-        }
-        for (const id of memoryRemovals) {
-            const existing = existingLongTerm.get(id);
-            if (typeof id !== "string" || !existing || seenMemoryRemovals.has(id) || seenUpserts.has(id)) {
-                return fail("MEMORY_CONSOLIDATION_INVALID", "A long-term memory removal is invalid.");
-            }
-            if (existing.protected) return fail("MEMORY_CONSOLIDATION_PROTECTED", `Protected long-term memory ${id} cannot be removed.`);
-            seenMemoryRemovals.add(id);
-        }
-        for (const record of beliefUpserts) {
-            if (!exactKeys(record, ["id", "text", "confidence"]) || seenBeliefUpserts.has(record && record.id) ||
-                    !V.validateBeliefRecord(record, { maxTextLength: 2000 }).ok) {
-                return fail("MEMORY_CONSOLIDATION_INVALID", "A belief upsert is invalid.");
-            }
-            seenBeliefUpserts.add(record.id);
-        }
-        for (const id of beliefRemovals) {
-            if (typeof id !== "string" || !existingBeliefs.has(id) || seenBeliefRemovals.has(id) || seenBeliefUpserts.has(id)) {
-                return fail("MEMORY_CONSOLIDATION_INVALID", "A belief removal is invalid.");
-            }
-            seenBeliefRemovals.add(id);
-        }
-        return ok();
-    }
-
-    function commitConsolidation(actorId, sourceState, changes) {
-        const pair = worldAndActor(actorId);
-        const world = pair.world;
-        const actor = pair.actor;
-        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
-        if (!sourceState || typeof sourceState !== "object" || !Array.isArray(sourceState.recentMemories) ||
-                !Array.isArray(sourceState.longTermMemories) || !Array.isArray(sourceState.beliefs) ||
-                !Array.isArray(sourceState.memoriesToConsolidate) || !Array.isArray(sourceState.retainedRecentMemories)) {
-            return fail("MEMORY_CONSOLIDATION_INVALID", "Mind maintenance source snapshot is invalid.");
-        }
-        if (JSON.stringify(actor.mind.recentMemories) !== JSON.stringify(sourceState.recentMemories) ||
-                JSON.stringify(actor.mind.longTermMemories) !== JSON.stringify(sourceState.longTermMemories) ||
-                JSON.stringify(actor.mind.beliefs) !== JSON.stringify(sourceState.beliefs)) {
-            return fail("MEMORY_CONSOLIDATION_STALE", "Character mind changed while maintenance was in progress; the result was not applied.");
-        }
-        const changeValidation = validateConsolidationChanges(actor, changes);
-        if (!changeValidation.ok) return changeValidation;
-
-        const candidate = clone(world);
-        const candidateActor = I.getCharacter(actorId, candidate);
-        const existingMemoryIds = new Set(candidateActor.mind.recentMemories.concat(candidateActor.mind.longTermMemories).map(function (memory) { return memory.id; }));
-        const removeMemoryIds = new Set(changes.longTermMemoryIdsToRemove);
-        candidateActor.mind.longTermMemories = candidateActor.mind.longTermMemories.filter(function (memory) {
-            return !removeMemoryIds.has(memory.id);
-        });
-        const longTermById = new Map();
-        candidateActor.mind.longTermMemories.forEach(function (memory, index) { longTermById.set(memory.id, index); });
-        changes.longTermMemoriesToUpsert.forEach(function (record) {
-            const index = longTermById.get(record.id);
-            candidateActor.mind.longTermMemories[index] = Object.assign({}, candidateActor.mind.longTermMemories[index], {
-                summary: record.summary.trim(),
-                importance: record.importance
-            });
-        });
-        const generatedMemoryIds = [];
-        changes.longTermMemoriesToAdd.forEach(function (record) {
-            let memoryId;
-            do { memoryId = `memory_ai_${candidate.nextMemoryId++}`; } while (existingMemoryIds.has(memoryId));
-            existingMemoryIds.add(memoryId);
-            generatedMemoryIds.push(memoryId);
-            candidateActor.mind.longTermMemories.push({ id: memoryId, summary: record.summary.trim(), importance: record.importance, protected: false });
-        });
-
-        const removeBeliefIds = new Set(changes.beliefIdsToRemove);
-        candidateActor.mind.beliefs = candidateActor.mind.beliefs.filter(function (belief) { return !removeBeliefIds.has(belief.id); });
-        changes.beliefsToUpsert.forEach(function (record) {
-            const normalized = { id: record.id, text: record.text.trim(), confidence: record.confidence };
-            const index = candidateActor.mind.beliefs.findIndex(function (belief) { return belief.id === record.id; });
-            if (index < 0) candidateActor.mind.beliefs.push(normalized);
-            else candidateActor.mind.beliefs[index] = normalized;
-        });
-
-        candidateActor.mind.recentMemories = clone(sourceState.retainedRecentMemories);
-        const validation = I.validateWorld(candidate);
-        if (!validation.ok) return validation;
-        State.variables.world = candidate;
-        return ok({
-            actorId: actorId,
-            consolidatedRecentCount: sourceState.memoriesToConsolidate.length,
-            retainedRecentCount: sourceState.retainedRecentMemories.length,
-            longTermMemoriesUpserted: changes.longTermMemoriesToUpsert.length,
-            longTermMemoriesAdded: changes.longTermMemoriesToAdd.length,
-            longTermMemoriesRemoved: changes.longTermMemoryIdsToRemove.length,
-            beliefsUpserted: changes.beliefsToUpsert.length,
-            beliefsRemoved: changes.beliefIdsToRemove.length,
-            generatedMemoryIds: generatedMemoryIds,
-            totalLongTermMemories: candidateActor.mind.longTermMemories.length,
-            totalBeliefs: candidateActor.mind.beliefs.length
-        });
-    }
-
     const PORTABLE_MIND_SCHEMA = "ai-rpg.character-mind";
-    const PORTABLE_MIND_VERSION = 1;
-    const PORTABLE_MIND_PARTITIONS = ["beliefs", "relationships", "recentMemories", "longTermMemories"];
+    const PORTABLE_MIND_VERSION = 2;
+    const PORTABLE_MIND_PARTITIONS_V1 = ["beliefs", "relationships", "recentMemories", "longTermMemories"];
+    const PORTABLE_MIND_PARTITIONS_V2 = ["beliefs", "relationships", "recentMemories", "longTermMemories", "maintenanceArchive"];
 
     function validPortableText(value, maximumLength) {
         return typeof value === "string" && value.trim().length > 0 && value.trim().length <= maximumLength;
@@ -325,7 +326,7 @@
         if (!exactKeys(document, ["schema", "version", "exportedAt", "characterId", "characterName", "mind"])) {
             return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind file has invalid top-level fields.");
         }
-        if (document.schema !== PORTABLE_MIND_SCHEMA || document.version !== PORTABLE_MIND_VERSION) {
+        if (document.schema !== PORTABLE_MIND_SCHEMA || ![1, PORTABLE_MIND_VERSION].includes(document.version)) {
             return fail("CHARACTER_MIND_IMPORT_UNSUPPORTED", "Character mind file uses an unsupported schema or version.");
         }
         if (typeof document.exportedAt !== "string" || !document.exportedAt.trim() ||
@@ -334,29 +335,22 @@
             return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind file metadata is invalid.");
         }
         if (targetActorId && document.characterId !== targetActorId) {
-            return fail(
-                "CHARACTER_MIND_ID_MISMATCH",
-                `This mind belongs to ${document.characterName} (${document.characterId}), not the selected character (${targetActorId}).`
-            );
+            return fail("CHARACTER_MIND_ID_MISMATCH", `This mind belongs to ${document.characterName} (${document.characterId}), not the selected character (${targetActorId}).`);
         }
-        if (!exactKeys(document.mind, PORTABLE_MIND_PARTITIONS)) {
-            return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind file has invalid mind partitions.");
-        }
-        for (const partition of PORTABLE_MIND_PARTITIONS) {
+        const expected = document.version === 1 ? PORTABLE_MIND_PARTITIONS_V1 : PORTABLE_MIND_PARTITIONS_V2;
+        if (!exactKeys(document.mind, expected)) return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind file has invalid mind partitions.");
+        for (const partition of PORTABLE_MIND_PARTITIONS_V1) {
             if (!Array.isArray(document.mind[partition]) || document.mind[partition].length > 5000) {
                 return fail("CHARACTER_MIND_IMPORT_INVALID", `Character mind ${partition} is invalid or too large.`);
             }
         }
-
         const beliefIds = new Set();
         for (const belief of document.mind.beliefs) {
-            if (!exactKeys(belief, ["id", "text", "confidence"]) || beliefIds.has(belief.id) ||
-                    !V.validateBeliefRecord(belief, { maxTextLength: 500 }).ok) {
+            if (!exactKeys(belief, ["id", "text", "confidence"]) || beliefIds.has(belief.id) || !V.validateBeliefRecord(belief, { maxTextLength: 500 }).ok) {
                 return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind contains an invalid or duplicate belief.");
             }
             beliefIds.add(belief.id);
         }
-
         const relationshipTargets = new Set();
         for (const relationship of document.mind.relationships) {
             if (!exactKeys(relationship, ["targetCharacterId", "summary"]) || relationshipTargets.has(relationship.targetCharacterId) ||
@@ -365,7 +359,6 @@
             }
             relationshipTargets.add(relationship.targetCharacterId);
         }
-
         const memoryIds = new Set();
         for (const partition of ["recentMemories", "longTermMemories"]) {
             for (const memory of document.mind[partition]) {
@@ -374,6 +367,12 @@
                     return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind contains an invalid or duplicate memory.");
                 }
                 memoryIds.add(memory.id);
+            }
+        }
+        if (document.version === 2) {
+            const sanitized = sanitizeMaintenanceArchive(document.mind.maintenanceArchive);
+            if (JSON.stringify(sanitized) !== JSON.stringify(document.mind.maintenanceArchive)) {
+                return fail("CHARACTER_MIND_IMPORT_INVALID", "Character mind contains an invalid maintenance archive.");
             }
         }
         return ok();
@@ -397,7 +396,8 @@
                 beliefs: clone(pair.actor.mind.beliefs || []),
                 relationships: clone(pair.actor.mind.relationships || []),
                 recentMemories: clone(pair.actor.mind.recentMemories || []),
-                longTermMemories: clone(pair.actor.mind.longTermMemories || [])
+                longTermMemories: clone(pair.actor.mind.longTermMemories || []),
+                maintenanceArchive: sanitizeMaintenanceArchive(pair.actor.mind.maintenanceArchive)
             }
         };
         const validation = validatePortableMindDocument(document, actorId);
@@ -418,6 +418,11 @@
                     const match = /^memory_ai_(\d+)$/.exec(memory && memory.id || "");
                     if (match) maximum = Math.max(maximum, Number(match[1]) || 0);
                 });
+            });
+            const archive = sanitizeMaintenanceArchive(character.mind && character.mind.maintenanceArchive);
+            archive.memories.forEach(function (entry) {
+                const match = /^memory_ai_(\d+)$/.exec(entry.record && entry.record.id || "");
+                if (match) maximum = Math.max(maximum, Number(match[1]) || 0);
             });
         });
         world.nextMemoryId = Math.max(Number.isInteger(world.nextMemoryId) ? world.nextMemoryId : 1, maximum + 1);
@@ -444,6 +449,8 @@
         candidateActor.mind.relationships = clone(document.mind.relationships);
         candidateActor.mind.recentMemories = clone(document.mind.recentMemories);
         candidateActor.mind.longTermMemories = clone(document.mind.longTermMemories);
+        candidateActor.mind.maintenanceArchive = document.version === 2 ? sanitizeMaintenanceArchive(document.mind.maintenanceArchive) : { memories: [], beliefs: [] };
+        candidateActor.mindMaintenanceState = { reconciliationCursor: { afterBeliefId: null } };
         if (candidate.ai && candidate.ai.continuations) delete candidate.ai.continuations[actorId];
         normalizeNextMemoryId(candidate);
         const worldValidation = I.validateWorld(candidate);
@@ -459,6 +466,8 @@
             relationships: candidateActor.mind.relationships.length,
             recentMemories: candidateActor.mind.recentMemories.length,
             longTermMemories: candidateActor.mind.longTermMemories.length,
+            archivedMemories: candidateActor.mind.maintenanceArchive.memories.length,
+            archivedBeliefs: candidateActor.mind.maintenanceArchive.beliefs.length,
             nextMemoryId: candidate.nextMemoryId
         });
     }
@@ -476,10 +485,18 @@
     }
 
     setup.AIMemory = {
+        MAINTENANCE_SNAPSHOT_LIMIT: MAINTENANCE_SNAPSHOT_LIMIT,
         applyUpdates: applyUpdates,
         consumeObservations: consumeObservations,
-        prepareConsolidation: prepareConsolidation,
-        commitConsolidation: commitConsolidation
+        sanitizeMaintenanceSnapshots: sanitizeMaintenanceSnapshots,
+        sanitizeMaintenanceArchive: sanitizeMaintenanceArchive,
+        sanitizeMindMaintenanceState: sanitizeMindMaintenanceState,
+        recordMaintenanceSnapshot: recordMaintenanceSnapshot,
+        captureMaintenanceState: captureMaintenanceState,
+        archiveMemory: archiveMemory,
+        archiveBelief: archiveBelief,
+        nextMaintenanceMemoryId: nextMaintenanceMemoryId,
+        commitMaintenanceCandidate: commitMaintenanceCandidate
     };
 
     setup.CharacterMindTransfer = {

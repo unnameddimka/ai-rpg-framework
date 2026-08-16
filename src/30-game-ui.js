@@ -1449,7 +1449,18 @@
                 <div id="ai-turn-status" class="framework-status">${escapeHtml(setup.AITransientDebug.lastSafeError || "")}</div>
                 <div id="ai-usage-status" class="framework-status">${usageText}</div>
             </div>
+            <div class="framework-sidebar-block framework-emergency-block">
+                <button id="emergency-dump-button" type="button">Emergency dump</button>
+            </div>
         `;
+
+        $("#emergency-dump-button").on("click", function () {
+            const result = setup.EmergencyDiagnostics && setup.EmergencyDiagnostics.download
+                ? setup.EmergencyDiagnostics.download()
+                : { ok: false, error: { message: "Emergency diagnostics are unavailable." } };
+            const status = document.getElementById("sidebar-status");
+            if (status) status.textContent = result.ok ? `Emergency dump downloaded: ${result.filename}` : (result.error && result.error.message || "Emergency dump failed.");
+        });
 
         $("#take-control-button").on("click", function () {
             const targetId = $("#human-character-select").val();

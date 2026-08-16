@@ -36,6 +36,7 @@ load("src/24-item-model-effects.js");
 load("src/24-ai-turn-scheduler.js");
 load("src/20-controllers.js");
 load("src/15-ai-admin.js");
+load("src/16-emergency-diagnostics.js");
 load("src/24-memory-consolidator.js");
 
 function fresh() {
@@ -109,6 +110,20 @@ async function main() {
     assert(world.entities.player.recentDialogue.slice(-1)[0].text === "Hello there" && world.entities.hoodedWoman.recentDialogue.slice(-1)[0].text === "Hello there" &&
         world.entities.captainPrice.recentDialogue.slice(-1)[0].text === "Hello there",
         "speaker and perceivers should receive only spoken text in recent dialogue");
+
+    // Regression: the real HumanController submitIntent path must not suppress parsed speech by forwarding spokenText: undefined.
+    world.entities.player.recentDialogue = [];
+    world.entities.hoodedWoman.recentDialogue = [];
+    world.entities.captainPrice.recentDialogue = [];
+    ok(setup.CharacterAPI.submitIntent("player", { text: "Traveler A", target_id: "hoodedWoman", noticeability: "hidden", action: null }),
+        "human submitIntent dialogue A");
+    ok(setup.CharacterAPI.submitIntent("hoodedWoman", { text: "Mara B", target_id: "player", noticeability: "hidden", action: null }),
+        "Mara submitIntent dialogue B");
+    ok(setup.CharacterAPI.submitIntent("player", { text: "Traveler C", target_id: "hoodedWoman", noticeability: "hidden", action: null }),
+        "human submitIntent dialogue C");
+    assert(world.entities.hoodedWoman.recentDialogue.map(function (entry) { return `${entry.speakerId}:${entry.text}`; }).join("|") ===
+        "player:Traveler A|hoodedWoman:Mara B|player:Traveler C",
+        "Mara rolling dialogue must interleave delivered HumanController speech with her own speech on the real submitIntent path");
     const beforeNarrativeOnly = world.entities.hoodedWoman.recentDialogue.length;
     ok(setup.CharacterAPI.narrate("player", { text: "*waves*", target_id: "hoodedWoman", noticeability: "noticeable" }), "narrative-only input");
     assert(world.entities.hoodedWoman.recentDialogue.length === beforeNarrativeOnly, "public behavior without speech must not become dialogue");
@@ -141,6 +156,8 @@ async function main() {
     const exportResult = ok(setup.CharacterMindTransfer.exportMind("hoodedWoman"), "export portable mind");
     assert(!Object.prototype.hasOwnProperty.call(exportResult.document.mind, "recentDialogue") && !Object.prototype.hasOwnProperty.call(exportResult.document, "recentDialogue"),
         "portable mind export must exclude transient dialogue context");
+    assert(!JSON.stringify(exportResult.document).includes("mindMaintenanceSnapshots"),
+        "portable mind export must exclude world-local maintenance rollback snapshots");
     world = setup.Game.getWorld();
     world.entities.hoodedWoman.recentDialogue = [{ speakerId: "player", text: "world-local sentinel", turn: 999, interactionId: 999 }];
     ok(setup.CharacterMindTransfer.importMind("hoodedWoman", exportResult.document), "reimport portable mind");
@@ -218,58 +235,27 @@ async function main() {
     releaseBusy({ ok: true, value: null, error: null });
     await busyPromise;
 
-    // Mind maintenance may run without recent compression, can clean beliefs, and protects authored facts/protected memories.
+    // Safe maintenance archive is persistent state but is excluded from ordinary dialogue/context and rollback snapshots stay world-local.
     world = fresh();
     const mara = world.entities.hoodedWoman;
-    mara.mind.recentMemories = [];
-    mara.mind.beliefs = Array.from({ length: 60 }, function (_, index) {
-        return { id: `belief_${index}`, text: `Belief ${index}`, confidence: "medium" };
-    });
-    const knownFactsBefore = clone(mara.mind.knownFacts);
-    let plan = ok(setup.AIMemory.prepareConsolidation("hoodedWoman", 10), "prepare belief-only maintenance");
-    assert(!plan.nothingToMaintain && plan.summary.consolidatedRecentCount === 0 && plan.summary.beliefMaintenanceEligible,
-        "belief threshold should make maintenance eligible without recent-memory compression");
-    ok(setup.AIMemory.commitConsolidation("hoodedWoman", plan.sourceState, {
-        longTermMemoriesToUpsert: [], longTermMemoriesToAdd: [], longTermMemoryIdsToRemove: [],
-        beliefsToUpsert: [
-            { id: "belief_1", text: "Belief one has evolved.", confidence: "high" },
-            { id: "belief_new", text: "A useful consolidated belief.", confidence: "low" }
-        ],
-        beliefIdsToRemove: ["belief_0"]
-    }), "commit belief cleanup");
-    world = setup.Game.getWorld();
-    assert(!world.entities.hoodedWoman.mind.beliefs.some(b => b.id === "belief_0") &&
-        world.entities.hoodedWoman.mind.beliefs.find(b => b.id === "belief_1").confidence === "high" &&
-        world.entities.hoodedWoman.mind.beliefs.some(b => b.id === "belief_new") &&
-        JSON.stringify(world.entities.hoodedWoman.mind.knownFacts) === JSON.stringify(knownFactsBefore),
-        "belief maintenance should be transactional and must never rewrite knownFacts");
-
-    world.entities.hoodedWoman.mind.longTermMemories = Array.from({ length: 30 }, function (_, index) {
-        return { id: `ltm_${index}`, summary: `Long-term topic ${index}`, importance: 0.5, protected: index === 29 };
-    });
-    plan = ok(setup.AIMemory.prepareConsolidation("hoodedWoman", 10), "prepare long-term maintenance");
-    ok(setup.AIMemory.commitConsolidation("hoodedWoman", plan.sourceState, {
-        longTermMemoriesToUpsert: [{ id: "ltm_0", summary: "Merged durable topic zero and one.", importance: 0.8 }],
-        longTermMemoriesToAdd: [], longTermMemoryIdsToRemove: ["ltm_1"], beliefsToUpsert: [], beliefIdsToRemove: []
-    }), "merge redundant long-term memory");
-    assert(!setup.Game.getWorld().entities.hoodedWoman.mind.longTermMemories.some(m => m.id === "ltm_1"), "long-term maintenance should support merge/removal");
-    plan = ok(setup.AIMemory.prepareConsolidation("hoodedWoman", 10), "prepare protected removal rejection");
-    const protectedBefore = clone(setup.Game.getWorld().entities.hoodedWoman.mind);
-    const protectedAttempt = setup.AIMemory.commitConsolidation("hoodedWoman", plan.sourceState, {
-        longTermMemoriesToUpsert: [], longTermMemoriesToAdd: [], longTermMemoryIdsToRemove: ["ltm_29"], beliefsToUpsert: [], beliefIdsToRemove: []
-    });
-    assert(!protectedAttempt.ok && protectedAttempt.error.code === "MEMORY_CONSOLIDATION_PROTECTED" &&
-        JSON.stringify(setup.Game.getWorld().entities.hoodedWoman.mind) === JSON.stringify(protectedBefore),
-        "protected long-term memory removal must be rejected atomically");
-    const invalidRemove = setup.AIMemory.commitConsolidation("hoodedWoman", plan.sourceState, {
-        longTermMemoriesToUpsert: [], longTermMemoriesToAdd: [], longTermMemoryIdsToRemove: ["missing_memory"], beliefsToUpsert: [], beliefIdsToRemove: []
-    });
-    assert(!invalidRemove.ok, "nonexistent long-term remove IDs must be rejected");
-    const conflicting = setup.AIMemory.commitConsolidation("hoodedWoman", plan.sourceState, {
-        longTermMemoriesToUpsert: [{ id: "ltm_0", summary: "conflict", importance: 0.5 }], longTermMemoriesToAdd: [],
-        longTermMemoryIdsToRemove: ["ltm_0"], beliefsToUpsert: [], beliefIdsToRemove: []
-    });
-    assert(!conflicting.ok, "same memory ID cannot be removed and upserted in one transaction");
+    mara.mind.maintenanceArchive = {
+        memories: [{ archivedAt: "2026-08-15T00:00:00.000Z", sourcePartition: "recentMemories", record: { id: "archived_memory", summary: "Archived durable source.", importance: 0.5, protected: false } }],
+        beliefs: [{ archivedAt: "2026-08-15T00:00:00.000Z", record: { id: "archived_belief", text: "Old understanding.", confidence: "low" } }]
+    };
+    const archiveContext = setup.ContextBuilder.build("hoodedWoman");
+    assert(!JSON.stringify(archiveContext).includes("archived_memory") && !JSON.stringify(archiveContext).includes("archived_belief"),
+        "maintenance archive must stay outside ordinary model context");
+    const archiveExport = ok(setup.CharacterMindTransfer.exportMind("hoodedWoman"), "export mind with archive");
+    assert(archiveExport.document.version === 2 && archiveExport.document.mind.maintenanceArchive.memories[0].record.id === "archived_memory",
+        "portable mind v2 must preserve maintenance archive");
+    const v1 = clone(archiveExport.document);
+    v1.version = 1;
+    delete v1.mind.maintenanceArchive;
+    assert(setup.CharacterMindTransfer.validateDocument(v1, "hoodedWoman").ok, "portable mind v1 must remain importable");
+    setup.Game.resetWorld();
+    ok(setup.CharacterMindTransfer.importMind("hoodedWoman", v1), "import v1 mind");
+    assert(setup.Game.getWorld().entities.hoodedWoman.mind.maintenanceArchive.memories.length === 0 && setup.Game.getWorld().entities.hoodedWoman.mind.maintenanceArchive.beliefs.length === 0,
+        "v1 import must initialize an empty maintenance archive");
 
     // Shared validators govern stored state and preserve historical portable relationships.
     world = fresh();
@@ -287,6 +273,27 @@ async function main() {
     historicalDoc.mind.relationships.push({ targetCharacterId: "historical_missing_person", summary: "Someone remembered from another timeline." });
     assert(setup.CharacterMindTransfer.validateDocument(historicalDoc, "hoodedWoman").ok,
         "portable historical relationship should preserve an absent target character");
+
+    // Emergency diagnostics are best-effort, comprehensive, and redact secrets without requiring a valid world.
+    setup.AITransientDebug = { apiKey: "DO-NOT-EXPORT", nested: { authorization: "Bearer hidden", useful: "keep-me" } };
+    setup.EmergencyDiagnostics.recordError("synthetic-test", new Error("diagnostic sentinel"));
+    const emergency = setup.EmergencyDiagnostics.capture();
+    const emergencyJson = JSON.stringify(emergency);
+    assert(emergency.schema === "ai-rpg.emergency-dump" && emergency.version === 2 && emergency.sections["game-state.json"].world &&
+        emergency.sections["ui-runtime.json"].transientDebug.nested.useful === "keep-me" && emergency.sections["minds.json"].characters.hoodedWoman.mind.maintenanceArchive,
+        "emergency dump should contain split current game, mind/archive, and useful AI diagnostic sections");
+    assert(!emergencyJson.includes("DO-NOT-EXPORT") && !emergencyJson.includes("Bearer hidden") &&
+        emergencyJson.includes("[REDACTED]") && emergencyJson.includes("diagnostic sentinel"),
+        "emergency dump must redact API/auth secrets while retaining captured runtime errors");
+    const oldGetStatus = setup.AIRuntimeSettings.getStatus;
+    setup.AIRuntimeSettings.getStatus = function () { throw new Error("broken settings fixture"); };
+    const partialEmergency = setup.EmergencyDiagnostics.capture();
+    setup.AIRuntimeSettings.getStatus = oldGetStatus;
+    assert(partialEmergency.sections["game-state.json"] && partialEmergency.sections["ui-runtime.json"].captureError &&
+        partialEmergency.captureErrors.some(function (entry) { return entry.section === "ui-runtime.json"; }),
+        "one broken diagnostic section must not prevent the rest of an emergency dump from being captured");
+    const zipBytes = setup.EmergencyDiagnostics.buildStoredZip({ "manifest.json": "{}", "game-state.json": "{}" });
+    assert(zipBytes[0] === 0x50 && zipBytes[1] === 0x4b && zipBytes.length > 40, "emergency diagnostic packager should emit a real ZIP container");
 
     console.log("All quality-pass core tests passed.");
 }

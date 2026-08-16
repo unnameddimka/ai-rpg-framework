@@ -148,15 +148,16 @@ world.entities.hoodedWoman.mind.beliefs = [{ id: "portable_belief", text: "The T
 world.entities.hoodedWoman.mind.relationships = [{ targetCharacterId: "player", summary: "I trust the Traveler enough to continue our strange collaboration." }];
 world.entities.hoodedWoman.mind.recentMemories = [{ id: "memory_ai_118", summary: "The Traveler promised to warn me before changing worlds.", importance: 0.8, protected: false }];
 world.entities.hoodedWoman.mind.longTermMemories = [{ id: "memory_ai_119", summary: "My conversations with the Traveler changed how I understand this world.", importance: 0.9, protected: true }];
+world.entities.hoodedWoman.mind.maintenanceArchive = { memories: [{ archivedAt: "2026-08-15T00:00:00.000Z", sourcePartition: "recentMemories", record: { id: "memory_ai_150", summary: "Retired source that still owns its historical ID.", importance: 0.4, protected: false } }], beliefs: [] };
 world.ai.continuations.hoodedWoman = "Finish an old-world task that must not survive transfer.";
 world.entities.hoodedWoman.mind.pendingObservations.push({ id: 991, kind: "test", text: "Current-world observation." });
 const exportedMaraMind = setup.CharacterMindTransfer.exportMind("hoodedWoman");
 assertOk(exportedMaraMind, "Mara mind export should succeed");
-assert(Object.keys(exportedMaraMind.document.mind).sort().join(",") === "beliefs,longTermMemories,recentMemories,relationships" &&
+assert(exportedMaraMind.document.version === 2 && Object.keys(exportedMaraMind.document.mind).sort().join(",") === "beliefs,longTermMemories,maintenanceArchive,recentMemories,relationships" &&
     !exportedMaraMind.text.includes("knownFacts") && !exportedMaraMind.text.includes("pendingObservations") &&
     !exportedMaraMind.text.includes("continuation") && !exportedMaraMind.text.includes("abstractStudyProgress") &&
     !exportedMaraMind.text.includes("aiDescription"),
-    "mind export should contain exactly the four portable model-authored partitions and no world/transient state");
+    "mind export v2 should contain persistent model-authored partitions plus maintenance archive and no transient/world state");
 const beforeMismatch = JSON.stringify(setup.Game.getWorld());
 const mismatchImport = setup.CharacterMindTransfer.importMind("innkeeper", exportedMaraMind.document);
 assertFails(mismatchImport, "CHARACTER_MIND_ID_MISMATCH", "mind import should refuse a different stable character ID");
@@ -178,16 +179,17 @@ world = setup.Game.getWorld();
 assert(world.entities.hoodedWoman.mind.beliefs.length === 1 && world.entities.hoodedWoman.mind.beliefs[0].id === "portable_belief" &&
     world.entities.hoodedWoman.mind.relationships[0].targetCharacterId === "player" &&
     world.entities.hoodedWoman.mind.recentMemories[0].id === "memory_ai_118" &&
-    world.entities.hoodedWoman.mind.longTermMemories[0].id === "memory_ai_119",
-    "matching import should replace all four portable target partitions");
+    world.entities.hoodedWoman.mind.longTermMemories[0].id === "memory_ai_119" &&
+    world.entities.hoodedWoman.mind.maintenanceArchive.memories[0].record.id === "memory_ai_150",
+    "matching import should replace all portable target partitions");
 assert(JSON.stringify(world.entities.hoodedWoman.mind.knownFacts) === freshMaraFacts &&
     world.entities.hoodedWoman.aiDescription === freshMaraDescription && world.entities.hoodedWoman.locationId === freshMaraLocation &&
     world.entities.hoodedWoman.inventoryId === freshMaraInventory,
     "mind import should preserve fresh authored facts, description, physical location, and inventory identity");
 assert(!Object.prototype.hasOwnProperty.call(world.ai.continuations, "hoodedWoman") &&
     world.events.length === beforeMindImportEventCount && JSON.stringify(world.ai.turnQueue) === beforeMindImportQueue &&
-    world.nextMemoryId >= 120,
-    "mind import should clear continuation, create no event/queue work, and advance memory IDs beyond imported memory_ai IDs");
+    world.nextMemoryId >= 151,
+    "mind import should clear continuation, create no event/queue work, and advance memory IDs beyond active and archived imported memory_ai IDs");
 
 // The forest-stream sitting place uses only generic sublocation capacity.
 world.entities.player.locationId = "forestMountainStream";

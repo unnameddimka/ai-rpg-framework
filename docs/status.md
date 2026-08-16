@@ -13,7 +13,7 @@
 - Single canonical `character_moved` event routed to source/destination perceivers.
 - Locked-passage attempts produce grounded observations on both sides; the far side is anonymized rather than leaking actor identity through a closed door.
 - Recipient pending-observation inbox is authoritative; model-facing observations are compact and omit routing/scheduler metadata.
-- Bounded eight-utterance `recentDialogue` working context preserves own speech and actually heard speech across save/load without entering portable mind.
+- Bounded eight-utterance `recentDialogue` working context preserves own speech and actually heard Human/AI speech in delivery order across save/load without entering portable mind.
 - Explicit sleeping state and wake-on-own-action/speech behavior.
 
 ### Authored world
@@ -21,6 +21,7 @@
 - Roadside tavern with Garrick, Nell, Guest Rooms, bar/common-room furniture and keys.
 - Captain Price as a character.
 - Village street/temple/edge, separate Mara's Garden and Mara's Cottage locations (cottage floor/bed/table/alchemical shelves), plus a reciprocal nearby Forest stream reached from the garden with a normal capacity-two sitting sublocation.
+- Working village Smithy off the Street near the temple, with forge floor, rear living room/bed, and Harlan the Blacksmith starting at work with equipped clothing and smith's hammer. Harlan is authored around practical nails/horseshoes/fittings/tool repair, with seeded local ties to Garrick, Nell and Mara and no prior Price relationship.
 - Memory Stone deterministic item/use effect.
 - Deterministic `abstract_study` authored item effect: bounded `use_item.input_text` -> committed item use -> authored private study feedback with `{inputText}` interpolation. Reader progress is owned by the physical item instance and keyed independently per character; related consecutive queries classify as `survey`, `focused`, then `saturated`, while unrelated questions reset that reader's thread. No Utility/model request occurs.
 - Generic `utility_query` authored item effect remains available for genuinely model-backed information sources: bounded `input_text` -> committed physical item use -> deferred Utility-model information request -> private grounded result observation to the reader, with optional per-item output-token cap.
@@ -34,10 +35,12 @@
 - Later AI in the same tick see observations committed by earlier AI.
 - AI actions hard-validate against current `view.available_actions` including option values.
 - Combined speech/narrative + at most one formal action attempt.
+- Formal Action Precedence: if a currently available formal action represents an intended tracked state change, AI must use it instead of narratively substituting for it; multi-step tracked goals proceed one formal action at a time, while action classes the engine does not model at all remain narratively expressible.
 - Grounding barrier between model attempt prose and deterministic engine result.
 - Opaque model-authored `continuation` for unfinished ordinary-tick purpose.
-- Structured recent-memory/belief/relationship updates.
-- Transactional mind maintenance can now merge/remove non-protected long-term memories and upsert/remove obsolete beliefs while preserving authored known facts.
+- Structured recent-memory/belief/relationship updates, including explicit removal of obsolete active beliefs from ordinary decisions.
+- Transactional Safe Mind Maintenance v2.2 uses bounded recent consolidation, per-character rolling cognitive-dissonance reconciliation, and tiny optional long-term merges. Five deterministically selected beliefs are compared with active LT memories per run; at most the two strongest conflicts receive separate bounded resolutions, and belief/memory type never determines truth by itself. Every replaced/retired source is archived verbatim; protected memories remain immutable.
+- A successful maintenance run that actually changes autobiographical mind content stores one full pre-maintenance mind snapshot; the newest five per character persist through save/load/migration as rollback/diagnostic insurance. Failed runs, no-op revisions, and cursor-only reconciliation progress consume no snapshot slot. Snapshots and reconciliation cursor state stay outside portable mind transfer.
 - Shared belief/relationship/memory/dialogue validators are reused across runtime validation, migration, and portable mind import.
 
 ### Timelapse
@@ -90,10 +93,13 @@
 - Progressive committed scene rendering while input remains locked.
 - Optional current-turn invisible-event debug display.
 - Sidebar AI-activity admin controls can dismiss pending reactions, clear continuation, combine both, or globally clear non-kept AI characters on a safe idle boundary without emitting story events.
-- Character runtime profile modal plus collapsed **Mind tools** for manual compression and strict JSON export/import of portable character mind (`beliefs`, `relationships`, recent/long-term memories). Import is replace-only and exact-character-ID guarded.
+- Character runtime profile modal plus collapsed **Mind tools** for bounded transactional maintenance and portable mind v2 export/import (`beliefs`, `relationships`, recent/long-term memories, `maintenanceArchive`). V1 import remains supported; snapshots/recentDialogue stay world-local.
 - Standalone offline world editor for `data/world.json`, including free-form item equipment slots and Inventory/Equipped starting placement.
 - Crystal-sphere/prompt-lab diagnostics, dry runs and AI exchange import/export.
+- Red bottom-of-sidebar **Emergency dump** exports one best-effort ZIP containing independent JSON diagnostics (`manifest`, game/SugarCube state, minds/archive/snapshots, scheduler/observations, AI exchanges, UI/narrator state, recent runtime errors), redacting API/authentication secrets and tolerating partially broken state.
 - No normal gameplay button that manually processes pending AI work.
+
+- Safe Mind Maintenance v2.2 preserves v2/v2.1 bounded recent batches (12 × max 3), exact stage schemas, newest-10 read-only recent correction evidence, archive preservation, and at most two 2–3-source LT merges. It replaces general consistency cleanup with a persistent per-character reconciliation cursor: up to five beliefs are scanned against active LT, conflicts are ranked `direct > strong > possible`, and at most two selected pairs may resolve via `revise_belief`, `revise_memory`, `revise_both`, or `keep_conflict`. Cursor-only progress creates no personality snapshot; identical proposed revisions are no-ops.
 
 ### Code organization
 

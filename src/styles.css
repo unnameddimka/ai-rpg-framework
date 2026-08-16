@@ -796,3 +796,20 @@ details[open] > summary .framework-disclosure-arrow {
 .framework-mind-tools button {
     margin-right: 0.25rem;
 }
+
+.framework-emergency-block {
+    margin-top: auto;
+    padding-top: 0.75rem;
+}
+
+#emergency-dump-button {
+    width: 100%;
+    background: #8b1e1e;
+    border-color: #b73535;
+    color: #fff;
+    font-weight: 700;
+}
+
+#emergency-dump-button:hover {
+    background: #a52626;
+}

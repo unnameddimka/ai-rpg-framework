@@ -88,7 +88,10 @@
             character.mind = clone(character.initialMind || {});
             delete character.initialMind;
             character.mind.pendingObservations = [];
+            character.mind.maintenanceArchive = { memories: [], beliefs: [] };
             character.recentDialogue = [];
+            character.mindMaintenanceSnapshots = [];
+            character.mindMaintenanceState = { reconciliationCursor: { afterBeliefId: null } };
             character.equippedItems = [];
             character.sleeping = character.sleeping === true;
             world.entities[characterId] = character;
@@ -843,11 +846,44 @@
                     return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.${partition} must be an array.`);
                 }
             }
+            if (!character.mind.maintenanceArchive || typeof character.mind.maintenanceArchive !== "object" || Array.isArray(character.mind.maintenanceArchive) ||
+                    !Array.isArray(character.mind.maintenanceArchive.memories) || !Array.isArray(character.mind.maintenanceArchive.beliefs)) {
+                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.maintenanceArchive must contain memory and belief arrays.`);
+            }
+            for (const entry of character.mind.maintenanceArchive.memories) {
+                if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.archivedAt !== "string" || !entry.archivedAt.trim() ||
+                        !["recentMemories", "longTermMemories"].includes(entry.sourcePartition) || !setup.MindValidators.validateMemoryRecord(entry.record).ok) {
+                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid archived memory.`);
+                }
+            }
+            for (const entry of character.mind.maintenanceArchive.beliefs) {
+                if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.archivedAt !== "string" || !entry.archivedAt.trim() ||
+                        !setup.MindValidators.validateBeliefRecord(entry.record).ok) {
+                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid archived belief.`);
+                }
+            }
             if (!Array.isArray(character.recentDialogue)) {
                 return fail("CHARACTER_DIALOGUE_INVALID", `Character ${character.id} recentDialogue must be an array.`);
             }
             if (character.recentDialogue.length > setup.MindValidators.RECENT_DIALOGUE_LIMIT) {
                 return fail("CHARACTER_DIALOGUE_INVALID", `Character ${character.id} recentDialogue exceeds the bounded dialogue window.`);
+            }
+            if (!Array.isArray(character.mindMaintenanceSnapshots) || character.mindMaintenanceSnapshots.length > 5) {
+                return fail("CHARACTER_MIND_SNAPSHOT_INVALID", `Character ${character.id} maintenance snapshots must be an array of at most five entries.`);
+            }
+            for (const snapshot of character.mindMaintenanceSnapshots) {
+                if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) || typeof snapshot.createdAt !== "string" || !snapshot.createdAt.trim() ||
+                        !Number.isInteger(snapshot.turn) || snapshot.turn < 1 || !["manual", "automatic"].includes(snapshot.trigger) ||
+                        !snapshot.mind || typeof snapshot.mind !== "object" || Array.isArray(snapshot.mind)) {
+                    return fail("CHARACTER_MIND_SNAPSHOT_INVALID", `Character ${character.id} has an invalid maintenance snapshot.`);
+                }
+            }
+            const maintenanceState = character.mindMaintenanceState;
+            const maintenanceCursor = maintenanceState && maintenanceState.reconciliationCursor;
+            if (!maintenanceState || typeof maintenanceState !== "object" || Array.isArray(maintenanceState) ||
+                    !maintenanceCursor || typeof maintenanceCursor !== "object" || Array.isArray(maintenanceCursor) ||
+                    (maintenanceCursor.afterBeliefId !== null && (typeof maintenanceCursor.afterBeliefId !== "string" || !setup.MindValidators.ID_PATTERN.test(maintenanceCursor.afterBeliefId)))) {
+                return fail("CHARACTER_MIND_MAINTENANCE_STATE_INVALID", `Character ${character.id} has invalid mind-maintenance reconciliation state.`);
             }
             const beliefIds = new Set();
             for (const belief of character.mind.beliefs) {
@@ -969,6 +1005,17 @@
         });
         getCharacters(world).forEach(function (character) {
             character.recentDialogue = setup.MindValidators.sanitizeRecentDialogue(character.recentDialogue, world);
+            character.mind.maintenanceArchive = setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceArchive === "function"
+                ? setup.AIMemory.sanitizeMaintenanceArchive(character.mind.maintenanceArchive)
+                : (character.mind.maintenanceArchive || { memories: [], beliefs: [] });
+            if (setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceSnapshots === "function") {
+                character.mindMaintenanceSnapshots = setup.AIMemory.sanitizeMaintenanceSnapshots(character.mindMaintenanceSnapshots);
+            } else if (!Array.isArray(character.mindMaintenanceSnapshots)) {
+                character.mindMaintenanceSnapshots = [];
+            }
+            character.mindMaintenanceState = setup.AIMemory && typeof setup.AIMemory.sanitizeMindMaintenanceState === "function"
+                ? setup.AIMemory.sanitizeMindMaintenanceState(character.mindMaintenanceState)
+                : { reconciliationCursor: { afterBeliefId: null } };
         });
         if (!world.ai || typeof world.ai !== "object") world.ai = { turnQueue: [], continuations: {} };
         if (typeof world.ai.inferenceSessionId !== "string" || !world.ai.inferenceSessionId.trim()) {
@@ -2799,13 +2846,14 @@
 
         try {
             if (text) {
-                narrativeResult = submitNarrative(actorId, {
+                const narrativeInput = {
                     text: text,
                     target_id: input.target_id || "",
-                    noticeability: input.noticeability || "noticeable",
-                    publicNarrative: Object.prototype.hasOwnProperty.call(input, "publicNarrative") ? input.publicNarrative : undefined,
-                    spokenText: Object.prototype.hasOwnProperty.call(input, "spokenText") ? input.spokenText : undefined
-                }, {
+                    noticeability: input.noticeability || "noticeable"
+                };
+                if (Object.prototype.hasOwnProperty.call(input, "publicNarrative")) narrativeInput.publicNarrative = input.publicNarrative;
+                if (Object.prototype.hasOwnProperty.call(input, "spokenText")) narrativeInput.spokenText = input.spokenText;
+                narrativeResult = submitNarrative(actorId, narrativeInput, {
                     interactionId: interactionId,
                     locationId: actor.locationId
                 });

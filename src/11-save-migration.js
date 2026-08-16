@@ -308,6 +308,14 @@
                     if (match) nextMemoryId = Math.max(nextMemoryId, Number(match[1]) + 1);
                 });
             });
+            const archivedMemories = character.mind && character.mind.maintenanceArchive && Array.isArray(character.mind.maintenanceArchive.memories)
+                ? character.mind.maintenanceArchive.memories
+                : [];
+            archivedMemories.forEach(function (entry) {
+                const memory = entry && entry.record;
+                const match = memory && typeof memory.id === "string" && memory.id.match(/^memory_ai_(\d+)$/);
+                if (match) nextMemoryId = Math.max(nextMemoryId, Number(match[1]) + 1);
+            });
             (character.mind.pendingObservations || []).forEach(function (observation) {
                 if (Number.isInteger(observation.id)) nextObservationId = Math.max(nextObservationId, observation.id + 1);
             });
@@ -392,10 +400,28 @@
 
                 report.charactersPreserved += 1;
                 character.mind.beliefs = migrationArray(savedCharacter, "beliefs", candidate);
+                const authoredRelationships = clone(character.mind.relationships || []);
                 character.mind.relationships = migrationArray(savedCharacter, "relationships", candidate);
+                const savedRelationshipTargets = new Set(character.mind.relationships.map(function (record) { return record.targetCharacterId; }));
+                authoredRelationships.forEach(function (record) {
+                    const targetExistedInSavedWorld = Boolean(source.entities && source.entities[record.targetCharacterId] && source.entities[record.targetCharacterId].type === "character");
+                    if (!targetExistedInSavedWorld && !savedRelationshipTargets.has(record.targetCharacterId)) {
+                        character.mind.relationships.push(record);
+                        savedRelationshipTargets.add(record.targetCharacterId);
+                    }
+                });
                 character.mind.recentMemories = migrationArray(savedCharacter, "recentMemories", candidate);
                 character.mind.longTermMemories = migrationArray(savedCharacter, "longTermMemories", candidate);
+                character.mind.maintenanceArchive = setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceArchive === "function"
+                    ? setup.AIMemory.sanitizeMaintenanceArchive(savedCharacter.mind.maintenanceArchive)
+                    : { memories: [], beliefs: [] };
                 character.recentDialogue = setup.MindValidators.sanitizeRecentDialogue(savedCharacter.recentDialogue, candidate);
+                character.mindMaintenanceSnapshots = setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceSnapshots === "function"
+                    ? setup.AIMemory.sanitizeMaintenanceSnapshots(savedCharacter.mindMaintenanceSnapshots)
+                    : [];
+                character.mindMaintenanceState = setup.AIMemory && typeof setup.AIMemory.sanitizeMindMaintenanceState === "function"
+                    ? setup.AIMemory.sanitizeMindMaintenanceState(savedCharacter.mindMaintenanceState)
+                    : { reconciliationCursor: { afterBeliefId: null } };
                 delete character.mind.abstractStudyProgress;
                 character.mind.pendingObservations = [];
                 character.sleeping = savedCharacter.sleeping === true;

@@ -11,7 +11,7 @@ function load(file) { vm.runInThisContext(fs.readFileSync(path.join(root, file),
 function assert(value, message) { if (!value) throw new Error(message); }
 function ok(value, message) { assert(value && value.ok, `${message}: ${JSON.stringify(value)}`); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
-function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [], relationshipsToUpsert: [] }; }
+function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] }; }
 function normalizeDecisionFixture(value) {
     if (value && typeof value === "object" && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, "action")) {
         const normalized = Object.assign({}, value);
@@ -491,6 +491,14 @@ async function main() {
         decisionPrompt.includes("Small visible behavior that does not change canonical state may stay narrative") &&
         decisionPrompt.includes("small sip that does not mechanically consume the whole drink") &&
         decisionPrompt.includes("Narrative is not an alternate execution channel") &&
+        decisionPrompt.includes("FORMAL ACTION PRECEDENCE") &&
+        decisionPrompt.includes("currently offered action in context.view.available_actions") &&
+        decisionPrompt.includes("For multi-step grounded goals, perform one currently available formal action") &&
+        decisionPrompt.includes("equipping or unequipping an item") &&
+        decisionPrompt.includes("narrative must not bypass those constraints") &&
+        decisionPrompt.includes("engine provides no grounded mechanic at all for an action class") &&
+        decisionPrompt.includes("lie across an ordinary work table") &&
+        decisionPrompt.includes("must not narratively claim that a second available grounded action also completed") &&
         decisionPrompt.includes("multi-step mechanical task successfully changed the world or is complete") &&
         decisionPrompt.includes("Do not record an unconfirmed mechanical completion") &&
         decisionPrompt.includes("silently verify the current view against continuation") &&
@@ -583,7 +591,7 @@ async function main() {
     assert(!setup.AIProtocol.validateDecision(decisionFixture({ action: [{ type: "move" }], publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "multiple actions should be rejected");
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
-        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I decided to leave.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] } }), available).ok,
+        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I decided to leave.", importance: .5 }], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] } }), available).ok,
         "one response may combine narrative, one formal action, and memory updates");
     assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Mara?", spokenTargetId: "hoodedWoman", spokenLoudness: "noticeable", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
         !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Who are you?", spokenTargetId: "missing", spokenLoudness: "noticeable", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
@@ -608,6 +616,19 @@ async function main() {
         detailedValidation.errors.some(function (error) { return error.includes("summary is required"); }) &&
         detailedValidation.errors.some(function (error) { return error.includes("importance must be a finite number from 0 to 1"); }),
         "protocol validation should expose concrete JSON paths and record errors");
+    const beliefRemovalDecision = decisionFixture({
+        action: null, publicNarrative: null, spokenText: null,
+        memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: ["obsolete_belief"], relationshipsToUpsert: [] }
+    });
+    assert(setup.AIProtocol.validateDecision(beliefRemovalDecision, available, [], ["obsolete_belief"]).ok &&
+        !setup.AIProtocol.validateDecision(beliefRemovalDecision, available, [], ["different_belief"]).ok,
+        "ordinary decision responses may explicitly remove only beliefs that currently exist in that character mind");
+    world = fresh();
+    world.entities.hoodedWoman.mind.beliefs.push({ id: "obsolete_belief", text: "An old understanding that was corrected.", confidence: "medium" });
+    ok(setup.AIMemory.applyUpdates("hoodedWoman", beliefRemovalDecision.memoryUpdates), "ordinary belief removal should apply");
+    assert(!world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "obsolete_belief"; }),
+        "ordinary decision belief deletion should remove the superseded active belief immediately");
+
     assert(!setup.AIProtocol.validateDecision(decisionFixture({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates(), chainOfThought: "secret" }), available).ok,
         "chain-of-thought or arbitrary protocol fields should be rejected");
     let repairCalls = 0;
@@ -905,7 +926,7 @@ async function main() {
 
     world = queueHooded();
     const oneStage = { chat: async function () { return response({ action: null, publicNarrative: "She nods.", spokenText: "Greetings.", continuation: "Learn why the traveller approached me.", memoryUpdates: {
-        recentMemoriesToAdd: [{ summary: "The traveller greeted me.", importance: .5 }], beliefsToUpsert: [{ id: "belief_greeting", text: "The traveller is civil.", confidence: "medium" }], relationshipsToUpsert: [{ targetCharacterId: "player", summary: "A civil new acquaintance." }]
+        recentMemoriesToAdd: [{ summary: "The traveller greeted me.", importance: .5 }], beliefsToUpsert: [{ id: "belief_greeting", text: "The traveller is civil.", confidence: "medium" }], beliefIdsToRemove: [], relationshipsToUpsert: [{ targetCharacterId: "player", summary: "A civil new acquaintance." }]
     } }, { total_tokens: 10 }); } };
     const oneResult = await setup.AIController.takeNextTurn(oneStage);
     assert(oneResult.ok && oneResult.stages === 1 && setup.AITurnQueue.peek() === null && world.entities.hoodedWoman.mind.recentMemories.some(function (m) { return m.summary.includes("greeted"); }) &&
@@ -927,7 +948,7 @@ async function main() {
         action: { type: "read_aura" },
         publicNarrative: "She concentrates.",
         spokenText: "Curious.",
-        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I chose to read the traveller's aura.", importance: .7 }], beliefsToUpsert: [], relationshipsToUpsert: [] }
+        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I chose to read the traveller's aura.", importance: .7 }], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] }
     }); } };
     const actionResult = await setup.AIController.takeNextTurn(singleAction);
     assert(actionResult.ok && actionResult.stages === 1 && actionResult.actionResult.feedback[0].code === "AURA_SCAN_RESULT" && stage === 1 &&
@@ -970,7 +991,7 @@ async function main() {
         publicNarrative: "She starts to rise and tests her footing.",
         spokenText: "One moment.",
         continuation: "Get across the room despite the obstacle.",
-        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I successfully crossed the room.", importance: .5 }], beliefsToUpsert: [], relationshipsToUpsert: [] }
+        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I successfully crossed the room.", importance: .5 }], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] }
     }); } });
     setup.Game.ActionRegistry.move_within_location.validate = originalMoveWithinValidate;
     assert(attemptedFailureTurn.ok && attemptedFailureTurn.actionResult.error.code === "TEST_GROUNDED_FAILURE" &&
@@ -990,7 +1011,7 @@ async function main() {
 
     world = queueHooded();
     const badMemoryClient = { chat: async function () { return response({ action: null, publicNarrative: "Uncommitted.", spokenText: null, memoryUpdates: {
-        recentMemoriesToAdd: [{ summary: "Bad", importance: 9 }], beliefsToUpsert: [], relationshipsToUpsert: []
+        recentMemoriesToAdd: [{ summary: "Bad", importance: 9 }], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: []
     } }); } };
     const beforeBadMemory = JSON.stringify(world);
     assert(!(await setup.AIController.takeNextTurn(badMemoryClient)).ok && JSON.stringify(setup.Game.getWorld()) === beforeBadMemory,

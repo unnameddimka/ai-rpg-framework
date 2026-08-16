@@ -63,6 +63,33 @@ rejects(function (doc) {
     doc.items.cleaningRag.definitionId = "cleaningRag";
 }, "Duplicate technical ID");
 
+// Positive authoring regression: the smithy is a normal authored extension of the village.
+const smithy = source.locations.villageSmithy;
+assert(smithy && smithy.exits.street === "street" && source.locations.street.exits.villageSmithy === "villageSmithy",
+    "smithy should connect reciprocally to the village street");
+assert(smithy.defaultSublocationId === "smithyForgeArea" && smithy.sublocations.smithyForgeArea &&
+    smithy.sublocations.smithyLivingRoom && smithy.sublocations.smithyLivingBed &&
+    (smithy.sublocations.smithyLivingBed.capabilities || []).includes("sleep"),
+    "smithy should contain the forge floor, rear living room, and Harlan's actual sleeping place");
+const blacksmith = source.characters.blacksmith;
+assert(blacksmith && blacksmith.name === "Harlan the Blacksmith" && blacksmith.locationId === "villageSmithy" &&
+    blacksmith.sublocationId === "smithyForgeArea" && blacksmith.initialControllerId === "ai",
+    "Harlan should start as an AI blacksmith working in the forge");
+assert(source.items.blacksmithClothing_01.equippedByCharacterId === "blacksmith" && source.items.blacksmithClothing_01.equippedSlot === "clothing" &&
+    source.items.smithHammer_01.equippedByCharacterId === "blacksmith" && source.items.smithHammer_01.equippedSlot === "right_hand",
+    "Harlan should start in work clothes with a smithing hammer equipped in hand");
+assert(source.itemDefinitions.smithHammer.equipSlots.includes("right_hand") &&
+    source.itemDefinitions.blacksmithClothing.equipSlots.includes("clothing"),
+    "blacksmith clothing and hammer should use the ordinary equipment authoring model");
+const harlanRelations = new Map(blacksmith.initialMind.relationships.map(function (record) { return [record.targetCharacterId, record.summary]; }));
+assert(harlanRelations.has("innkeeper") && harlanRelations.has("nell") && harlanRelations.has("hoodedWoman") && !harlanRelations.has("captainPrice") &&
+    /not romantic or sexual/i.test(harlanRelations.get("nell")),
+    "Harlan should seed the agreed Garrick/Nell/Mara relationships and no pre-existing Price relationship");
+["innkeeper", "nell", "hoodedWoman"].forEach(function (characterId) {
+    assert(source.characters[characterId].initialMind.relationships.some(function (record) { return record.targetCharacterId === "blacksmith"; }),
+        `${characterId} should have an authored relationship seed toward the new blacksmith`);
+});
+
 const modelSource = JSON.parse(fs.readFileSync(path.join(root, "data/model_list.json"), "utf8"));
 function rejectsModelList(mutator, expected) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ai-rpg-model-list-generator-"));

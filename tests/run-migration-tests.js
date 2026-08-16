@@ -47,6 +47,7 @@ const legacy = clone(current);
 delete legacy.schemaVersion;
 delete legacy.authoringRevision;
 legacy.version = 6;
+delete legacy.entities.hoodedWoman.mindMaintenanceState;
 
 // Simulate a pre-cottage authored world. Migration must rebuild structure from current authoring.
 delete legacy.entities.villageEdge;
@@ -136,6 +137,9 @@ assert(JSON.stringify(State.variables.world) === beforeBootstrap, "migration det
 
 const migrated = setup.SaveMigration.migrate();
 assert(migrated.ok && migrated.migrated, `legacy save should migrate: ${JSON.stringify(migrated)}`);
+assert(State.variables.world.entities.hoodedWoman.mindMaintenanceState &&
+    State.variables.world.entities.hoodedWoman.mindMaintenanceState.reconciliationCursor.afterBeliefId === null,
+    "a save predating reconciliation cursor state should initialize a clean per-character cursor");
 const world = State.variables.world;
 assert(world.schemaVersion === setup.Game.WORLD_SCHEMA_VERSION && world.authoringRevision === setup.GeneratedWorldData.authoringRevision,
     "migration should commit the current schema and authoring revision");
@@ -376,6 +380,64 @@ assert(migratedPreEquipment.ok && migratedPreEquipment.migrated &&
     State.variables.world.entities.hoodedWoman.equippedItems.some(function (record) { return record.itemId === "maraHoodedCloak_01" && record.slot === "shoulders"; }) &&
     State.variables.world.inventories.inventory_player.itemIds.includes("silverChain_01"),
     "pre-equipment saves should receive the current authored starting clothing and silver-chain item");
+
+// An older save that predates a newly authored character should gain both that character and relationship seeds toward them
+// without overwriting saved relationships among characters that already existed.
+const preBlacksmithWorld = clone(current);
+preBlacksmithWorld.authoringRevision = "7777777777777777777777777777777777777777777777777777777777777777";
+delete preBlacksmithWorld.entities.blacksmith;
+delete preBlacksmithWorld.inventories.inventory_blacksmith;
+delete preBlacksmithWorld.control.assignments.blacksmith;
+["blacksmithClothing_01", "smithHammer_01"].forEach(function (itemId) {
+    removeFromAllInventories(preBlacksmithWorld, itemId);
+    delete preBlacksmithWorld.entities[itemId];
+});
+["innkeeper", "nell", "hoodedWoman"].forEach(function (characterId) {
+    const character = preBlacksmithWorld.entities[characterId];
+    character.mind.relationships = character.mind.relationships.filter(function (record) { return record.targetCharacterId !== "blacksmith"; });
+});
+preBlacksmithWorld.entities.innkeeper.mind.relationships.find(function (record) { return record.targetCharacterId === "nell"; }).summary = "Saved Garrick/Nell relationship sentinel.";
+State.variables.world = preBlacksmithWorld;
+const migratedPreBlacksmith = setup.SaveMigration.migrate();
+assert(migratedPreBlacksmith.ok && migratedPreBlacksmith.migrated && State.variables.world.entities.blacksmith &&
+    State.variables.world.entities.blacksmith.locationId === "villageSmithy" &&
+    State.variables.world.entities.blacksmith.equippedItems.some(function (record) { return record.itemId === "smithHammer_01" && record.slot === "right_hand"; }),
+    "a save predating Harlan should gain the current authored blacksmith and his starting equipment");
+["innkeeper", "nell", "hoodedWoman"].forEach(function (characterId) {
+    assert(State.variables.world.entities[characterId].mind.relationships.some(function (record) { return record.targetCharacterId === "blacksmith"; }),
+        `${characterId} should gain the authored relationship seed toward a genuinely new character during migration`);
+});
+assert(State.variables.world.entities.innkeeper.mind.relationships.some(function (record) {
+        return record.targetCharacterId === "nell" && record.summary === "Saved Garrick/Nell relationship sentinel.";
+    }),
+    "migration must still prefer saved runtime relationships between characters that already existed in the old save");
+
+// Full pre-maintenance rollback snapshots are persistent world-local state and survive ordinary migration.
+const snapshotMigrationWorld = clone(current);
+snapshotMigrationWorld.authoringRevision = "8888888888888888888888888888888888888888888888888888888888888888";
+snapshotMigrationWorld.entities.hoodedWoman.mindMaintenanceState = { reconciliationCursor: { afterBeliefId: "traveler_keeps_word" } };
+snapshotMigrationWorld.entities.hoodedWoman.mindMaintenanceSnapshots = [{
+    createdAt: "2026-08-15T18:00:00.000Z",
+    turn: 123,
+    trigger: "manual",
+    mind: clone(snapshotMigrationWorld.entities.hoodedWoman.mind)
+}];
+snapshotMigrationWorld.entities.hoodedWoman.mind.maintenanceArchive = {
+    memories: [{ archivedAt: "2026-08-15T18:01:00.000Z", sourcePartition: "longTermMemories", record: { id: "memory_ai_777", summary: "Archived migration sentinel.", importance: 0.5, protected: false } }],
+    beliefs: [{ archivedAt: "2026-08-15T18:02:00.000Z", record: { id: "archived_migration_belief", text: "Old migrated understanding.", confidence: "low" } }]
+};
+snapshotMigrationWorld.nextMemoryId = 10;
+State.variables.world = snapshotMigrationWorld;
+const migratedSnapshotWorld = setup.SaveMigration.migrate();
+assert(migratedSnapshotWorld.ok && migratedSnapshotWorld.migrated &&
+    State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots.length === 1 &&
+    State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots[0].turn === 123 &&
+    State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots[0].trigger === "manual" &&
+    State.variables.world.entities.hoodedWoman.mind.maintenanceArchive.memories[0].record.id === "memory_ai_777" &&
+    State.variables.world.entities.hoodedWoman.mind.maintenanceArchive.beliefs[0].record.id === "archived_migration_belief" &&
+    State.variables.world.entities.hoodedWoman.mindMaintenanceState.reconciliationCursor.afterBeliefId === "traveler_keeps_word" &&
+    State.variables.world.nextMemoryId >= 778,
+    "maintenance snapshots/archive/cursor should survive compatible save migration and archived IDs must advance nextMemoryId");
 
 // Migration must be transactional: corrupt persistent memory cannot partially replace the active restored save.
 const broken = clone(current);

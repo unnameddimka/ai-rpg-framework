@@ -277,6 +277,13 @@ assert(uiSource.includes('id="stop-auto-ai-processing"') &&
 assert(uiSource.includes('id="compress-memory-button"') && uiSource.includes("Compress memory") &&
     uiSource.includes('$("#human-character-select").val()') && uiSource.includes("setup.MemoryConsolidator.compress"),
     "sidebar should expose manual memory compression for the character selected in the existing Human-controller selector");
+assert(uiSource.includes('id="emergency-dump-button"') && uiSource.includes("Emergency dump") &&
+    uiSource.includes("setup.EmergencyDiagnostics.download") &&
+    uiSource.indexOf('id="emergency-dump-button"') > uiSource.indexOf('id="ai-settings-panel"'),
+    "the very bottom of the sidebar should expose a dedicated emergency diagnostic dump control");
+assert(stylesSource.includes(".framework-emergency-block") && stylesSource.includes("#emergency-dump-button") &&
+    stylesSource.includes("background: #8b1e1e"),
+    "emergency diagnostics should be visually distinct as a red emergency control");
 assert(uiSource.includes('<strong>Character</strong>') && uiSource.includes('<details class="framework-mind-tools">') &&
     uiSource.includes('<summary>Mind tools</summary>') && uiSource.includes('id="export-character-mind"') &&
     uiSource.includes('id="import-character-mind"') && uiSource.includes('id="import-character-mind-file"') &&

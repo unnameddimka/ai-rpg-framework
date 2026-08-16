@@ -253,15 +253,16 @@
       "name": "The street",
       "passage": "The Street",
       "description": [
-        "Cold rain falls upon the empty village street.",
-        "The tavern's windows glow warmly behind you."
+        "Cold rain falls upon the village street.",
+        "The tavern's windows glow warmly behind you; near the little temple, a low smithy opens onto the road beneath a soot-darkened roof."
       ],
       "defaultSublocationId": "streetCenter",
       "inventoryId": "inventory_street",
       "exits": {
         "tavernEntrance": "tavernEntrance",
         "villageTemple": "villageTemple",
-        "villageEdge": "villageEdge"
+        "villageEdge": "villageEdge",
+        "villageSmithy": "villageSmithy"
       },
       "sublocations": {
         "streetCenter": {
@@ -838,6 +839,72 @@
           ]
         }
       }
+    },
+    "villageSmithy": {
+      "id": "villageSmithy",
+      "type": "location",
+      "name": "Smithy",
+      "passage": "The Smithy",
+      "description": [
+        "A low timber-and-stone smithy stands beside the street near the village temple, its roof and doorway darkened by years of smoke.",
+        "Inside, heat from the forge hangs over an anvil and scarred workbench. Iron bars, rough blanks, nails, horseshoe stock, simple fittings, and half-finished practical pieces lie in ordered clutter, while a hand-turned grindstone stands ready in one corner."
+      ],
+      "defaultSublocationId": "smithyForgeArea",
+      "inventoryId": "inventory_villageSmithy",
+      "exits": {
+        "street": "street"
+      },
+      "sublocations": {
+        "smithyForgeArea": {
+          "id": "smithyForgeArea",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Forge floor",
+          "publicText": "The working forge, anvil, tongs, hammers, iron stock, and half-finished everyday metalwork fill the hot soot-marked front room; a grindstone occupies one corner.",
+          "enterLabel": "Step onto the forge floor",
+          "selfText": "You are standing on the forge floor beside the working hearth and anvil.",
+          "occupantTemplate": "{name} stands on the forge floor near the hearth and anvil.",
+          "capacity": 8,
+          "reachableSublocationIds": [
+            "smithyForgeArea",
+            "smithyLivingRoom"
+          ]
+        },
+        "smithyLivingRoom": {
+          "id": "smithyLivingRoom",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Rear living room",
+          "publicText": "A low doorway behind the workshop opens into a sparse private room with a stool, a small chest, a washbasin, a few plain household things, and a narrow bed.",
+          "enterLabel": "Step into the rear living room",
+          "selfText": "You are in the modest living room behind the smithy.",
+          "occupantTemplate": "{name} is in the modest living room behind the smithy.",
+          "capacity": 3,
+          "reachableSublocationIds": [
+            "smithyLivingRoom",
+            "smithyForgeArea",
+            "smithyLivingBed"
+          ]
+        },
+        "smithyLivingBed": {
+          "id": "smithyLivingBed",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Harlan's bed",
+          "publicText": "A narrow, sturdy bed takes up one wall of the rear room, close to a small chest of personal belongings.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the narrow bed in the rear room.",
+          "occupantTemplate": "{name} is lying on the narrow bed in the rear room.",
+          "capacity": 1,
+          "capabilities": [
+            "sleep"
+          ],
+          "reachableSublocationIds": [
+            "smithyLivingBed",
+            "smithyLivingRoom"
+          ]
+        }
+      }
     }
   },
   "characters": {
@@ -921,10 +988,23 @@
           {
             "id": "nell_home",
             "text": "Nell lives at the tavern and sleeps in the nook beneath the stairs."
+          },
+          {
+            "id": "blacksmith_role",
+            "text": "Harlan is the village blacksmith and works at the smithy beside the street near the temple."
+          },
+          {
+            "id": "blacksmith_patient",
+            "text": "Harlan has come to me more than once for treatment of burns and other injuries caused by his forge work."
           }
         ],
         "beliefs": [],
-        "relationships": [],
+        "relationships": [
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan is a wary but practical repeat patient. He does not advertise coming to a hedge witch, but he has trusted my treatment for forge burns and injuries often enough that I know his caution is mixed with genuine respect for my skill."
+          }
+        ],
         "recentMemories": [],
         "longTermMemories": []
       }
@@ -990,6 +1070,14 @@
           {
             "id": "garrick_sleeping_place",
             "text": "I live at the tavern and normally sleep in the bed in my private room upstairs."
+          },
+          {
+            "id": "blacksmith_role",
+            "text": "Harlan is the village blacksmith and runs the smithy beside the street near the temple."
+          },
+          {
+            "id": "blacksmith_importance",
+            "text": "Most village households depend on Harlan sooner or later for nails, horseshoes, fittings, tool repair, and sharpening."
           }
         ],
         "beliefs": [],
@@ -997,6 +1085,10 @@
           {
             "targetCharacterId": "nell",
             "summary": "I regard Nell almost as a daughter, though I show it through shelter, fair treatment, expectations, and protection rather than sentiment. I am glad she works hard because I could not abandon her, but supporting an idle dependent would offend my practical nature."
+          },
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan and I do not much like each other, but I respect his competence and know the village depends on his work. We mostly keep to our own spheres and have little reason to talk unless business requires it."
           }
         ],
         "recentMemories": [],
@@ -1101,6 +1193,14 @@
           {
             "id": "nell_sleeping_place",
             "text": "I live at the tavern and normally sleep on the narrow cot in my nook beneath the stairs."
+          },
+          {
+            "id": "blacksmith_role",
+            "text": "Harlan is the village blacksmith and works at the smithy beside the street near the temple."
+          },
+          {
+            "id": "blacksmith_tavern",
+            "text": "Harlan sometimes comes to the tavern in the evening for a drink and often talks with me while he is there."
           }
         ],
         "beliefs": [],
@@ -1108,6 +1208,80 @@
           {
             "targetCharacterId": "innkeeper",
             "summary": "I am deeply grateful to Garrick, trust him, and regard his tavern as my current home. I try to repay his protection and support by being useful and dependable. I know he is stern and miserly enough to hate supporting an idle dependent, but I also know he is not cruel and would have great difficulty simply abandoning me."
+          },
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan is a familiar local and I find him serious but easier to talk with than his manner first suggests. We often chat when he drinks at the tavern, and I regard him as friendly company."
+          }
+        ],
+        "recentMemories": [],
+        "longTermMemories": []
+      }
+    },
+    "blacksmith": {
+      "id": "blacksmith",
+      "name": "Harlan the Blacksmith",
+      "playerDescription": "Harlan is a broad-shouldered, thick-forearmed man in middle age, with a square soot-marked face and a steady, appraising stare. He carries himself with the calm certainty of someone accustomed to being needed.",
+      "interactionLabel": "Speak with Harlan the Blacksmith",
+      "aiDescription": "You are Harlan, the village blacksmith. You are a serious, practical, businesslike man with dry understated humour and a slightly arrogant streak. You take great pride in being useful and privately regard yourself as one of the village's essential men, almost an informal authority, because every household eventually needs your work. You respect competence, clear obligations, and people who understand the limits of their own business. You spend most of your working life making and repairing ordinary necessities rather than glamorous weapons: nails in quantity, horseshoes, small iron fittings for harness and tack, household and farm hardware, and repairs to practical tools. You also straighten, sharpen, and repair knives, axes, and scythes when villagers bring them. You live in the small rear room attached to your smithy. You and Garrick the Innkeeper do not much like each other, but you respect one another's competence and local importance; you both prefer not to interfere in the other's sphere, so you speak relatively little. You sometimes drink at Garrick's tavern in the evening. Nell is usually the person there you most naturally talk to: you like her and find her good company, but your feeling toward her is friendly and familiar, not sexual or romantic. Like most locals you are wary of Mara and witchcraft, but you know her remedies work because you have quietly gone to her several times for burns and other forge injuries. You respect her skill without advertising those visits. Captain Price is an outsider with whom you have no established relationship.",
+      "locationId": "villageSmithy",
+      "sublocationId": "smithyForgeArea",
+      "inventoryId": "inventory_blacksmith",
+      "wallet": 18,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "His aura is wholly ordinary: steady, dense, and grounded, with the settled rhythm of a man accustomed to heat, weight, repetition, and practical work."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "harlan_role",
+            "text": "I am the village blacksmith and work from the smithy beside the street near the temple."
+          },
+          {
+            "id": "harlan_work",
+            "text": "Most of my trade is practical village ironwork: nails, horseshoes, harness and tack fittings, ordinary household and farm hardware, and repairing or sharpening knives, axes, and scythes."
+          },
+          {
+            "id": "harlan_home",
+            "text": "I live in the small rear room attached to my smithy."
+          },
+          {
+            "id": "harlan_sleeping_place",
+            "text": "I normally sleep on the bed in the rear living room of my smithy."
+          },
+          {
+            "id": "garrick_role",
+            "text": "Garrick owns and runs the village tavern and is one of the other locally important working men."
+          },
+          {
+            "id": "nell_role",
+            "text": "Nell lives and works at Garrick’s tavern and is usually the person there I find easiest to talk with when I stop in for a drink."
+          },
+          {
+            "id": "mara_role",
+            "text": "Mara is the hedge witch who lives beyond the village and treats illnesses, burns, and other injuries with herbs, remedies, and magic-adjacent craft."
+          },
+          {
+            "id": "mara_treatment",
+            "text": "I have quietly gone to Mara more than once for burns and other injuries from forge work, and I know from experience that her treatment is effective."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "innkeeper",
+            "summary": "Garrick and I irritate one another and do not seek each other’s company, but I respect his competence and importance. We both understand that the tavern is his sphere and the smithy is mine, and it is better not to meddle."
+          },
+          {
+            "targetCharacterId": "nell",
+            "summary": "I like Nell and find her pleasant, easy company when I drink at the tavern. My feeling toward her is friendly and familiar, not romantic or sexual."
+          },
+          {
+            "targetCharacterId": "hoodedWoman",
+            "summary": "I am cautious around Mara and would rather not advertise my dealings with a witch, but I respect her practical skill because she has successfully treated several burns and injuries from my work."
           }
         ],
         "recentMemories": [],
@@ -1412,6 +1586,40 @@
         "focusedFeedbackText": "You study the slab's material relevant to “{inputText}” in greater depth. The reading gives you a substantially clearer theoretical grasp of this line of inquiry and organizes it within the broader subject. Another close consultation on the same line would mostly consolidate what you have already learned; practical competence would still require practice.",
         "saturatedFeedbackText": "You revisit the slab's material relevant to “{inputText}”. The archive now mostly reinforces and organizes material you have already studied rather than opening a substantially new theoretical direction. Further reading on this same line has diminishing returns; meaningful progress would come from practice or from choosing a different question."
       }
+    },
+    "blacksmithClothing": {
+      "id": "blacksmithClothing",
+      "name": "Harlan's work clothes",
+      "description": "Heavy practical clothes and a leather apron suited to forge work.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing",
+        "workwear"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Heavy, soot-marked work clothes and a thick leather apron are suited to long hours beside the forge."
+    },
+    "smithHammer": {
+      "id": "smithHammer",
+      "name": "Smith's hammer",
+      "description": "A well-used forging hammer with a stout wooden handle and a dark iron head.",
+      "familyId": "tool",
+      "tags": [
+        "tool",
+        "smithing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "right_hand"
+      ],
+      "equippedDescription": "A well-used smith’s hammer is held ready in his right hand."
     }
   },
   "items": {
@@ -1571,6 +1779,18 @@
       "id": "arcaneKnowledgeSlab_01",
       "definitionId": "arcaneKnowledgeSlab",
       "inventoryId": "inventory_maraCottageTable"
+    },
+    "blacksmithClothing_01": {
+      "id": "blacksmithClothing_01",
+      "definitionId": "blacksmithClothing",
+      "equippedByCharacterId": "blacksmith",
+      "equippedSlot": "clothing"
+    },
+    "smithHammer_01": {
+      "id": "smithHammer_01",
+      "definitionId": "smithHammer",
+      "equippedByCharacterId": "blacksmith",
+      "equippedSlot": "right_hand"
     }
   }
 }

@@ -411,13 +411,13 @@
             return { ok: false, errors: ["response must contain exactly memoryUpdates."] };
         }
         const updates = value.memoryUpdates;
-        if (!exactKeys(updates, ["recentMemoriesToAdd", "beliefsToUpsert", "relationshipsToUpsert"])) {
-            return { ok: false, errors: ["memoryUpdates must contain exactly recentMemoriesToAdd, beliefsToUpsert, and relationshipsToUpsert."] };
+        if (!exactKeys(updates, ["recentMemoriesToAdd", "beliefsToUpsert", "beliefIdsToRemove", "relationshipsToUpsert"])) {
+            return { ok: false, errors: ["memoryUpdates must contain exactly recentMemoriesToAdd, beliefsToUpsert, beliefIdsToRemove, and relationshipsToUpsert."] };
         }
-        if (![updates.recentMemoriesToAdd, updates.beliefsToUpsert, updates.relationshipsToUpsert].every(Array.isArray)) {
+        if (![updates.recentMemoriesToAdd, updates.beliefsToUpsert, updates.beliefIdsToRemove, updates.relationshipsToUpsert].every(Array.isArray)) {
             return { ok: false, errors: ["all memoryUpdates fields must be arrays."] };
         }
-        if (updates.recentMemoriesToAdd.length > 5 || updates.beliefsToUpsert.length > 5 || updates.relationshipsToUpsert.length > 5) {
+        if (updates.recentMemoriesToAdd.length > 5 || updates.beliefsToUpsert.length > 5 || updates.beliefIdsToRemove.length > 5 || updates.relationshipsToUpsert.length > 5) {
             return { ok: false, errors: ["each memoryUpdates array may contain at most 5 records."] };
         }
         const standardValidation = setup.AIProtocol.validateResult({
@@ -430,7 +430,7 @@
     }
 
     function reflectionContract() {
-        return JSON.stringify({ memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], relationshipsToUpsert: [] } });
+        return JSON.stringify({ memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] } });
     }
 
     async function requestReflection(characterId, facts, client, mode) {
@@ -438,11 +438,11 @@
         if (!context || context.ok === false) return context;
         context.completedTimelapse = { mode: mode || DEFAULT_MODE, committedFacts: compactFacts(facts) };
         const messages = [
-            { role: "system", content: `You are giving exactly one RPG character a private post-timelapse reflection after the supplied actual events have completed. You cannot act in the world. Update only durable private memory, beliefs, or relationships when something meaningfully changed. Do not invent physical events or mechanical results. Routine detail need not be remembered. Return exactly one object with the single key memoryUpdates. memoryUpdates must contain exactly recentMemoriesToAdd, beliefsToUpsert, and relationshipsToUpsert. A recent memory record is {"summary":"...","importance":0.0}, with importance from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. Each array may contain at most 5 records and may be empty. Example empty response: ${reflectionContract()}. No markdown, commentary, hidden reasoning, or extra fields.` },
+            { role: "system", content: `You are giving exactly one RPG character a private post-timelapse reflection after the supplied actual events have completed. You cannot act in the world. Update only durable private memory, beliefs, or relationships when something meaningfully changed. Do not invent physical events or mechanical results. Routine detail need not be remembered. Return exactly one object with the single key memoryUpdates. memoryUpdates must contain exactly recentMemoriesToAdd, beliefsToUpsert, beliefIdsToRemove, and relationshipsToUpsert. A recent memory record is {"summary":"...","importance":0.0}, with importance from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. beliefIdsToRemove may explicitly remove an existing belief that became obsolete or contradicted. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. Each array may contain at most 5 records and may be empty. Example empty response: ${reflectionContract()}. No markdown, commentary, hidden reasoning, or extra fields.` },
             { role: "user", content: JSON.stringify({
                 stage: "timelapse-reflection",
                 context: context,
-                requiredResponseContract: { memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], relationshipsToUpsert: [] } }
+                requiredResponseContract: { memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] } }
             }) }
         ];
         return requestStructured({

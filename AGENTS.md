@@ -20,7 +20,9 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - `ActionRegistry`/current GameAPI action implementation is the single deterministic authority for action mechanics.
 - `view.available_actions` is the only current capability contract exposed to a controller.
 - AI formal actions must be validated against the current action type and that action's current concrete options before execution.
-- Narrative/speech never substitutes for tracked mechanics such as movement, item transfer/transformation, money transfer, locks, sleeping state, or ability results.
+- Narrative/speech never substitutes for tracked mechanics such as movement, item transfer/transformation, equip/unequip, money transfer, locks, sleeping state, or ability results.
+- **Formal Action Precedence:** if the current `view.available_actions` contains a formal action representing the intended tracked world-state change, the AI must use it. Narrative may supplement that attempt but may not replace it or claim completion of additional grounded steps. Multi-step tracked goals proceed one formal step at a time through continuation/reaction flow.
+- If the engine provides no grounded mechanic for an action class at all, the model may describe that unsupported fictional behavior narratively. An existing tracked mechanic that is merely unavailable because current constraints are unmet may not be bypassed through narrative.
 - Model prose belongs to the attempt phase; deterministic engine result is authoritative completion/failure.
 - An impossible request outside the current action contract does not advance the Human world tick.
 - A legitimate available action attempt that fails in-world consumes the turn and emits grounded failure feedback.
@@ -99,9 +101,11 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Authored `knownFacts` come from current world authoring.
 - Runtime beliefs, relationships, recent memories, long-term memories, continuation, and pending observations live in the save/runtime.
 - Engine-owned memory updates support bounded recent-memory append, belief upsert, and relationship upsert.
-- Mind maintenance/consolidation is transactional and may run as maintenance work. It may upsert/remove obsolete beliefs and upsert/add/remove non-protected long-term memories under strict validation; authored `knownFacts` are never rewritten by maintenance.
+- Mind maintenance/consolidation is one transactional bounded pipeline. It may retire active records only through source-explicit bounded operations; every replaced/retired source is preserved verbatim in `mind.maintenanceArchive`. Protected memories are never rewritten/merged/retired, relationships and authored `knownFacts` are read-only, and failed/no-op maintenance does not consume rollback snapshots.
+- Cognitive-dissonance reconciliation is per character and incremental: a persistent world-local cursor deterministically scans up to five active beliefs against active long-term memories per maintenance run; candidates are ranked `direct > strong > possible`, and at most two selected belief/LT pairs may be resolved. Beliefs and memories are both fallible; neither automatically overrides the other. Resolution may revise either/both or keep the conflict when evidence is insufficient.
+- Reconciliation cursor state survives save/load/migration and appears in diagnostics, but it is operational state outside autobiographical `mind`, ordinary model context, and portable mind transfer. Cursor-only successful progress creates no personality snapshot. Identical proposed belief/memory revisions are engine-level no-ops and must not grow the archive.
 - Shared canonical validators govern stored belief, relationship, memory, and recent-dialogue records across live updates, migration, portable import, and world validation.
-- Portable character-mind transfer carries only persistent model-authored mind partitions: beliefs, relationships, recent memories, and long-term memories. Version 1 import is replace-only, exact-character-ID guarded, clears continuation, and never transfers authored facts or physical/world state.
+- Portable character-mind transfer v2 carries beliefs, relationships, recent memories, long-term memories, and `maintenanceArchive`; v1 files remain importable with an empty archive. Transfer is replace-only, exact-character-ID guarded, clears continuation, excludes world-local maintenance snapshots/recentDialogue, and never transfers authored facts or physical/world state.
 - Engine-owned `recentDialogue` is bounded ephemeral conversational working context outside `mind`. It records the character's own validated speech plus only speech actually delivered through perception, survives ordinary save/load, is excluded from portable mind transfer, and is not cleared merely by changing location.
 - Retrieval-based old-memory selection/embeddings are future work; do not add them incidentally.
 
