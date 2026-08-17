@@ -71,9 +71,11 @@
         const I = setup.GameInternals;
         const location = I.getLocation(actor.locationId, world);
         const selfInventory = I.inventoryItems(actor.inventoryId, world);
+        const fullView = setup.CharacterAPI.getView(actorId);
         return clone({
             schemaVersion: 1,
             view: {
+                world_conditions: fullView.world_conditions,
                 self: {
                     id: actor.id,
                     name: actor.name,
@@ -93,7 +95,11 @@
                         };
                     })
                 },
-                location: { id: location.id, name: location.name }
+                location: {
+                    id: location.id,
+                    name: location.name,
+                    characters: clone(fullView.location && fullView.location.characters || [])
+                }
             },
             character: privateCharacter(actor, world),
             mind: mindContext(actor),

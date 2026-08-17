@@ -168,7 +168,20 @@
         return map;
     }
 
-    function validateStep(step, locationMap, path) {
+    function isDaytimeMode(mode) {
+        return String(mode || DEFAULT_MODE) === "daytime";
+    }
+
+    function catalogForMode(catalog, mode) {
+        const output = clone(catalog || []);
+        if (!isDaytimeMode(mode)) return output;
+        output.forEach(function (location) {
+            location.beds = [];
+        });
+        return output;
+    }
+
+    function validateStep(step, locationMap, path, mode) {
         const errors = [];
         if (!exactKeys(step, ["locationId", "action"])) return [`${path} must contain exactly locationId and action.`];
         const location = locationMap.get(step.locationId);
@@ -181,22 +194,35 @@
                 errors.push(`${path}.action.text must contain 1 to 2000 characters.`);
             }
         } else if (action.type === "sleep") {
-            if (!exactKeys(action, ["type", "bedId"])) errors.push(`${path}.action sleep must contain exactly type and bedId.`);
-            if (!(location.beds || []).some(function (bed) { return bed.id === action.bedId; })) {
-                errors.push(`${path}.action.bedId must identify a supplied bed in the selected room.`);
+            if (isDaytimeMode(mode)) {
+                errors.push(`${path}.action.type sleep is not allowed during daytime timelapse.`);
+            } else {
+                if (!exactKeys(action, ["type", "bedId"])) errors.push(`${path}.action sleep must contain exactly type and bedId.`);
+                if (!(location.beds || []).some(function (bed) { return bed.id === action.bedId; })) {
+                    errors.push(`${path}.action.bedId must identify a supplied bed in the selected room.`);
+                }
             }
         } else if (action.type === "timelapse_action") {
             if (!exactKeys(action, ["type", "actionId"])) errors.push(`${path}.action timelapse_action must contain exactly type and actionId.`);
             if (!(location.timelapseActions || []).some(function (candidate) { return candidate.id === action.actionId; })) {
                 errors.push(`${path}.action.actionId must identify an authored action in the selected room.`);
             }
+        } else if (action.type === "study_item") {
+            if (!exactKeys(action, ["type", "itemId", "inputText"])) errors.push(`${path}.action study_item must contain exactly type, itemId, and inputText.`);
+            const option = (location.studyItems || []).find(function (candidate) { return candidate.id === action.itemId; });
+            if (!option) errors.push(`${path}.action.itemId must identify an accessible study item in the selected room.`);
+            const text = typeof action.inputText === "string" ? action.inputText.trim() : "";
+            const maxLength = option && Number.isInteger(option.inputMaxLength) ? option.inputMaxLength : 600;
+            if (!text || text.length > maxLength) errors.push(`${path}.action.inputText must contain 1 to ${maxLength} characters.`);
         } else {
-            errors.push(`${path}.action.type must be narrate, sleep, or timelapse_action.`);
+            errors.push(isDaytimeMode(mode)
+                ? `${path}.action.type must be narrate, timelapse_action, or study_item during daytime timelapse.`
+                : `${path}.action.type must be narrate, sleep, timelapse_action, or study_item.`);
         }
         return errors;
     }
 
-    function validatePlan(value, catalog, remainingRounds) {
+    function validatePlan(value, catalog, remainingRounds, mode) {
         const errors = [];
         if (!exactKeys(value, ["steps"]) || !Array.isArray(value.steps)) {
             return { ok: false, errors: ["response must contain exactly a steps array."] };
@@ -206,43 +232,59 @@
         }
         const locations = catalogIndex(catalog);
         value.steps.forEach(function (step, index) {
-            errors.push.apply(errors, validateStep(step, locations, `response.steps[${index}]`));
+            errors.push.apply(errors, validateStep(step, locations, `response.steps[${index}]`, mode));
         });
         const sleepIndex = value.steps.findIndex(function (step) { return step && step.action && step.action.type === "sleep"; });
-        if (sleepIndex >= 0 && sleepIndex !== value.steps.length - 1) {
-            errors.push("sleep must be the last supplied plan step and no step may follow it.");
-        }
-        if (sleepIndex < 0 && value.steps.length !== remainingRounds) {
-            errors.push(`a plan without sleep must provide exactly ${remainingRounds} steps.`);
+        if (isDaytimeMode(mode)) {
+            if (value.steps.length !== remainingRounds) {
+                errors.push(`a daytime plan must provide exactly ${remainingRounds} steps.`);
+            }
+        } else {
+            if (sleepIndex >= 0 && sleepIndex !== value.steps.length - 1) {
+                errors.push("sleep must be the last supplied plan step and no step may follow it.");
+            }
+            if (sleepIndex < 0 && value.steps.length !== remainingRounds) {
+                errors.push(`a plan without sleep must provide exactly ${remainingRounds} steps.`);
+            }
         }
         return errors.length ? { ok: false, errors: errors } : { ok: true, value: value };
     }
 
-    function planContract() {
-        return JSON.stringify({
-            steps: [
-                { locationId: "reachable_location_id", action: { type: "narrate", text: "what the character does during this round" } },
-                { locationId: "reachable_location_id", action: { type: "sleep", bedId: "concrete_bed_id" } },
-                { locationId: "reachable_location_id", action: { type: "timelapse_action", actionId: "authored_timelapse_action_id" } }
-            ]
-        });
+    function planContract(mode) {
+        const steps = [
+            { locationId: "reachable_location_id", action: { type: "narrate", text: "third-person world narration of what the character does during this round" } },
+            { locationId: "reachable_location_id", action: { type: "timelapse_action", actionId: "authored_timelapse_action_id" } },
+            { locationId: "reachable_location_id", action: { type: "study_item", itemId: "accessible_study_item_id", inputText: "specific subject or question" } }
+        ];
+        if (!isDaytimeMode(mode)) {
+            steps.splice(1, 0, { locationId: "reachable_location_id", action: { type: "sleep", bedId: "concrete_bed_id" } });
+        }
+        return JSON.stringify({ steps: steps });
     }
 
     function plannerSystem(mode) {
+        const daytime = isDaytimeMode(mode);
+        const actionRule = daytime
+            ? "Allowed action JSON variants are exactly: narrate = {\"type\":\"narrate\",\"text\":\"...\"}; authored macro = {\"type\":\"timelapse_action\",\"actionId\":\"supplied_action_id\"}; study = {\"type\":\"study_item\",\"itemId\":\"supplied_study_item_id\",\"inputText\":\"specific subject or question\"}. Sleep is not a valid daytime action."
+            : "Allowed action JSON variants are exactly: narrate = {\"type\":\"narrate\",\"text\":\"...\"}; sleep = {\"type\":\"sleep\",\"bedId\":\"supplied_bed_id\"}; authored macro = {\"type\":\"timelapse_action\",\"actionId\":\"supplied_action_id\"}; study = {\"type\":\"study_item\",\"itemId\":\"supplied_study_item_id\",\"inputText\":\"specific subject or question\"}.";
+        const lengthRule = daytime
+            ? "Provide exactly one step for every remaining daytime round. Do not end the plan early by sleeping."
+            : "A plan without sleep must contain exactly one step for every remaining round. A sleep step may end the plan early; if present it must be the final returned step and there are no steps after it.";
         return [
             `You are planning coarse activity for exactly one RPG character during a timelapse. The current mode is ${String(mode || DEFAULT_MODE)}.`,
             "This is not an ordinary world-tick turn. The timelapse has a small fixed number of abstract rounds.",
             "For each active planned round choose one supplied reachable room and one activity there. Travel to the chosen room is implicit and consumes no extra round.",
-            "Allowed action JSON variants are exactly: narrate = {\"type\":\"narrate\",\"text\":\"...\"}; sleep = {\"type\":\"sleep\",\"bedId\":\"supplied_bed_id\"}; authored macro = {\"type\":\"timelapse_action\",\"actionId\":\"supplied_action_id\"}.",
-            "A plan without sleep must contain exactly one step for every remaining round. A sleep step may end the plan early; if present it must be the final returned step and there are no steps after it.",
+            actionRule,
+            lengthRule,
             "There is no null, pass, ordinary move, or ordinary world-tick formal action in this protocol.",
-            "narrate is background prose, not a canonical state mutation channel. It must not move tracked items, money, keys, locks, doors, ownership, location, sublocation, sleeping state, item state, or deterministic world flags. Do not say a tracked item was put down, transferred, consumed, filled, locked, unlocked, or otherwise changed unless a supplied authored timelapse action performs that exact effect.",
+            "narrate is committed public world narration, not a canonical state mutation channel. Write narrate.text in third person using the acting character's visible name from the supplied grounded context; do not use narratorial I, you, or we for the acting character. Quoted character dialogue may use ordinary first- or second-person pronouns. narrate must not move tracked items, money, keys, locks, doors, ownership, location, sublocation, sleeping state, item state, or deterministic world flags. Do not say a tracked item was put down, transferred, consumed, filled, locked, unlocked, or otherwise changed unless a supplied authored timelapse action performs that exact effect.",
             "Allowed narrate activity includes thinking, reading, studying, praying, stretching, resting while awake, watching, writing, tending untracked background details, or cleaning/polishing gear without changing tracked inventory state.",
             "Use an authored timelapse action when a supplied deterministic macro exactly matches the intended tracked-state activity.",
+            "Use study_item when an accessible study item is supplied in the selected room and the character chooses to study it. Carried study items may appear in every reachable room; room study items appear only where physically accessible. The engine, not narration, advances study progress.",
             "Current canonical state in context.view is authoritative if any older compressed fact appears inconsistent with it.",
             "Plans are intentions and may later be replaced after an actual interaction or grounded failure.",
-            `Return exactly one JSON object matching this union contract and nothing else: ${planContract()}`,
-            "The three action examples demonstrate alternative union branches; do not include all three unless the plan genuinely uses them. No markdown, commentary, or hidden reasoning."
+            `Return exactly one JSON object matching this union contract and nothing else: ${planContract(mode)}`,
+            "The action examples demonstrate alternative union branches; do not include every branch unless the plan genuinely uses it. No markdown, commentary, or hidden reasoning."
         ].join(" ");
     }
 
@@ -265,8 +307,9 @@
     async function requestPlan(characterId, startRound, remainingRounds, facts, latestEncounter, latestFailure, client, mode) {
         const world = setup.Game.getWorld();
         const actor = world.entities[characterId];
-        const catalog = setup.TimelapseAPI.getReachableCatalog(characterId);
-        if (!Array.isArray(catalog)) return catalog;
+        const rawCatalog = setup.TimelapseAPI.getReachableCatalog(characterId);
+        if (!Array.isArray(rawCatalog)) return rawCatalog;
+        const catalog = catalogForMode(rawCatalog, mode);
         const pending = actor && actor.mind && Array.isArray(actor.mind.pendingObservations)
             ? clone(actor.mind.pendingObservations)
             : [];
@@ -288,12 +331,19 @@
                 stage: stage,
                 context: context,
                 requiredResponseContract: {
-                    steps: [
-                        { locationId: "reachable_location_id", action: { type: "narrate", text: "non-empty background activity" } },
+                    steps: isDaytimeMode(mode) ? [
+                        { locationId: "reachable_location_id", action: { type: "narrate", text: "non-empty third-person world narration" } },
+                        { locationId: "reachable_location_id", action: { type: "timelapse_action", actionId: "concrete supplied authored action id" } },
+                        { locationId: "reachable_location_id", action: { type: "study_item", itemId: "concrete supplied study item id", inputText: "specific study subject" } }
+                    ] : [
+                        { locationId: "reachable_location_id", action: { type: "narrate", text: "non-empty third-person world narration" } },
                         { locationId: "reachable_location_id", action: { type: "sleep", bedId: "concrete supplied bed id" } },
-                        { locationId: "reachable_location_id", action: { type: "timelapse_action", actionId: "concrete supplied authored action id" } }
+                        { locationId: "reachable_location_id", action: { type: "timelapse_action", actionId: "concrete supplied authored action id" } },
+                        { locationId: "reachable_location_id", action: { type: "study_item", itemId: "concrete supplied study item id", inputText: "specific study subject" } }
                     ],
-                    rules: ["action variants are a union", "sleep may end the plan early and must be final", "without sleep steps.length must equal remainingRounds"]
+                    rules: isDaytimeMode(mode)
+                        ? ["action variants are a union", "sleep is forbidden during daytime", "steps.length must equal remainingRounds", "narrate text uses third-person world narration"]
+                        : ["action variants are a union", "sleep may end the plan early and must be final", "without sleep steps.length must equal remainingRounds", "narrate text uses third-person world narration"]
                 }
             }) }
         ];
@@ -302,11 +352,11 @@
             purpose: stage,
             stage: stage,
             messages: messages,
-            contract: planContract(),
+            contract: planContract(mode),
             profile: stage,
             requestOptions: setup.AIRequestProfiles.resolve(stage, { actorId: characterId }),
             client: client,
-            validate: function (value) { return validatePlan(value, catalog, remainingRounds); }
+            validate: function (value) { return validatePlan(value, catalog, remainingRounds, mode); }
         });
     }
 
@@ -335,7 +385,7 @@
         };
         const contract = '{"engage":true|false,"intent":"brief private social intention"}';
         const messages = [
-            { role: "system", content: `You control exactly one character during a compressed timelapse encounter. Decide only this character's private social intent. Return exactly ${contract}. Set engage=false when the character deliberately keeps to themself and simply continues their own activity. If engage=true, intent may briefly state the topic, question, tone, information to reveal or avoid, notable statement, or desire to disengage. Do not write dialogue, do not decide what other characters do, and do not claim that any future movement, sleep, item transfer, money transfer, lock action, or other canonical action has happened. This intent is private planning input, not a committed fact. No markdown or extra fields.` },
+            { role: "system", content: `You control exactly one character during a compressed timelapse encounter. Decide only this character's private social intent. Return exactly ${contract}. Set engage=false when the character deliberately keeps to themself and simply continues their own activity. otherCharacters may include occupiedNonInteractive=true; such a person is visibly present but busy and will not answer or take interactive actions during this timelapse, so do not choose engagement solely to demand a response from them. If engage=true, intent may briefly state the topic, question, tone, information to reveal or avoid, notable statement, or desire to disengage. Do not write dialogue, do not decide what other characters do, and do not claim that any future movement, sleep, item transfer, money transfer, lock action, or other canonical action has happened. This intent is private planning input, not a committed fact. No markdown or extra fields.` },
             { role: "user", content: JSON.stringify({ stage: "timelapse-interaction-intent", context: context, requiredResponseContract: { engage: false, intent: "Keep to myself and continue my own activity." } }) }
         ];
         return requestStructured({
@@ -370,7 +420,7 @@
         };
     }
 
-    async function requestInteractionResume(round, locationId, participants, activities, intents, publicFacts, client, mode) {
+    async function requestInteractionResume(round, locationId, participants, activities, intents, publicFacts, client, mode, passiveParticipants) {
         const observerId = participants && participants[0] && participants[0].id;
         const observerView = observerId ? setup.CharacterAPI.getView(observerId) : null;
         const publicRoomContext = observerView && observerView.location && observerView.location.id === locationId
@@ -378,7 +428,7 @@
             : { id: locationId, name: locationName(locationId) };
         const contract = '{"interactionOccurred":true|false,"interactionResume":"compressed public summary, or empty string when false"}';
         const messages = [
-            { role: "system", content: `Resolve one compressed group encounter during a timelapse. You receive public/observable room context and each participant's private declared interaction intent. Return exactly ${contract}. Summarize only the social exchange that actually occurs now: who engages or declines, topics discussed, questions asked or answered, statements actually made, information actually revealed, public tone, and whether someone verbally ends the conversation. An intent about what somebody plans to do afterward is not a completed fact. Never turn 'I will go upstairs', 'I will sleep', 'I will clean', or similar future intent into movement, sleeping, cleaning, item/money transfer, lock/door change, or any other canonical world mutation. You cannot execute formal actions. If no actual social exchange occurs, set interactionOccurred=false and interactionResume to the empty string. Do not invent private motives or knowledge absent from supplied intents. Do not write a line-by-line transcript. No markdown or extra fields.` },
+            { role: "system", content: `Resolve one compressed group encounter during a timelapse. You receive public/observable room context, each active participant's private declared interaction intent, and possibly passiveParticipants who are visibly present but occupied and non-interactive. Passive participants do not speak, answer, or take actions in this encounter. Return exactly ${contract}. Summarize only the social exchange that actually occurs now: who engages or declines, topics discussed, questions asked or answered, statements actually made, information actually revealed, public tone, and whether someone verbally ends the conversation. An intent about what somebody plans to do afterward is not a completed fact. Never turn 'I will go upstairs', 'I will sleep', 'I will clean', or similar future intent into movement, sleeping, cleaning, item/money transfer, lock/door change, or any other canonical world mutation. You cannot execute formal actions. If no actual social exchange occurs, set interactionOccurred=false and interactionResume to the empty string. Do not invent private motives or knowledge absent from supplied intents. Do not write a line-by-line transcript. No markdown or extra fields.` },
             { role: "user", content: JSON.stringify({
                 stage: "timelapse-interaction-resolver",
                 context: {
@@ -388,6 +438,7 @@
                     participants: clone(participants),
                     observableActivities: clone(activities),
                     interactionIntents: clone(intents),
+                    passiveParticipants: clone(passiveParticipants || []),
                     previousPublicTimelapseFacts: compactFacts(publicFacts)
                 },
                 requiredResponseContract: { interactionOccurred: true, interactionResume: "what actually happened socially in this encounter" }
@@ -406,7 +457,7 @@
         });
     }
 
-    function validateMemoryUpdates(value) {
+    function validateMemoryUpdates(value, allowedRelationshipTargetIds) {
         if (!exactKeys(value, ["memoryUpdates"]) || !isObject(value.memoryUpdates)) {
             return { ok: false, errors: ["response must contain exactly memoryUpdates."] };
         }
@@ -426,7 +477,61 @@
             memoryUpdates: updates
         });
         if (!standardValidation.ok) return { ok: false, errors: standardValidation.errors || [standardValidation.message] };
+        if (allowedRelationshipTargetIds instanceof Set) {
+            const invalidTargets = updates.relationshipsToUpsert.map(function (record) { return record && record.targetCharacterId; }).filter(function (id) {
+                return typeof id !== "string" || !allowedRelationshipTargetIds.has(id);
+            });
+            if (invalidTargets.length) {
+                return {
+                    ok: false,
+                    errors: [`relationship target IDs must use canonical IDs supplied in grounded context. Invalid: ${invalidTargets.map(String).join(", ")}. Allowed: ${Array.from(allowedRelationshipTargetIds).join(", ") || "none"}.`]
+                };
+            }
+        }
         return { ok: true, value: value };
+    }
+
+    function reflectionAllowedRelationshipTargets(characterId, context) {
+        const ids = new Set();
+        const nearby = context && context.view && context.view.location && context.view.location.characters;
+        (Array.isArray(nearby) ? nearby : []).forEach(function (character) {
+            if (character && typeof character.id === "string" && character.id && character.id !== characterId) ids.add(character.id);
+        });
+        const relationships = context && context.mind && context.mind.relationships;
+        (Array.isArray(relationships) ? relationships : []).forEach(function (record) {
+            if (record && typeof record.targetCharacterId === "string" && record.targetCharacterId && record.targetCharacterId !== characterId) ids.add(record.targetCharacterId);
+        });
+        const dialogue = context && context.recentDialogue;
+        (Array.isArray(dialogue) ? dialogue : []).forEach(function (record) {
+            if (record && typeof record.speakerId === "string" && record.speakerId && record.speakerId !== characterId) ids.add(record.speakerId);
+        });
+        return ids;
+    }
+
+    function salvageReflectionAfterFailedRepair(result, allowedRelationshipTargetIds) {
+        const attempts = result && result.trace && Array.isArray(result.trace.attempts) ? result.trace.attempts : [];
+        const parsed = attempts.slice().reverse().map(function (attempt) { return attempt && attempt.parsedValue; }).find(function (value) { return isObject(value); });
+        if (!parsed) return null;
+        const relaxed = validateMemoryUpdates(parsed, null);
+        if (!relaxed.ok) return null;
+        const value = clone(relaxed.value);
+        const relationships = value.memoryUpdates.relationshipsToUpsert;
+        const kept = relationships.filter(function (record) {
+            return record && typeof record.targetCharacterId === "string" && allowedRelationshipTargetIds.has(record.targetCharacterId);
+        });
+        if (kept.length === relationships.length) return null;
+        const dropped = relationships.filter(function (record) {
+            return !record || typeof record.targetCharacterId !== "string" || !allowedRelationshipTargetIds.has(record.targetCharacterId);
+        }).map(function (record) { return record && record.targetCharacterId || null; });
+        value.memoryUpdates.relationshipsToUpsert = kept;
+        return {
+            ok: true,
+            value: value,
+            repaired: false,
+            partial: true,
+            droppedRelationshipTargetIds: dropped,
+            trace: result.trace || null
+        };
     }
 
     function reflectionContract() {
@@ -437,15 +542,17 @@
         const context = compactPrivateContext(characterId, []);
         if (!context || context.ok === false) return context;
         context.completedTimelapse = { mode: mode || DEFAULT_MODE, committedFacts: compactFacts(facts) };
+        const allowedRelationshipTargetIds = reflectionAllowedRelationshipTargets(characterId, context);
         const messages = [
-            { role: "system", content: `You are giving exactly one RPG character a private post-timelapse reflection after the supplied actual events have completed. You cannot act in the world. Update only durable private memory, beliefs, or relationships when something meaningfully changed. Do not invent physical events or mechanical results. Routine detail need not be remembered. Return exactly one object with the single key memoryUpdates. memoryUpdates must contain exactly recentMemoriesToAdd, beliefsToUpsert, beliefIdsToRemove, and relationshipsToUpsert. A recent memory record is {"summary":"...","importance":0.0}, with importance from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. beliefIdsToRemove may explicitly remove an existing belief that became obsolete or contradicted. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. Each array may contain at most 5 records and may be empty. Example empty response: ${reflectionContract()}. No markdown, commentary, hidden reasoning, or extra fields.` },
+            { role: "system", content: `You are giving exactly one RPG character a private post-timelapse reflection after the supplied actual events have completed. You cannot act in the world. Update only durable private memory, beliefs, or relationships when something meaningfully changed. Ground character identity in context.view.location.characters, context.mind.relationships, and context.recentDialogue: relationship targetCharacterId must use a canonical supplied character ID, never an ID invented from a display name. Preserve epistemic provenance. A deliberate lie may be remembered as something the character said or did to deceive, but not converted into an objective memory that the lie was true. An inference, suspicion, misunderstanding, or uncertain belief must remain an inference, suspicion, misunderstanding, or belief rather than becoming an observed fact. Do not invent physical events, permissions, statements, intentions, or mechanical results merely to make the history flow smoothly. Routine detail need not be remembered. Return exactly one object with the single key memoryUpdates. memoryUpdates must contain exactly recentMemoriesToAdd, beliefsToUpsert, beliefIdsToRemove, and relationshipsToUpsert. A recent memory record is {"summary":"...","importance":0.0}, with importance from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. beliefIdsToRemove may explicitly remove an existing belief that became obsolete or contradicted. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. Each array may contain at most 5 records and may be empty. Example empty response: ${reflectionContract()}. No markdown, commentary, hidden reasoning, or extra fields.` },
             { role: "user", content: JSON.stringify({
                 stage: "timelapse-reflection",
                 context: context,
+                canonicalRelationshipTargetIds: Array.from(allowedRelationshipTargetIds),
                 requiredResponseContract: { memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] } }
             }) }
         ];
-        return requestStructured({
+        const result = await requestStructured({
             actorId: characterId,
             purpose: "timelapse-reflection",
             stage: "timelapse-reflection",
@@ -454,8 +561,10 @@
             profile: "reflection",
             requestOptions: setup.AIRequestProfiles.resolve("reflection", { actorId: characterId }),
             client: client,
-            validate: validateMemoryUpdates
+            validate: function (value) { return validateMemoryUpdates(value, allowedRelationshipTargetIds); }
         });
+        if (result && result.ok) return result;
+        return salvageReflectionAfterFailedRepair(result, allowedRelationshipTargetIds) || result;
     }
 
     function consumeCurrentObservations(characterId, observationIds) {
@@ -463,7 +572,7 @@
         if (ids.length) setup.AIMemory.consumeObservations(characterId, ids);
     }
 
-    function addFact(records, factsByActor, text, actorIds, locationId, kind, round) {
+    function addFact(records, factsByActor, text, actorIds, locationId, kind, round, visibleToHuman) {
         if (!text) return null;
         const record = {
             id: `timelapse-${round || 0}-${records.length + 1}`,
@@ -471,7 +580,8 @@
             actorIds: clone(actorIds || []),
             locationId: locationId || null,
             kind: kind || "timelapse",
-            round: round || null
+            round: round || null,
+            visibleToHuman: visibleToHuman === true
         };
         records.push(record);
         (actorIds || []).forEach(function (actorId) {
@@ -487,7 +597,7 @@
             return {
                 commitId: record.id || null,
                 text: record.text,
-                visibleToHuman: false,
+                visibleToHuman: record.visibleToHuman === true,
                 actorId: firstActorId,
                 actorName: firstActorId ? characterName(firstActorId) : "",
                 locationId: record.locationId,
@@ -513,7 +623,7 @@
         }
     }
 
-    async function resolveEncounterGroup(group, round, activities, factsByActor, publicRecords, client, mode) {
+    async function resolveEncounterGroup(group, round, activities, factsByActor, publicRecords, client, mode, options) {
         const locationId = group.locationId;
         const participants = group.participants;
         const participantRecords = participants.map(function (characterId) {
@@ -522,8 +632,15 @@
         const observableActivities = participants.map(function (characterId) {
             return { characterId: characterId, name: characterName(characterId), activity: activities[characterId] || "remained here during this round" };
         });
+        const passiveParticipants = (options && Array.isArray(options.passiveParticipants) ? options.passiveParticipants : []).filter(function (record) {
+            const actor = record && setup.Game.getWorld().entities[record.characterId];
+            return actor && actor.type === "character" && actor.locationId === locationId;
+        }).map(function (record) {
+            return { characterId: record.characterId, name: characterName(record.characterId), activity: record.activity || "is occupied", occupiedNonInteractive: true };
+        });
+        const observableWithPassive = observableActivities.concat(passiveParticipants);
         const intentResults = await Promise.all(participants.map(async function (characterId) {
-            const otherActivities = observableActivities.filter(function (record) { return record.characterId !== characterId; });
+            const otherActivities = observableWithPassive.filter(function (record) { return record.characterId !== characterId; });
             const result = await requestInteractionIntent(
                 characterId,
                 round,
@@ -555,13 +672,14 @@
             round,
             locationId,
             participantRecords,
-            observableActivities,
+            observableWithPassive,
             intents,
             publicRecords.filter(function (record) {
                 return record.kind === "timelapse_interaction" && record.locationId === locationId;
             }).map(function (record) { return record.text; }),
             client,
-            mode
+            mode,
+            passiveParticipants
         );
         if (!resumeResult.ok) throw resumeResult.error;
         return {
@@ -569,8 +687,16 @@
             participants: participants,
             interactionOccurred: resumeResult.value.interactionOccurred,
             resume: resumeResult.value.interactionResume,
-            skippedResolver: false
+            skippedResolver: false,
+            visibleToHuman: passiveParticipants.length > 0
         };
+    }
+
+    function recordTimelapseResult(result) {
+        if (setup.EmergencyDiagnostics && typeof setup.EmergencyDiagnostics.recordTimelapseResult === "function") {
+            try { setup.EmergencyDiagnostics.recordTimelapseResult(result); } catch (error) { /* diagnostics never affect gameplay */ }
+        }
+        return result;
     }
 
     async function runTimelapseCore(client, options) {
@@ -580,24 +706,36 @@
         const humanId = setup.Game.getHumanCharacterId();
         const world = setup.Game.getWorld();
         const aiIds = aiCharacterIds();
+        const fixedPlans = options.fixedPlans && typeof options.fixedPlans === "object" ? clone(options.fixedPlans) : {};
+        const fixedActorIds = new Set(Object.keys(fixedPlans));
         aiIds.forEach(function (characterId) {
             setup.AIWorkingState.setContinuation(characterId, null);
         });
         let committedRounds = 0;
+        let currentStage = "planning";
         let lastCommittedWorld = clone(world);
         const plans = {};
         const factsByActor = {};
         const publicRecords = [];
+        const mindProcessingErrors = [];
         const initialObservationIds = {};
-        aiIds.forEach(function (id) { factsByActor[id] = []; });
+        aiIds.forEach(function (id) {
+            factsByActor[id] = [];
+            const actor = world.entities[id];
+            initialObservationIds[id] = actor && actor.mind && Array.isArray(actor.mind.pendingObservations)
+                ? actor.mind.pendingObservations.map(function (observation) { return observation.id; }).filter(Number.isInteger)
+                : [];
+        });
 
         try {
             const initialPlanResults = await Promise.all(aiIds.map(async function (characterId) {
                 const actor = setup.Game.getWorld().entities[characterId];
                 if (!actor || actor.sleeping === true) return { characterId: characterId, skipped: true, result: null };
-                initialObservationIds[characterId] = actor.mind && Array.isArray(actor.mind.pendingObservations)
-                    ? actor.mind.pendingObservations.map(function (observation) { return observation.id; }).filter(Number.isInteger)
-                    : [];
+                if (fixedActorIds.has(characterId)) {
+                    const steps = fixedPlans[characterId] && Array.isArray(fixedPlans[characterId].steps) ? clone(fixedPlans[characterId].steps) : [];
+                    if (steps.length !== roundCount) return { characterId: characterId, skipped: false, result: failure("TIMELAPSE_FIXED_PLAN_INVALID", "A fixed timelapse plan must contain exactly one step per round.") };
+                    return { characterId: characterId, skipped: false, fixed: true, result: { ok: true, value: { steps: steps } } };
+                }
                 const result = await requestPlan(characterId, 1, roundCount, [], null, null, client, mode);
                 return { characterId: characterId, skipped: false, result: result };
             }));
@@ -608,6 +746,7 @@
             });
 
             for (let round = 1; round <= roundCount; round++) {
+                currentStage = `round-${round}`;
                 const roundStartWorld = clone(lastCommittedWorld);
                 const roundRecordStart = publicRecords.length;
                 const failures = {};
@@ -645,7 +784,11 @@
                         const plan = plans[characterId];
                         const step = plan && plan.steps[round - plan.startRound];
                         if (!step) continue;
-                        const actionResult = setup.TimelapseAPI.executeAction(characterId, step.locationId, step.action);
+                        const actionResult = isDaytimeMode(mode) && step.action && step.action.type === "sleep"
+                            ? failure("TIMELAPSE_ACTION_NOT_ALLOWED_IN_MODE", "Sleep is not allowed during daytime timelapse.")
+                            : (fixedActorIds.has(characterId) && typeof options.executeFixedAction === "function"
+                                ? await options.executeFixedAction({ characterId: characterId, round: round, locationId: step.locationId, action: clone(step.action), committedFacts: compactFacts(factsByActor[characterId]) })
+                                : setup.TimelapseAPI.executeAction(characterId, step.locationId, step.action));
                         if (!actionResult.ok) {
                             failures[characterId] = clone(actionResult.error);
                             replanReasons[characterId] = true;
@@ -653,8 +796,19 @@
                             addFact(publicRecords, factsByActor, `${characterName(characterId)} could not complete the planned activity: ${actionResult.error.message}`, [characterId], actor.locationId, "timelapse_failure", round);
                         } else {
                             activities[characterId] = actionResult.text;
-                            addFact(publicRecords, factsByActor, actionResult.text, [characterId], actionResult.locationId, `timelapse_${actionResult.type}`, round);
+                            addFact(publicRecords, factsByActor, actionResult.text, [characterId], actionResult.locationId, `timelapse_${actionResult.type}`, round, actionResult.visibleToHuman === true);
                         }
+                    }
+
+                    if (typeof options.afterRoundActivities === "function") {
+                        const extra = await options.afterRoundActivities({
+                            mode: mode, round: round, roundCount: roundCount, humanId: humanId,
+                            activities: clone(activities), committedFacts: publicRecords.map(function (record) { return record.text; })
+                        });
+                        if (!extra || extra.ok === false) throw extra && extra.error || structuralError("TIMELAPSE_ROUND_EXTENSION_FAILED", "Timelapse round extension failed.");
+                        (extra.records || []).forEach(function (record) {
+                            addFact(publicRecords, factsByActor, record.text, record.actorIds || [], record.locationId || null, record.kind || "timelapse", round, record.visibleToHuman === true);
+                        });
                     }
 
                     const groups = new Map();
@@ -665,12 +819,12 @@
                         groups.get(actor.locationId).push(characterId);
                     });
                     const groupJobs = Array.from(groups.entries()).filter(function (entry) { return entry[1].length >= 2; }).map(function (entry) {
-                        return resolveEncounterGroup({ locationId: entry[0], participants: entry[1] }, round, activities, factsByActor, publicRecords, client, mode);
+                        return resolveEncounterGroup({ locationId: entry[0], participants: entry[1] }, round, activities, factsByActor, publicRecords, client, mode, options);
                     });
                     const encounterResults = await Promise.all(groupJobs);
                     encounterResults.forEach(function (encounter) {
                         if (!encounter.interactionOccurred) return;
-                        addFact(publicRecords, factsByActor, encounter.resume, encounter.participants, encounter.locationId, "timelapse_interaction", round);
+                        addFact(publicRecords, factsByActor, encounter.resume, encounter.participants, encounter.locationId, "timelapse_interaction", round, encounter.visibleToHuman === true);
                         encounter.participants.forEach(function (characterId) { replanReasons[characterId] = true; });
                     });
 
@@ -688,7 +842,7 @@
                     if (round < roundCount) {
                         const replanCharacters = aiIds.filter(function (characterId) {
                             const actor = setup.Game.getWorld().entities[characterId];
-                            return actor && actor.sleeping !== true && replanReasons[characterId];
+                            return actor && actor.sleeping !== true && replanReasons[characterId] && !fixedActorIds.has(characterId);
                         });
                         const replans = await Promise.all(replanCharacters.map(async function (characterId) {
                             const latestEncounter = publicRecords.slice().reverse().find(function (record) {
@@ -727,65 +881,112 @@
                 }
             }
 
+            if (typeof options.beforeReflection === "function") {
+                currentStage = mode === "daytime" ? "settlement" : "pre-reflection-finalization";
+                const hookResult = await options.beforeReflection({
+                    mode: mode,
+                    humanId: humanId,
+                    roundCount: roundCount,
+                    committedRounds: committedRounds,
+                    committedFacts: publicRecords.map(function (record) { return record.text; }),
+                    factsByActor: clone(factsByActor)
+                });
+                if (!hookResult || hookResult.ok === false) throw hookResult && hookResult.error || structuralError("TIMELAPSE_FINALIZATION_FAILED", "Timelapse pre-reflection finalization failed.");
+                (hookResult.records || []).forEach(function (record) {
+                    addFact(publicRecords, factsByActor, record.text, record.actorIds || [], record.locationId || null, record.kind || "timelapse_settlement", null, record.visibleToHuman === true);
+                });
+                lastCommittedWorld = clone(setup.Game.getWorld());
+            }
+
+            currentStage = "reflection-prepare";
             const reflectionResults = await Promise.all(aiIds.map(async function (characterId) {
                 return { characterId: characterId, result: await requestReflection(characterId, factsByActor[characterId], client, mode) };
             }));
-            const failedReflection = reflectionResults.find(function (record) { return !record.result.ok; });
-            if (failedReflection) throw failedReflection.result.error;
 
+            currentStage = "reflection-commit";
             const reflections = [];
             reflectionResults.forEach(function (record) {
+                if (!record.result || !record.result.ok) {
+                    mindProcessingErrors.push({
+                        stage: "reflection-prepare",
+                        characterId: record.characterId,
+                        error: clone(record.result && record.result.error || { code: "TIMELAPSE_REFLECTION_FAILED", message: "Post-timelapse reflection failed." })
+                    });
+                    return;
+                }
                 const commit = setup.AIMemory.applyUpdates(record.characterId, record.result.value.memoryUpdates);
-                if (!commit.ok) throw commit.error;
-                reflections.push({ characterId: record.characterId, result: clone(record.result.value) });
+                if (!commit.ok) {
+                    mindProcessingErrors.push({ stage: "reflection-commit", characterId: record.characterId, error: clone(commit.error) });
+                    return;
+                }
+                reflections.push({
+                    characterId: record.characterId,
+                    result: clone(record.result.value),
+                    partial: record.result.partial === true,
+                    droppedRelationshipTargetIds: clone(record.result.droppedRelationshipTargetIds || [])
+                });
             });
 
             const consolidations = [];
             if (setup.MemoryConsolidator) {
-                const consolidationResults = await Promise.all(aiIds.map(async function (characterId) {
-                    return {
-                        characterId: characterId,
-                        result: await setup.MemoryConsolidator.compress(characterId, client || setup.OpenRouterClient, { automatic: true, parallel: true })
-                    };
-                }));
-                const failedConsolidation = consolidationResults.find(function (record) { return !record.result.ok; });
-                if (failedConsolidation) throw failedConsolidation.result.error;
-                consolidationResults.forEach(function (record) {
-                    consolidations.push({ characterId: record.characterId, result: clone(record.result) });
-                });
+                currentStage = "maintenance-prepare";
+                const batch = setup.MemoryConsolidator.compressBatch
+                    ? await setup.MemoryConsolidator.compressBatch(aiIds, client || setup.OpenRouterClient, { automatic: true })
+                    : null;
+                if (!batch) {
+                    mindProcessingErrors.push({ stage: "maintenance-prepare", characterId: null, error: structuralError("MEMORY_CONSOLIDATION_BATCH_UNAVAILABLE", "Parallel maintenance batch support is unavailable.") });
+                } else if (!batch.ok) {
+                    const stage = batch.failedStage === "commit" ? "maintenance-commit" : "maintenance-prepare";
+                    const batchError = clone(batch.error || { code: "MEMORY_CONSOLIDATION_FAILED", message: "Mind maintenance failed." });
+                    batchError.details = Object.assign({}, batchError.details || {}, { characterId: batch.characterId || null, maintenanceStage: batch.failedStage || null });
+                    mindProcessingErrors.push({ stage: stage, characterId: batch.characterId || null, error: batchError });
+                    (batch.results || []).forEach(function (record) {
+                        if (record && record.result && record.result.ok) consolidations.push({ characterId: record.characterId, result: clone(record.result) });
+                    });
+                } else {
+                    currentStage = "maintenance-commit";
+                    batch.results.forEach(function (record) {
+                        consolidations.push({ characterId: record.characterId, result: clone(record.result) });
+                    });
+                }
             }
 
+            currentStage = "final-validation";
             const validation = setup.Game.validateWorld();
             if (!validation.ok) throw validation.error;
 
-            return {
+            return recordTimelapseResult({
                 ok: true,
                 mode: mode,
                 humanId: humanId,
                 rounds: roundCount,
                 committedRounds: committedRounds,
+                failedStage: null,
                 hiddenNarrativeEntries: hiddenEntries(publicRecords),
                 committedFacts: publicRecords.map(function (record) { return record.text; }),
                 reflections: reflections,
-                consolidations: consolidations
-            };
+                consolidations: consolidations,
+                mindProcessingErrors: clone(mindProcessingErrors)
+            });
         } catch (error) {
             State.variables.world = clone(lastCommittedWorld);
-            return {
+            return recordTimelapseResult({
                 ok: false,
                 mode: mode,
                 humanId: humanId,
                 rounds: roundCount,
                 committedRounds: committedRounds,
+                failedStage: currentStage,
                 hiddenNarrativeEntries: hiddenEntries(publicRecords),
                 committedFacts: publicRecords.map(function (record) { return record.text; }),
+                mindProcessingErrors: clone(mindProcessingErrors),
                 error: {
                     code: error && error.code || "TIMELAPSE_FAILED",
                     message: error && error.message || "The timelapse failed.",
                     details: error && error.details ? clone(error.details) : undefined,
                     providerResponse: error && error.providerResponse ? clone(error.providerResponse) : undefined
                 }
-            };
+            });
         }
     }
 

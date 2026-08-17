@@ -232,6 +232,26 @@
         }
     }
 
+    function moveWithinActionLabel(destination, view) {
+        if (!destination) return "Move within location";
+        const currentId = view && view.self && view.self.sublocation_id;
+        const current = currentId && view.location.sublocations.find(function (candidate) { return candidate.id === currentId; });
+        const destinationEnter = String(destination.enter_label || "");
+        const destinationName = String(destination.name || "");
+        const returningToGenericInterior = /^(step|go|move)\s+(inside|into)\b/i.test(destinationEnter) || /\b(interior|room interior|floor)\b/i.test(destinationName);
+        if (current && current.id !== destination.id && returningToGenericInterior) {
+            const sourceText = `${current.name || ""} ${current.enter_label || ""} ${view.self.position_text || ""}`.toLowerCase();
+            if (/\bbed\b|\blie\b|\blying\b/.test(sourceText)) return "Get up";
+            if (/\btable\b|\bchair\b|\bbench\b|\bsit\b|\bsitting\b|\bseated\b/.test(sourceText)) return "Stand up";
+            return "Return to the room";
+        }
+        return destination.enter_label || `Move to ${destination.name}`;
+    }
+
+    function doorActionLabel(verb, destination, destinationId) {
+        return `${verb} the door to ${destination ? destination.name : destinationId}`;
+    }
+
     function actionLabel(action, view) {
         if (!action || !action.type) return "None";
         const item = action.item_id ? findViewItem(view, action.item_id) : null;
@@ -240,9 +260,9 @@
         const position = action.destination_id && view.location.sublocations.find(function (candidate) { return candidate.id === action.destination_id; });
         const inventory = action.target_inventory_id && view.accessible_inventories.find(function (candidate) { return candidate.id === action.target_inventory_id; });
         if (action.type === "move") return `Go to ${destination ? destination.name : action.destination_id}`;
-        if (action.type === "unlock") return `Unlock ${destination ? destination.name : action.destination_id}`;
-        if (action.type === "lock") return `Lock ${destination ? destination.name : action.destination_id}`;
-        if (action.type === "move_within_location") return position ? (position.enter_label || `Move to ${position.name}`) : `Move to ${action.destination_id}`;
+        if (action.type === "unlock") return doorActionLabel("Unlock", destination, action.destination_id);
+        if (action.type === "lock") return doorActionLabel("Lock", destination, action.destination_id);
+        if (action.type === "move_within_location") return position ? moveWithinActionLabel(position, view) : `Move to ${action.destination_id}`;
         if (action.type === "take_item") return `Take ${item ? item.name : action.item_id}`;
         if (action.type === "drop_item") return `Drop ${item ? item.name : action.item_id}`;
         if (action.type === "give_item") return `Give ${item ? item.name : action.item_id} to ${target ? target.name : action.target_id}`;
@@ -395,7 +415,7 @@
         const internalAction = view.available_actions.move_within_location;
         (internalAction && internalAction.options.destination_ids || []).forEach(function (destinationId) {
             const destination = view.location.sublocations.find(function (candidate) { return candidate.id === destinationId; });
-            if (destination) groups.here.push({ kind: "action", label: destination.enter_label || `Move to ${destination.name}`, action: { type: "move_within_location", destination_id: destination.id } });
+            if (destination) groups.here.push({ kind: "action", label: moveWithinActionLabel(destination, view), action: { type: "move_within_location", destination_id: destination.id } });
         });
 
         const takeAction = view.available_actions.take_item;
@@ -434,6 +454,10 @@
             });
         });
 
+        if (view.available_actions.go_hunting) {
+            groups.here.push({ kind: "action", label: "Go hunting", action: { type: "go_hunting" } });
+        }
+
         if (view.available_actions.sleep) {
             groups.here.push({ kind: "action", label: view.self.controller_id === "human" ? "Sleep till morning" : "Sleep", action: { type: "sleep" } });
         }
@@ -453,10 +477,10 @@
                 groups.travel.push({ kind: "action", label: `Go to ${destination.name}`, action: { type: "move", destination_id: destination.id } });
             }
             if (unlockIds.includes(destination.id)) {
-                groups.travel.push({ kind: "action", label: `Unlock ${destination.name}`, action: { type: "unlock", destination_id: destination.id } });
+                groups.travel.push({ kind: "action", label: doorActionLabel("Unlock", destination, destination.id), action: { type: "unlock", destination_id: destination.id } });
             }
             if (lockIds.includes(destination.id)) {
-                groups.travel.push({ kind: "action", label: `Lock ${destination.name}`, action: { type: "lock", destination_id: destination.id } });
+                groups.travel.push({ kind: "action", label: doorActionLabel("Lock", destination, destination.id), action: { type: "lock", destination_id: destination.id } });
             }
         });
         return groups;
@@ -1187,6 +1211,92 @@
         root.appendChild(details);
     }
 
+    function closeDayWorkOfferOverlay() {
+        const existing = document.getElementById("framework-day-work-overlay");
+        if (existing) existing.remove();
+    }
+
+    function runEmergencyDumpFromOverlay(statusNode) {
+        const result = setup.EmergencyDiagnostics && setup.EmergencyDiagnostics.download
+            ? setup.EmergencyDiagnostics.download()
+            : { ok: false, error: { message: "Emergency diagnostics are unavailable." } };
+        if (statusNode) statusNode.textContent = result.ok
+            ? `Emergency dump downloaded: ${result.filename}`
+            : (result.error && result.error.message || "Emergency dump failed.");
+        return result;
+    }
+
+    function applyDayOfferResolutionResult(result) {
+        const uiState = getUIState();
+        appendHistory(result && result.historyEntries || []);
+        uiState.selectedAction = null;
+        uiState.rawTurnNarrative = cloneUIValue(result && (result.rawNarrativeFragments || result.narrativeFragments) || []);
+        uiState.narratedTurnNarrative = cloneUIValue(result && result.narratedNarrativeFragments || []);
+        uiState.dynamicNarrationValid = Boolean(result && result.narrator && result.narrator.used);
+        uiState.turnNarrative = cloneUIValue(result && result.narrativeFragments || []);
+        currentTurnHiddenNarrative = cloneUIValue(result && result.hiddenNarrativeEntries || []);
+        if (result && result.timelapseResult) {
+            uiState.locationStatus = result.ok
+                ? "Evening. The daytime timelapse is complete."
+                : `Daytime timelapse stopped after ${result.timelapseResult.committedRounds || 0} committed round(s): ${result.error && result.error.message || "Unknown error."}`;
+        } else if (result && result.ok) {
+            uiState.locationStatus = "Work declined. Morning continues.";
+        } else {
+            uiState.locationStatus = result && result.error ? result.error.message : "The work offer could not be resolved.";
+        }
+    }
+
+    function renderDayWorkOfferOverlay() {
+        closeDayWorkOfferOverlay();
+        if (!setup.DaytimeTimelapse || !setup.DaytimeTimelapse.hasPendingOffer || !setup.DaytimeTimelapse.hasPendingOffer()) return;
+        const offer = setup.DaytimeTimelapse.getPendingOffer();
+        const world = setup.Game.getWorld();
+        const activity = offer && world.dayActivities && world.dayActivities[offer.activityId];
+        const sponsor = offer && world.entities[offer.sponsorCharacterId];
+        if (!offer || !activity || !sponsor) return;
+        const overlay = document.createElement("div");
+        overlay.id = "framework-day-work-overlay";
+        overlay.className = "framework-day-work-overlay";
+        overlay.setAttribute("role", "dialog");
+        overlay.setAttribute("aria-modal", "true");
+        overlay.innerHTML = `
+            <section class="framework-day-work-card">
+                <h2>${escapeHtml(sponsor.name)} offers you a day&rsquo;s work</h2>
+                <p>${escapeHtml(activity.name || "Day work")}</p>
+                <p>Spend the day working with ${escapeHtml(sponsor.name)}?</p>
+                <div id="framework-day-work-status" class="framework-status"></div>
+                <div class="framework-day-work-actions">
+                    <button id="framework-day-work-accept" type="button">Accept work</button>
+                    <button id="framework-day-work-decline" type="button">Decline</button>
+                </div>
+                <div class="framework-day-work-emergency">
+                    <button id="framework-day-work-emergency" type="button">Emergency dump</button>
+                </div>
+            </section>`;
+        document.body.appendChild(overlay);
+        const status = document.getElementById("framework-day-work-status");
+        $("#framework-day-work-emergency").on("click", function () { runEmergencyDumpFromOverlay(status); });
+        async function resolve(accept) {
+            if (runtimeTurnBusy) return;
+            runtimeTurnBusy = true;
+            $("#framework-day-work-accept, #framework-day-work-decline").prop("disabled", true);
+            if (status) status.textContent = accept ? "Starting the working day..." : "Declining the offer...";
+            resetProgressiveTurnPresentation(getUIState());
+            let result;
+            try {
+                result = await setup.TurnFlow.resolveDayWorkOffer(accept, null, {
+                    onCommittedPresentation: function (batch) { appendCommittedPresentation(getUIState(), batch); }
+                });
+            } finally {
+                runtimeTurnBusy = false;
+            }
+            applyDayOfferResolutionResult(result);
+            refreshCurrentPassage();
+        }
+        $("#framework-day-work-accept").on("click", function () { void resolve(true); });
+        $("#framework-day-work-decline").on("click", function () { void resolve(false); });
+    }
+
     function renderLocationView() {
         const root = document.getElementById("location-view");
         if (!root) return;
@@ -1196,6 +1306,13 @@
         const uiState = getUIState();
         const busyState = getBusyState();
         root.replaceChildren();
+
+        const conditions = view.world_conditions || {};
+        const environment = document.createElement("section");
+        environment.className = "framework-environment";
+        appendTextElement(environment, "strong", conditions.time_label || "Evening", "framework-environment-time");
+        appendRPElement(environment, "p", conditions.weather || "The air is mild and still beneath an unremarkable sky.", "framework-environment-weather");
+        root.appendChild(environment);
 
         appendTextElement(root, "h2", view.location.name);
         const status = appendTextElement(root, "div", uiState.locationStatus, "framework-status");
@@ -1252,6 +1369,7 @@
         });
         if (shortcuts.childNodes.length > 0) root.appendChild(shortcuts);
         syncActionSelectionUI(view);
+        renderDayWorkOfferOverlay();
     }
 
     function closeCharacterWindow() {
@@ -1318,7 +1436,28 @@
         $("#framework-character-close").on("click", closeCharacterWindow);
     }
 
+    function ensureGlobalEmergencyDumpControl() {
+        let button = document.getElementById("framework-global-emergency-dump");
+        if (!button) {
+            button = document.createElement("button");
+            button.id = "framework-global-emergency-dump";
+            button.type = "button";
+            button.textContent = "Emergency dump";
+            button.title = "Emergency dump — always available";
+            button.addEventListener("click", function () {
+                const result = setup.EmergencyDiagnostics && setup.EmergencyDiagnostics.download
+                    ? setup.EmergencyDiagnostics.download()
+                    : { ok: false, error: { message: "Emergency diagnostics are unavailable." } };
+                const status = document.getElementById("sidebar-status") || document.getElementById("framework-day-work-status");
+                if (status) status.textContent = result.ok ? `Emergency dump downloaded: ${result.filename}` : (result.error && result.error.message || "Emergency dump failed.");
+            });
+            document.body.appendChild(button);
+        }
+        return button;
+    }
+
     function renderSidebar() {
+        ensureGlobalEmergencyDumpControl();
         const root = document.getElementById("framework-sidebar");
         if (!root) {
             return;
@@ -1728,6 +1867,13 @@
                 ? (result.warning || (result.remembered ? "Key saved for 24 hours." : "Key retained in memory for this page."))
                 : result.error.message);
             renderSidebar();
+            if (result.ok && setup.WorldEnvironment) {
+                void setup.WorldEnvironment.ensureWeatherInitialized().then(function () {
+                    renderSidebar();
+                    renderLocationView();
+                    renderActionPanel();
+                });
+            }
         });
 
         $("#forget-ai-key").on("click", function () {
@@ -1871,7 +2017,9 @@
         } else if (result.waveResult && result.waveResult.truncated) {
             uiState.locationStatus = result.waveResult.warning || "Turn complete, but the AI world tick hit its emergency limit.";
         } else if (result.timelapseResult && result.timelapseResult.ok) {
-            uiState.locationStatus = "Morning. The overnight timelapse is complete.";
+            uiState.locationStatus = result.timelapseResult.mode === "daytime"
+                ? "Evening. The daytime timelapse is complete."
+                : "Morning. The overnight timelapse is complete.";
         } else {
             const count = result.waveResult ? result.waveResult.processedCount : 0;
             uiState.locationStatus = `Turn complete. ${count} AI character(s) reacted.`;
@@ -1981,7 +2129,7 @@
         const lockIds = view.available_actions.lock ? view.available_actions.lock.options.destination_ids : [];
         const unlockDestinations = moveOptions.filter(function (destination) { return unlockIds.includes(destination.id); });
         const lockDestinations = moveOptions.filter(function (destination) { return lockIds.includes(destination.id); });
-        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume", "use_item", "equip", "unequip", "sleep"]);
+        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "place_item", "fill", "consume", "use_item", "equip", "unequip", "sleep", "go_hunting"]);
         const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
             return !knownActionTypes.has(entry[0]) && isZeroInputAbilityAction(entry[1]);
         });
@@ -2153,6 +2301,7 @@
     }
 
     function renderMigrationOverlay(title, detail, failed) {
+        ensureGlobalEmergencyDumpControl();
         closeMigrationOverlay();
         const overlay = document.createElement("div");
         overlay.id = "framework-migration-overlay";
@@ -2372,5 +2521,14 @@
         renderSidebar();
         renderLocationView();
         renderActionPanel();
+        if (setup.WorldEnvironment) {
+            void setup.WorldEnvironment.ensureWeatherInitialized().then(function (result) {
+                if (result && !result.skipped) {
+                    renderSidebar();
+                    renderLocationView();
+                    renderActionPanel();
+                }
+            });
+        }
     });
 }());

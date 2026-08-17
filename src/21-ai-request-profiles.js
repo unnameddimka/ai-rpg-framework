@@ -10,6 +10,10 @@
         "reflection": Object.freeze({ modelRole: "utility", maxTokens: 1800, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.4 }),
         "memory-consolidation": Object.freeze({ modelRole: "utility", maxTokens: 2400, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.25 }),
         "item-utility-query": Object.freeze({ modelRole: "utility", maxTokens: 1800, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.55 }),
+        "daytime-job-narration": Object.freeze({ modelRole: "character", maxTokens: 900, reasoningMaxTokens: 200, temperature: 0.45 }),
+        "daytime-job-settlement": Object.freeze({ modelRole: "character", maxTokens: 500, reasoningMaxTokens: 200, temperature: 0.25 }),
+        "daytime-hunting-narration": Object.freeze({ modelRole: "narrator", maxTokens: 420, reasoningMaxTokens: 0, temperature: 0.7 }),
+        "weather-narration": Object.freeze({ modelRole: "narrator", maxTokens: 300, reasoningMaxTokens: 0, temperature: 0.6 }),
         "presentation-location": Object.freeze({ modelRole: "narrator", maxTokens: 400, reasoningMaxTokens: 0, temperature: 0.7 }),
         "presentation-tick": Object.freeze({ modelRole: "narrator", maxTokens: 700, reasoningMaxTokens: 0, temperature: 0.7 }),
         "prompt-lab": Object.freeze({ modelRole: "character", maxTokens: 6000, reasoningMaxTokens: 1500, temperature: 0.4 })

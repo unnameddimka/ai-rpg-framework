@@ -358,40 +358,133 @@
             }
         }
 
-        const commit = setup.AIMemory.commitMaintenanceCandidate(
-            characterId,
-            sourceState,
-            candidateState,
-            automatic ? "automatic" : "manual"
-        );
-        if (!commit.ok) {
+        const stageSummary = stageResults.map(function (entry) {
+            const result = entry.result;
+            return { stage: entry.stage, modelId: result.modelId || null, usage: clone(result.usage || null), repaired: Boolean(result.repaired) };
+        });
+        if (options.deferCommit === true) {
             return {
-                ok: false,
-                error: clone(commit.error),
-                consolidation: Object.assign({}, report, { committed: false, failedStage: "commit" })
+                ok: true,
+                actorId: characterId,
+                nothingToCompress: false,
+                nothingToMaintain: false,
+                consolidation: clone(report),
+                stages: stageSummary,
+                preparedMaintenance: {
+                    actorId: characterId,
+                    sourceState: clone(sourceState),
+                    candidateState: clone(candidateState),
+                    trigger: automatic ? "automatic" : "manual"
+                }
             };
         }
-        report.committed = commit.committed === true;
-        report.changed = commit.changed === true;
-        report.cursorChanged = commit.cursorChanged === true;
-        report.snapshotCount = commit.snapshotCount;
-        report.retainedRecentCount = commit.recentMemories === undefined ? sourceState.recentMemories.length : commit.recentMemories;
-        report.totalLongTermMemories = commit.longTermMemories === undefined ? sourceState.longTermMemories.length : commit.longTermMemories;
-        report.totalBeliefs = commit.beliefs === undefined ? sourceState.beliefs.length : commit.beliefs;
-        report.archivedMemories = commit.archivedMemories === undefined ? sourceState.maintenanceArchive.memories.length : commit.archivedMemories;
-        report.archivedBeliefs = commit.archivedBeliefs === undefined ? sourceState.maintenanceArchive.beliefs.length : commit.archivedBeliefs;
 
-        return {
+        return commitPrepared({
             ok: true,
             actorId: characterId,
             nothingToCompress: false,
             nothingToMaintain: false,
+            consolidation: clone(report),
+            stages: stageSummary,
+            preparedMaintenance: {
+                actorId: characterId,
+                sourceState: clone(sourceState),
+                candidateState: clone(candidateState),
+                trigger: automatic ? "automatic" : "manual"
+            }
+        });
+    }
+
+    function remapGeneratedIds(report, mapping) {
+        const result = clone(report || {});
+        const map = mapping || {};
+        ["generatedRecentConsolidationMemoryIds", "generatedLongTermMergeMemoryIds"].forEach(function (key) {
+            if (Array.isArray(result[key])) result[key] = result[key].map(function (id) { return map[id] || id; });
+        });
+        return result;
+    }
+
+    function commitPrepared(prepared) {
+        if (!prepared || prepared.ok === false) return prepared || failure("MEMORY_CONSOLIDATION_INVALID", "Prepared maintenance result is invalid.");
+        if (prepared.nothingToMaintain || prepared.nothingToCompress) {
+            const untouched = clone(prepared);
+            delete untouched.preparedMaintenance;
+            return untouched;
+        }
+        const proposal = prepared.preparedMaintenance;
+        if (!proposal || !proposal.actorId || !proposal.sourceState || !proposal.candidateState) {
+            return failure("MEMORY_CONSOLIDATION_INVALID", "Prepared maintenance proposal is missing commit state.");
+        }
+        const commit = setup.AIMemory.commitMaintenanceCandidate(
+            proposal.actorId,
+            proposal.sourceState,
+            proposal.candidateState,
+            proposal.trigger
+        );
+        if (!commit.ok) {
+            return {
+                ok: false,
+                actorId: proposal.actorId,
+                error: clone(commit.error),
+                consolidation: Object.assign({}, clone(prepared.consolidation || {}), { committed: false, failedStage: "commit" }),
+                stages: clone(prepared.stages || [])
+            };
+        }
+        const report = remapGeneratedIds(prepared.consolidation || {}, commit.memoryIdMap);
+        report.committed = commit.committed === true;
+        report.changed = commit.changed === true;
+        report.cursorChanged = commit.cursorChanged === true;
+        report.snapshotCount = commit.snapshotCount;
+        report.retainedRecentCount = commit.recentMemories === undefined ? proposal.sourceState.recentMemories.length : commit.recentMemories;
+        report.totalLongTermMemories = commit.longTermMemories === undefined ? proposal.sourceState.longTermMemories.length : commit.longTermMemories;
+        report.totalBeliefs = commit.beliefs === undefined ? proposal.sourceState.beliefs.length : commit.beliefs;
+        report.archivedMemories = commit.archivedMemories === undefined ? proposal.sourceState.maintenanceArchive.memories.length : commit.archivedMemories;
+        report.archivedBeliefs = commit.archivedBeliefs === undefined ? proposal.sourceState.maintenanceArchive.beliefs.length : commit.archivedBeliefs;
+        return {
+            ok: true,
+            actorId: proposal.actorId,
+            nothingToCompress: false,
+            nothingToMaintain: false,
             consolidation: report,
-            stages: stageResults.map(function (entry) {
-                const result = entry.result;
-                return { stage: entry.stage, modelId: result.modelId || null, usage: clone(result.usage || null), repaired: Boolean(result.repaired) };
-            })
+            stages: clone(prepared.stages || [])
         };
+    }
+
+    async function compressBatch(characterIds, client, options) {
+        options = options && typeof options === "object" ? options : {};
+        const ids = Array.from(new Set((Array.isArray(characterIds) ? characterIds : []).filter(function (id) { return typeof id === "string" && id; })));
+        const preparedResults = await Promise.all(ids.map(async function (characterId) {
+            return {
+                characterId: characterId,
+                result: await compress(characterId, client, Object.assign({}, options, { automatic: options.automatic === true, parallel: true, deferCommit: true }))
+            };
+        }));
+        const failedPrepare = preparedResults.find(function (record) { return !record.result || record.result.ok === false; });
+        if (failedPrepare) {
+            return {
+                ok: false,
+                failedStage: "prepare",
+                characterId: failedPrepare.characterId,
+                error: clone(failedPrepare.result && failedPrepare.result.error || { code: "MEMORY_CONSOLIDATION_FAILED", message: "Mind maintenance preparation failed." }),
+                results: preparedResults.map(function (record) { return { characterId: record.characterId, result: clone(record.result) }; })
+            };
+        }
+
+        const committed = [];
+        for (const record of preparedResults) {
+            const result = commitPrepared(record.result);
+            committed.push({ characterId: record.characterId, result: clone(result) });
+            if (!result.ok) {
+                return {
+                    ok: false,
+                    failedStage: "commit",
+                    characterId: record.characterId,
+                    error: clone(result.error),
+                    results: committed
+                };
+            }
+        }
+        return { ok: true, results: committed };
     }
 
     setup.MemoryConsolidator = {
@@ -406,6 +499,8 @@
         RECONCILIATION_BELIEF_BATCH_SIZE: RECONCILIATION_BELIEF_BATCH_SIZE,
         MAX_DISCOVERED_CONFLICTS: MAX_DISCOVERED_CONFLICTS,
         MAX_CONFLICTS_RESOLVED_PER_MAINTENANCE: MAX_CONFLICTS_RESOLVED_PER_MAINTENANCE,
-        compress: compress
+        compress: compress,
+        compressBatch: compressBatch,
+        commitPrepared: commitPrepared
     };
 }());

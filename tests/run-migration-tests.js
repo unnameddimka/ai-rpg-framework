@@ -62,6 +62,16 @@ delete legacy.inventories.inventory_maraCottageTable;
 delete legacy.inventories.inventory_maraCottageShelves;
 if (legacy.entities.street && legacy.entities.street.exits) delete legacy.entities.street.exits.villageEdge;
 
+// Simulate a save created before keyed private chests and their key instances were authored.
+for (const keyId of ["innkeeperChestKey", "blacksmithChestKey", "maraChestKey", "maraCottageKey"]) {
+    removeFromAllInventories(legacy, keyId);
+    delete legacy.entities[keyId];
+}
+for (const chestId of ["innkeeperRoomChest", "smithyLivingChest", "maraCottageChest"]) delete legacy.entities[chestId];
+for (const inventoryId of ["inventory_innkeeperRoomChest", "inventory_smithyLivingChest", "inventory_maraCottageChest"]) delete legacy.inventories[inventoryId];
+if (legacy.entities.innkeeperRoomFloor) legacy.entities.innkeeperRoomFloor.reachableSublocationIds = legacy.entities.innkeeperRoomFloor.reachableSublocationIds.filter(id=>id!=="innkeeperRoomChest");
+if (legacy.entities.smithyLivingRoom) legacy.entities.smithyLivingRoom.reachableSublocationIds = legacy.entities.smithyLivingRoom.reachableSublocationIds.filter(id=>id!=="smithyLivingChest");
+
 // Simulate a save created before the Memory Stone authored instance existed at all.
 removeFromAllInventories(legacy, "memoryStone_01");
 delete legacy.entities.memoryStone_01;
@@ -146,8 +156,18 @@ assert(world.schemaVersion === setup.Game.WORLD_SCHEMA_VERSION && world.authorin
 assert(world.entities.villageEdge && world.entities.secludedCottage && world.entities.street.exits.villageEdge === "villageEdge",
     "fresh authored village edge and Mara cottage should appear in the migrated playthrough");
 assert(world.entities.arcaneKnowledgeSlab_01 && world.entities.arcaneKnowledgeSlab_01.definitionId === "arcaneKnowledgeSlab" &&
-    world.entities.arcaneKnowledgeSlab_01.containerId === "inventory_maraCottageTable",
-    "a newly authored arcane slab absent from the old save should appear on Mara's current authored work table");
+    world.entities.arcaneKnowledgeSlab_01.containerId === "inventory_maraCottageChest" &&
+    world.inventories.inventory_maraCottageChest.itemIds.includes("arcaneKnowledgeSlab_01"),
+    "an orphaned legacy arcane slab should be reconciled into Mara's current authored keyed chest placement");
+assert(world.entities.innkeeperRoomChest && world.entities.smithyLivingChest && world.entities.maraCottageChest &&
+    world.inventories.inventory_innkeeperRoomChest.requiredKeyItemId === "innkeeperChestKey" &&
+    world.inventories.inventory_smithyLivingChest.requiredKeyItemId === "blacksmithChestKey" &&
+    world.inventories.inventory_maraCottageChest.requiredKeyItemId === "maraChestKey" &&
+    world.inventories.inventory_innkeeper.itemIds.includes("innkeeperChestKey") &&
+    world.inventories.inventory_blacksmith.itemIds.includes("blacksmithChestKey") &&
+    world.inventories.inventory_hoodedWoman.itemIds.includes("maraChestKey") &&
+    world.inventories.inventory_hoodedWoman.itemIds.includes("maraCottageKey"),
+    "migration should introduce newly authored keyed private storage and ordinary owner-carried keys exactly once");
 assert(world.entities.memoryStone_01 && world.entities.memoryStone_01.definitionId === "memoryStone" &&
     world.entities.memoryStone_01.containerId === "inventory_villageTemple" &&
     world.inventories.inventory_villageTemple.itemIds.filter(function (id) { return id === "memoryStone_01"; }).length === 1,

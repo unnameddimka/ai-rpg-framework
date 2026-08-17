@@ -196,7 +196,6 @@
                 beliefs: clone(actor.mind.beliefs || []),
                 maintenanceArchive: clone(archive),
                 mindMaintenanceState: sanitizeMindMaintenanceState(actor.mindMaintenanceState),
-                nextMemoryId: pair.world.nextMemoryId,
                 mindForSnapshot: sourceMind
             },
             candidateState: {
@@ -205,7 +204,7 @@
                 beliefs: clone(actor.mind.beliefs || []),
                 maintenanceArchive: clone(archive),
                 mindMaintenanceState: sanitizeMindMaintenanceState(actor.mindMaintenanceState),
-                nextMemoryId: pair.world.nextMemoryId
+                nextTemporaryMemoryId: 1
             },
             readOnlyContext: {
                 character: { id: actor.id, name: actor.name, aiDescription: typeof actor.aiDescription === "string" ? actor.aiDescription : "" },
@@ -229,19 +228,75 @@
         candidateState.maintenanceArchive.beliefs.push({ archivedAt: archivedAt || new Date().toISOString(), record: clone(belief) });
     }
 
+    const MAINTENANCE_TEMP_MEMORY_PREFIX = "maintenance_tmp_";
+
     function nextMaintenanceMemoryId(candidateState) {
+        const archive = sanitizeMaintenanceArchive(candidateState.maintenanceArchive);
         const existing = new Set(candidateState.recentMemories.concat(candidateState.longTermMemories).map(function (memory) { return memory.id; }));
+        archive.memories.forEach(function (entry) { if (entry && entry.record) existing.add(entry.record.id); });
+        let counter = Number.isInteger(candidateState.nextTemporaryMemoryId) && candidateState.nextTemporaryMemoryId > 0
+            ? candidateState.nextTemporaryMemoryId
+            : 1;
         let memoryId;
-        do { memoryId = `memory_ai_${candidateState.nextMemoryId++}`; } while (existing.has(memoryId));
+        do { memoryId = `${MAINTENANCE_TEMP_MEMORY_PREFIX}${counter++}`; } while (existing.has(memoryId));
+        candidateState.nextTemporaryMemoryId = counter;
         return memoryId;
+    }
+
+    function currentNextMemoryId(world) {
+        let maximum = 0;
+        I.getCharacters(world).forEach(function (character) {
+            ["recentMemories", "longTermMemories"].forEach(function (partition) {
+                (character.mind && character.mind[partition] || []).forEach(function (memory) {
+                    const match = /^memory_ai_(\d+)$/.exec(memory && memory.id || "");
+                    if (match) maximum = Math.max(maximum, Number(match[1]) || 0);
+                });
+            });
+            sanitizeMaintenanceArchive(character.mind && character.mind.maintenanceArchive).memories.forEach(function (entry) {
+                const match = /^memory_ai_(\d+)$/.exec(entry.record && entry.record.id || "");
+                if (match) maximum = Math.max(maximum, Number(match[1]) || 0);
+            });
+        });
+        return Math.max(Number.isInteger(world.nextMemoryId) && world.nextMemoryId > 0 ? world.nextMemoryId : 1, maximum + 1);
+    }
+
+    function materializeMaintenanceMemoryIds(candidateState, world) {
+        const materialized = clone(candidateState);
+        const tempIds = new Set();
+        function remember(record) {
+            if (record && typeof record.id === "string" && record.id.indexOf(MAINTENANCE_TEMP_MEMORY_PREFIX) === 0) tempIds.add(record.id);
+        }
+        (materialized.recentMemories || []).forEach(remember);
+        (materialized.longTermMemories || []).forEach(remember);
+        const archive = sanitizeMaintenanceArchive(materialized.maintenanceArchive);
+        archive.memories.forEach(function (entry) { remember(entry.record); });
+        materialized.maintenanceArchive = archive;
+
+        const ordered = Array.from(tempIds).sort(function (a, b) {
+            const ai = Number(a.slice(MAINTENANCE_TEMP_MEMORY_PREFIX.length)) || 0;
+            const bi = Number(b.slice(MAINTENANCE_TEMP_MEMORY_PREFIX.length)) || 0;
+            return ai - bi || a.localeCompare(b);
+        });
+        const mapping = {};
+        let nextId = currentNextMemoryId(world);
+        ordered.forEach(function (temporaryId) {
+            mapping[temporaryId] = `memory_ai_${nextId++}`;
+        });
+        function rewrite(record) {
+            if (record && mapping[record.id]) record.id = mapping[record.id];
+        }
+        (materialized.recentMemories || []).forEach(rewrite);
+        (materialized.longTermMemories || []).forEach(rewrite);
+        materialized.maintenanceArchive.memories.forEach(function (entry) { rewrite(entry.record); });
+        delete materialized.nextTemporaryMemoryId;
+        return { candidateState: materialized, memoryIdMap: mapping, nextMemoryId: nextId };
     }
 
     function maintenanceMindChanged(sourceState, candidateState) {
         return JSON.stringify(sourceState.recentMemories) !== JSON.stringify(candidateState.recentMemories) ||
             JSON.stringify(sourceState.longTermMemories) !== JSON.stringify(candidateState.longTermMemories) ||
             JSON.stringify(sourceState.beliefs) !== JSON.stringify(candidateState.beliefs) ||
-            JSON.stringify(sourceState.maintenanceArchive) !== JSON.stringify(candidateState.maintenanceArchive) ||
-            sourceState.nextMemoryId !== candidateState.nextMemoryId;
+            JSON.stringify(sourceState.maintenanceArchive) !== JSON.stringify(candidateState.maintenanceArchive);
     }
 
     function maintenanceOperationalStateChanged(sourceState, candidateState) {
@@ -260,8 +315,7 @@
                 JSON.stringify(actor.mind.longTermMemories) !== JSON.stringify(sourceState.longTermMemories) ||
                 JSON.stringify(actor.mind.beliefs) !== JSON.stringify(sourceState.beliefs) ||
                 JSON.stringify(currentArchive) !== JSON.stringify(sourceState.maintenanceArchive) ||
-                JSON.stringify(currentMaintenanceState) !== JSON.stringify(sanitizeMindMaintenanceState(sourceState.mindMaintenanceState)) ||
-                pair.world.nextMemoryId !== sourceState.nextMemoryId) {
+                JSON.stringify(currentMaintenanceState) !== JSON.stringify(sanitizeMindMaintenanceState(sourceState.mindMaintenanceState))) {
             return fail("MEMORY_CONSOLIDATION_STALE", "Character mind changed while maintenance was in progress; the result was not applied.");
         }
         const mindChanged = maintenanceMindChanged(sourceState, candidateState);
@@ -270,14 +324,16 @@
             return ok({ actorId: actorId, committed: false, changed: false, cursorChanged: false, snapshotCount: sanitizeMaintenanceSnapshots(actor.mindMaintenanceSnapshots).length });
         }
 
+        const materialized = materializeMaintenanceMemoryIds(candidateState, pair.world);
+        const committedState = materialized.candidateState;
         const candidateWorld = clone(pair.world);
         const candidateActor = I.getCharacter(actorId, candidateWorld);
-        candidateActor.mind.recentMemories = clone(candidateState.recentMemories);
-        candidateActor.mind.longTermMemories = clone(candidateState.longTermMemories);
-        candidateActor.mind.beliefs = clone(candidateState.beliefs);
-        candidateActor.mind.maintenanceArchive = sanitizeMaintenanceArchive(candidateState.maintenanceArchive);
-        candidateActor.mindMaintenanceState = sanitizeMindMaintenanceState(candidateState.mindMaintenanceState);
-        candidateWorld.nextMemoryId = candidateState.nextMemoryId;
+        candidateActor.mind.recentMemories = clone(committedState.recentMemories);
+        candidateActor.mind.longTermMemories = clone(committedState.longTermMemories);
+        candidateActor.mind.beliefs = clone(committedState.beliefs);
+        candidateActor.mind.maintenanceArchive = sanitizeMaintenanceArchive(committedState.maintenanceArchive);
+        candidateActor.mindMaintenanceState = sanitizeMindMaintenanceState(committedState.mindMaintenanceState);
+        candidateWorld.nextMemoryId = materialized.nextMemoryId;
 
         const snapshots = sanitizeMaintenanceSnapshots(candidateActor.mindMaintenanceSnapshots);
         if (mindChanged) {
@@ -303,7 +359,8 @@
             longTermMemories: candidateActor.mind.longTermMemories.length,
             beliefs: candidateActor.mind.beliefs.length,
             archivedMemories: candidateActor.mind.maintenanceArchive.memories.length,
-            archivedBeliefs: candidateActor.mind.maintenanceArchive.beliefs.length
+            archivedBeliefs: candidateActor.mind.maintenanceArchive.beliefs.length,
+            memoryIdMap: clone(materialized.memoryIdMap)
         });
     }
 

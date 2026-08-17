@@ -354,7 +354,7 @@
         }
 
         waveInFlight = true;
-        const reacted = new Set();
+        const reacted = new Set(Array.isArray(options.alreadyReactedCharacterIds) ? options.alreadyReactedCharacterIds : []);
         const results = [];
         const emergencyLimit = 64;
         let memoryConsolidation = null;
@@ -413,6 +413,19 @@
                 }
                 reacted.add(next.entry.characterId);
                 emitCommittedResult(options, result);
+                if (setup.DaytimeTimelapse && setup.DaytimeTimelapse.hasPendingOffer && setup.DaytimeTimelapse.hasPendingOffer()) {
+                    setup.DaytimeTimelapse.notePausedReactionIds(Array.from(reacted));
+                    return {
+                        ok: true,
+                        pausedForDayOffer: true,
+                        processedCount: reacted.size,
+                        reactedCharacterIds: Array.from(reacted),
+                        results: results,
+                        remainingQueue: getQueueView(),
+                        memoryConsolidation: clone(memoryConsolidation),
+                        warning: memoryConsolidation.warnings.length ? memoryConsolidation.warnings.join(" ") : null
+                    };
+                }
             }
 
             const unreacted = orderedQueueEntries(reacted);

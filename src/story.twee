@@ -5,7 +5,6 @@ AI RPG Framework POC
 :: StoryInit
 <<set $health = 10>>
 <<set $maxHealth = 10>>
-<<set $time = "Evening">>
 <<run setup.Game.bootstrap()>>
 
 

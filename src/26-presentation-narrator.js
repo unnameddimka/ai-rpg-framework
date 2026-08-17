@@ -371,9 +371,10 @@
         const profileName = stage === "location" ? "presentation-location" : "presentation-tick";
         return {
             enforceRequestTiming: true,
-            chat: function (messages) {
+            chat: function (messages, requestOptions) {
                 const options = setup.AIRequestProfiles.resolve(profileName, { actorId: null });
                 options.modelId = modelId;
+                if (requestOptions && requestOptions.diagnosticContext) options.diagnosticContext = requestOptions.diagnosticContext;
                 return setup.OpenRouterClient.chatWithOptions(messages, options);
             }
         };

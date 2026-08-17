@@ -813,3 +813,90 @@ details[open] > summary .framework-disclosure-arrow {
 #emergency-dump-button:hover {
     background: #a52626;
 }
+
+.framework-environment {
+    margin: 0 0 0.9rem;
+    padding: 0.7rem 0.85rem;
+    border-left: 3px solid #766e63;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.framework-environment-time {
+    display: block;
+    font-size: 1.05rem;
+    letter-spacing: 0.03em;
+}
+
+.framework-environment-weather {
+    margin: 0.25rem 0 0;
+    opacity: 0.9;
+}
+
+.framework-day-work-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 14000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    box-sizing: border-box;
+    background: rgba(0, 0, 0, 0.84);
+    backdrop-filter: blur(2px);
+}
+
+.framework-day-work-card {
+    width: min(36rem, 100%);
+    padding: 1.5rem;
+    box-sizing: border-box;
+    border: 1px solid #80766a;
+    border-radius: 0.45rem;
+    background: #24211d;
+    color: #eee8df;
+    text-align: center;
+    box-shadow: 0 1.2rem 4rem rgba(0, 0, 0, 0.65);
+}
+
+.framework-day-work-card h2 { margin-top: 0; }
+
+.framework-day-work-actions {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.framework-day-work-actions button {
+    min-width: 9rem;
+    padding: 0.65rem 1rem;
+}
+
+.framework-day-work-emergency {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid #554f48;
+}
+
+#framework-day-work-emergency {
+    background: #8b1e1e;
+    border-color: #b73535;
+    color: #fff;
+    font-weight: 700;
+}
+
+#framework-global-emergency-dump {
+    position: fixed;
+    right: 0.65rem;
+    bottom: 0.65rem;
+    z-index: 30000;
+    padding: 0.4rem 0.65rem;
+    background: #8b1e1e;
+    border: 1px solid #b73535;
+    color: #fff;
+    font-size: 0.82rem;
+    font-weight: 700;
+    opacity: 0.88;
+}
+
+#framework-global-emergency-dump:hover,
+#framework-global-emergency-dump:focus { opacity: 1; background: #a52626; }

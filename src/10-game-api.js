@@ -2,12 +2,14 @@
     "use strict";
 
     const LEGACY_WORLD_VERSION = 6;
-    const WORLD_SCHEMA_VERSION = 9;
-    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, WORLD_SCHEMA_VERSION]);
+    const WORLD_SCHEMA_VERSION = 11;
+    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, 9, 10, WORLD_SCHEMA_VERSION]);
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
     const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden"]);
     const LOCK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
+    const TIME_PHASES = new Set(["evening", "nighttime_timelapse", "morning", "daytime_timelapse"]);
+    const DEFAULT_WEATHER_NARRATIVE = "The air is mild and still beneath an unremarkable sky.";
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value));
@@ -36,13 +38,14 @@
     function installGeneratedData(world) {
         const document = setup.GeneratedWorldData;
         if (!document || document.schemaVersion !== 2 || typeof document.authoringRevision !== "string" || !document.authoringRevision ||
-                !document.locations || !document.characters || !document.abilities || !document.itemDefinitions || !document.items) {
+                !document.locations || !document.characters || !document.abilities || !document.itemDefinitions || !document.items || !document.dayActivities) {
             throw new Error("Generated world data is missing, lacks an authoring revision, or uses an unsupported schema version.");
         }
 
         world.startLocationId = document.startLocationId;
         world.abilities = clone(document.abilities);
         world.itemDefinitions = clone(document.itemDefinitions);
+        world.dayActivities = clone(document.dayActivities || {});
 
         for (const [locationId, sourceLocation] of Object.entries(document.locations)) {
             const location = clone(sourceLocation);
@@ -75,6 +78,7 @@
                         id: sublocation.inventoryId,
                         ownerId: sublocationId,
                         name: sublocation.inventoryName || sublocation.name,
+                        requiredKeyItemId: typeof sublocation.requiredKeyItemId === "string" && sublocation.requiredKeyItemId.trim() ? sublocation.requiredKeyItemId.trim() : null,
                         itemIds: []
                     };
                 }
@@ -146,6 +150,14 @@
 
             inventories: {},
             itemDefinitions: {},
+            dayActivities: {},
+            environment: {
+                timePhase: "evening",
+                weatherNarrative: "The air is mild and still beneath an unremarkable sky.",
+                weatherInitialized: false,
+                weatherSource: "fallback"
+            },
+            daytime: { pendingOffer: null, activeActivity: null },
 
             control: {
                 assignments: {}
@@ -466,9 +478,19 @@
         return fragments.join(" ");
     }
 
+    function actorDirectlyCarriesItem(actor, itemId, world) {
+        const inventory = actor && world.inventories[actor.inventoryId];
+        return Boolean(inventory && inventory.itemIds.includes(itemId));
+    }
+
+    function canAccessInventory(actor, inventory, world) {
+        if (!inventory) return false;
+        if (!inventory.requiredKeyItemId) return true;
+        return actorDirectlyCarriesItem(actor, inventory.requiredKeyItemId, world);
+    }
+
     function actorOwnsItem(actor, itemId, world) {
-        const inventory = world.inventories[actor.inventoryId];
-        return Boolean(inventory && inventory.itemIds.includes(itemId)) || equippedRecords(actor).some(function (record) { return record.itemId === itemId; });
+        return actorDirectlyCarriesItem(actor, itemId, world) || equippedRecords(actor).some(function (record) { return record.itemId === itemId; });
     }
 
     function transformItem(item, resultDefinitionId, world) {
@@ -496,7 +518,9 @@
         }
         return inventoryIds.map(function (inventoryId) {
             return world.inventories[inventoryId];
-        }).filter(Boolean);
+        }).filter(function (inventory) {
+            return canAccessInventory(actor, inventory, world);
+        });
     }
 
     function canReachCharacter(actor, target, world) {
@@ -659,6 +683,15 @@
         }
 
         for (const inventory of Object.values(world.inventories)) {
+            if (inventory.requiredKeyItemId !== undefined && inventory.requiredKeyItemId !== null) {
+                if (typeof inventory.requiredKeyItemId !== "string" || !inventory.requiredKeyItemId.trim()) {
+                    return fail("INVENTORY_KEY_INVALID", `Inventory ${inventory.id} has an invalid required key item ID.`);
+                }
+                const keyItem = world.entities[inventory.requiredKeyItemId];
+                if (!keyItem || keyItem.type !== "item") {
+                    return fail("INVENTORY_KEY_MISSING", `Inventory ${inventory.id} references missing required key item ${String(inventory.requiredKeyItemId)}.`);
+                }
+            }
             for (const itemId of inventory.itemIds) {
                 const item = world.entities[itemId];
                 if (!item || item.type !== "item") return fail("INVENTORY_ITEM_INVALID", `Inventory ${inventory.id} contains invalid item ${itemId}.`);
@@ -933,6 +966,53 @@
         return ok();
     }
 
+    function validateEnvironmentAndDaytime(world) {
+        if (!world.environment || typeof world.environment !== "object" || Array.isArray(world.environment)) {
+            return fail("WORLD_ENVIRONMENT_INVALID", "World environment state is missing.");
+        }
+        if (!TIME_PHASES.has(world.environment.timePhase)) {
+            return fail("WORLD_TIME_PHASE_INVALID", "World time phase is invalid.");
+        }
+        if (typeof world.environment.weatherNarrative !== "string" || !world.environment.weatherNarrative.trim() || world.environment.weatherNarrative.length > 2000) {
+            return fail("WORLD_WEATHER_INVALID", "World weather narrative must contain 1 to 2000 characters.");
+        }
+        if (typeof world.environment.weatherInitialized !== "boolean") {
+            return fail("WORLD_WEATHER_INVALID", "World weather initialization state must be Boolean.");
+        }
+        if (!world.dayActivities || typeof world.dayActivities !== "object" || Array.isArray(world.dayActivities)) {
+            return fail("DAY_ACTIVITIES_INVALID", "World day activities are missing.");
+        }
+        for (const [activityId, activity] of Object.entries(world.dayActivities)) {
+            if (!activity || activity.id !== activityId || (activity.kind !== "sponsored_job" && activity.kind !== "solo")) {
+                return fail("DAY_ACTIVITY_INVALID", `Day activity ${activityId} is invalid.`);
+            }
+            if (!getLocation(activity.workLocationId, world)) return fail("DAY_ACTIVITY_INVALID", `Day activity ${activityId} references a missing work location.`);
+            if (activity.kind === "sponsored_job" && !getCharacter(activity.sponsorCharacterId, world)) {
+                return fail("DAY_ACTIVITY_INVALID", `Day activity ${activityId} references a missing sponsor.`);
+            }
+            if (activity.kind === "solo" && !getLocation(activity.entryLocationId, world)) {
+                return fail("DAY_ACTIVITY_INVALID", `Day activity ${activityId} references a missing entry location.`);
+            }
+        }
+        if (!world.daytime || typeof world.daytime !== "object" || Array.isArray(world.daytime)) {
+            return fail("DAYTIME_STATE_INVALID", "World daytime runtime state is missing.");
+        }
+        if (world.daytime.pendingOffer !== null) {
+            const offer = world.daytime.pendingOffer;
+            const activity = offer && world.dayActivities[offer.activityId];
+            if (!activity || activity.kind !== "sponsored_job" || activity.sponsorCharacterId !== offer.sponsorCharacterId || !getCharacter(offer.humanCharacterId, world)) {
+                return fail("DAYTIME_OFFER_INVALID", "Pending daytime work offer is invalid.");
+            }
+        }
+        if (world.daytime.activeActivity !== null) {
+            const active = world.daytime.activeActivity;
+            if (!active || !world.dayActivities[active.activityId] || !getCharacter(active.humanCharacterId, world)) {
+                return fail("DAYTIME_ACTIVITY_INVALID", "Active daytime activity is invalid.");
+            }
+        }
+        return ok();
+    }
+
     function validateWorld(world) {
         if (!world || typeof world !== "object") {
             return fail("WORLD_MISSING", "World state does not exist.");
@@ -959,6 +1039,8 @@
         if (!spatialResult.ok) return spatialResult;
         const itemResult = validateItemInvariants(world);
         if (!itemResult.ok) return itemResult;
+        const environmentResult = validateEnvironmentAndDaytime(world);
+        if (!environmentResult.ok) return environmentResult;
 
         ensureAIState(world);
         for (const [characterId, continuation] of Object.entries(world.ai.continuations)) {
@@ -989,6 +1071,18 @@
         if (!Array.isArray(world.debug.repairs)) world.debug.repairs = [];
         if (!Array.isArray(world.debug.controllerLog)) world.debug.controllerLog = [];
         if (!Array.isArray(world.debug.migrationReports)) world.debug.migrationReports = [];
+
+        if (!world.environment || typeof world.environment !== "object" || Array.isArray(world.environment)) {
+            world.environment = { timePhase: "evening", weatherNarrative: DEFAULT_WEATHER_NARRATIVE, weatherInitialized: false, weatherSource: "fallback" };
+        }
+        if (!TIME_PHASES.has(world.environment.timePhase)) world.environment.timePhase = "evening";
+        if (typeof world.environment.weatherNarrative !== "string" || !world.environment.weatherNarrative.trim()) world.environment.weatherNarrative = DEFAULT_WEATHER_NARRATIVE;
+        if (typeof world.environment.weatherInitialized !== "boolean") world.environment.weatherInitialized = false;
+        if (typeof world.environment.weatherSource !== "string") world.environment.weatherSource = world.environment.weatherInitialized ? "saved" : "fallback";
+        if (!world.dayActivities || typeof world.dayActivities !== "object" || Array.isArray(world.dayActivities)) world.dayActivities = clone(setup.GeneratedWorldData.dayActivities || {});
+        if (!world.daytime || typeof world.daytime !== "object" || Array.isArray(world.daytime)) world.daytime = { pendingOffer: null, activeActivity: null };
+        if (!Object.prototype.hasOwnProperty.call(world.daytime, "pendingOffer")) world.daytime.pendingOffer = null;
+        if (!Object.prototype.hasOwnProperty.call(world.daytime, "activeActivity")) world.daytime.activeActivity = null;
 
         if (!world.control || !world.control.assignments) {
             repairControlInvariant(world, "missing control state");
@@ -1459,6 +1553,36 @@
         return path;
     }
 
+    function timelapseStudyItems(actor, location, world) {
+        if (!actor || !location) return [];
+        const itemIds = new Set();
+        const actorInventory = world.inventories[actor.inventoryId];
+        (actorInventory && actorInventory.itemIds || []).forEach(function (itemId) { itemIds.add(itemId); });
+        const locationInventory = world.inventories[location.inventoryId];
+        if (canAccessInventory(actor, locationInventory, world)) {
+            (locationInventory && locationInventory.itemIds || []).forEach(function (itemId) { itemIds.add(itemId); });
+        }
+        getSublocations(location.id, world).forEach(function (sublocation) {
+            const inventory = sublocation.inventoryId && world.inventories[sublocation.inventoryId];
+            if (!canAccessInventory(actor, inventory, world)) return;
+            (inventory && inventory.itemIds || []).forEach(function (itemId) { itemIds.add(itemId); });
+        });
+        return Array.from(itemIds).map(function (itemId) {
+            const item = world.entities[itemId];
+            const definition = item && item.type === "item" ? getItemDefinition(item, world) : null;
+            const useAction = definition && definition.useAction;
+            if (!item || !definition || !useAction || useAction.effectId !== "abstract_study") return null;
+            return {
+                id: item.id,
+                name: definition.name,
+                actionLabel: useAction.actionLabel || `Study ${definition.name}`,
+                inputLabel: useAction.inputLabel || "Question or topic",
+                inputMaxLength: Number.isInteger(useAction.inputMaxLength) ? useAction.inputMaxLength : 600,
+                instructions: useAction.aiInstructions || "Choose a specific subject to study."
+            };
+        }).filter(Boolean);
+    }
+
     function getTimelapseReachableCatalog(actorId) {
         const world = ensureWorld();
         const actor = getCharacter(actorId, world);
@@ -1477,7 +1601,8 @@
                 }),
                 timelapseActions: timelapseActionDefinitions(location).map(function (action) {
                     return { id: action.id, label: action.label, description: action.description };
-                })
+                }),
+                studyItems: timelapseStudyItems(actor, location, world)
             };
         }).filter(Boolean);
     }
@@ -1542,6 +1667,25 @@
             const validation = validateWorld(world);
             if (!validation.ok) return validation;
             return ok({ actorId: actorId, locationId: locationId, type: "sleep", bedId: bed.id, text: `${actor.name} went to sleep in ${location.name}.` });
+        }
+
+        if (action.type === "study_item") {
+            const available = timelapseStudyItems(actor, location, world);
+            const option = available.find(function (candidate) { return candidate.id === action.itemId; });
+            const inputText = typeof action.inputText === "string" ? action.inputText.trim() : "";
+            if (!option) return fail("TIMELAPSE_STUDY_ITEM_UNAVAILABLE", "The selected study item is not accessible in this room.");
+            if (!inputText || inputText.length > option.inputMaxLength) return fail("TIMELAPSE_STUDY_INPUT_INVALID", `Study input must contain 1 to ${option.inputMaxLength} characters.`);
+            const item = world.entities[action.itemId];
+            const definition = getItemDefinition(item, world);
+            const effectResult = ItemEffectRegistry.abstract_study.execute(actor, item, definition, definition.useAction, world, { input_text: inputText });
+            const feedback = effectResult && effectResult.feedback && effectResult.feedback[0];
+            const stage = feedback && feedback.data && feedback.data.studyStage || "survey";
+            const validation = validateWorld(world);
+            if (!validation.ok) return validation;
+            return ok({
+                actorId: actorId, locationId: locationId, type: "study_item", itemId: item.id, inputText: inputText, studyStage: stage,
+                text: `${actor.name} consulted ${definition.name}, studying “${inputText}” (${stage}).`
+            });
         }
 
         if (action.type === "timelapse_action") {
@@ -1984,9 +2128,10 @@
             },
             getOptions: function (actor, world) {
                 const sublocation = getSublocation(actor.sublocationId, world);
+                const target = sublocation.inventoryId ? world.inventories[sublocation.inventoryId] : null;
                 return {
                     item_ids: world.inventories[actor.inventoryId].itemIds.slice(),
-                    target_inventory_ids: sublocation.inventoryId ? [sublocation.inventoryId] : []
+                    target_inventory_ids: target && canAccessInventory(actor, target, world) ? [target.id] : []
                 };
             },
             validate: function (actor, action, world) {
@@ -1997,8 +2142,12 @@
                 if (!sublocation.inventoryId || action.target_inventory_id !== sublocation.inventoryId) {
                     return fail("INVENTORY_NOT_ACCESSIBLE", "Target surface is not accessible from the current position.");
                 }
-                if (!world.inventories[action.target_inventory_id]) {
+                const targetInventory = world.inventories[action.target_inventory_id];
+                if (!targetInventory) {
                     return fail("INVENTORY_NOT_FOUND", "Target inventory does not exist.");
+                }
+                if (!canAccessInventory(actor, targetInventory, world)) {
+                    return fail("INVENTORY_KEY_REQUIRED", "Actor does not possess the key required to access this container.");
                 }
                 return ok();
             },
@@ -2319,6 +2468,85 @@
             }
         },
 
+        offer_day_work: {
+            description: "Formally offer the Human-controlled Traveler one of your available full-day jobs. Use this only when you have actually decided to offer work. A neutral stranger who asks reasonably for simple work should usually be acceptable, but your personality, memories, relationships, and recent context may justify refusal. You may offer proactively when there is a natural reason, but do not repeatedly offer work without context. The player will separately accept or decline.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "offer_day_work" }, activity_id: { type: "string" } },
+                required: ["type", "activity_id"],
+                additionalProperties: false
+            },
+            getOptions: function (actor, world) {
+                const activities = Object.values(world.dayActivities || {}).filter(function (activity) {
+                    return activity && activity.kind === "sponsored_job" && activity.sponsorCharacterId === actor.id;
+                }).map(function (activity) {
+                    return { id: activity.id, name: activity.name, description: activity.offerDescription || "" };
+                });
+                return { activity_ids: activities.map(function (activity) { return activity.id; }), activities: activities };
+            },
+            validate: function (actor, action, world) {
+                if (world.environment.timePhase !== "morning") return fail("DAY_WORK_NOT_MORNING", "Full-day work can only be offered during Morning.");
+                if (world.daytime.pendingOffer || world.daytime.activeActivity) return fail("DAY_WORK_ALREADY_PENDING", "Another daytime activity is already pending or active.");
+                const activity = world.dayActivities[action.activity_id];
+                if (!activity || activity.kind !== "sponsored_job" || activity.sponsorCharacterId !== actor.id) return fail("DAY_WORK_ACTIVITY_INVALID", "That daytime job is not available to this sponsor.");
+                const human = getCharacter(getHumanCharacterId(world), world);
+                if (!human || !canReachCharacter(actor, human, world)) return fail("DAY_WORK_TRAVELER_NOT_REACHABLE", "The Traveler is not physically reachable for this work offer.");
+                return ok({ activity: activity, human: human });
+            },
+            execute: function (actor, action, world) {
+                const activity = world.dayActivities[action.activity_id];
+                const humanId = getHumanCharacterId(world);
+                world.daytime.pendingOffer = {
+                    activityId: activity.id,
+                    sponsorCharacterId: actor.id,
+                    humanCharacterId: humanId,
+                    reactedCharacterIds: []
+                };
+                return [{
+                    type: "day_work_offered",
+                    actorId: actor.id,
+                    targetId: humanId,
+                    locationId: actor.locationId,
+                    activityId: activity.id,
+                    text: `${actor.name} offered ${getCharacter(humanId, world).name} a day of work: ${activity.name}.`
+                }];
+            }
+        },
+
+        go_hunting: {
+            description: "Spend the full day hunting small game alone. This begins the daytime timelapse and is available only at the authored hunting entry location during Morning.",
+            schema: { type: "object", properties: { type: { const: "go_hunting" } }, required: ["type"], additionalProperties: false },
+            getOptions: function (actor, world) {
+                const activities = Object.values(world.dayActivities || {}).filter(function (activity) {
+                    return activity && activity.kind === "solo" && activity.entryLocationId === actor.locationId;
+                });
+                return { activity_ids: activities.map(function (activity) { return activity.id; }) };
+            },
+            validate: function (actor, action, world) {
+                if (world.control.assignments[actor.id] !== "human") return fail("DAY_ACTIVITY_HUMAN_ONLY", "This daytime activity entry is HumanController-only.");
+                if (world.environment.timePhase !== "morning") return fail("DAY_ACTIVITY_NOT_MORNING", "Hunting for the day can only begin during Morning.");
+                if (world.daytime.pendingOffer || world.daytime.activeActivity) return fail("DAY_ACTIVITY_ALREADY_PENDING", "Another daytime activity is already pending or active.");
+                const activity = Object.values(world.dayActivities || {}).find(function (candidate) {
+                    return candidate && candidate.kind === "solo" && candidate.entryLocationId === actor.locationId;
+                });
+                if (!activity) return fail("DAY_ACTIVITY_UNAVAILABLE", "No solo daytime activity is available here.");
+                return ok({ activity: activity });
+            },
+            execute: function (actor, action, world) {
+                const activity = Object.values(world.dayActivities || {}).find(function (candidate) {
+                    return candidate && candidate.kind === "solo" && candidate.entryLocationId === actor.locationId;
+                });
+                world.daytime.activeActivity = { activityId: activity.id, sponsorCharacterId: null, humanCharacterId: actor.id };
+                return [{
+                    type: "day_activity_started",
+                    actorId: actor.id,
+                    locationId: actor.locationId,
+                    activityId: activity.id,
+                    text: `${actor.name} set out to spend the day hunting.`
+                }];
+            }
+        },
+
         sleep: {
             description: "Fall asleep while lying on a bed.",
             schema: {
@@ -2396,7 +2624,10 @@
         }
         for (const type of BASE_ACTION_TYPES) grant(type, { kind: "base" });
         const sublocation = getSublocation(actor.sublocationId, world);
-        for (const type of (sublocation.capabilities || [])) grant(type, { kind: "sublocation", id: sublocation.id });
+        for (const type of (sublocation.capabilities || [])) {
+            if (type === "sleep" && world.control.assignments[actor.id] === "human" && world.environment.timePhase !== "evening") continue;
+            grant(type, { kind: "sublocation", id: sublocation.id });
+        }
         const environmentCapabilities = new Set(sublocation.capabilities || []);
         const actorInventory = world.inventories[actor.inventoryId];
         for (const itemId of actorInventory ? actorInventory.itemIds : []) {
@@ -2460,6 +2691,25 @@
             });
         });
 
+        if (world.environment.timePhase === "morning" && world.daytime && !world.daytime.pendingOffer && !world.daytime.activeActivity) {
+            const humanId = getHumanCharacterId(world);
+            const human = getCharacter(humanId, world);
+            if (world.control.assignments[actor.id] === "ai" && human && canReachCharacter(actor, human, world)) {
+                Object.values(world.dayActivities || {}).filter(function (activity) {
+                    return activity && activity.kind === "sponsored_job" && activity.sponsorCharacterId === actor.id;
+                }).forEach(function (activity) {
+                    grant("offer_day_work", { kind: "day_activity", id: activity.id, name: activity.name });
+                });
+            }
+            if (world.control.assignments[actor.id] === "human") {
+                Object.values(world.dayActivities || {}).filter(function (activity) {
+                    return activity && activity.kind === "solo" && activity.entryLocationId === actor.locationId;
+                }).forEach(function (activity) {
+                    grant("go_hunting", { kind: "day_activity", id: activity.id, name: activity.name });
+                });
+            }
+        }
+
         for (const abilityId of (actor.abilityIds || [])) {
             const ability = world.abilities[abilityId];
             if (ability) grant(ability.actionType, { kind: "character_ability", id: ability.id, name: ability.name });
@@ -2503,6 +2753,11 @@
         const location = getLocation(actor.locationId, world);
 
         return {
+            world_conditions: {
+                time_phase: world.environment.timePhase,
+                time_label: world.environment.timePhase === "daytime_timelapse" ? "Day" : (world.environment.timePhase === "nighttime_timelapse" ? "Night" : (world.environment.timePhase === "morning" ? "Morning" : "Evening")),
+                weather: world.environment.weatherNarrative
+            },
             self: {
                 id: actor.id,
                 name: actor.name,
@@ -2603,7 +2858,8 @@
             destination_id: "destination_ids",
             item_id: "item_ids",
             target_id: "target_ids",
-            target_inventory_id: "target_inventory_ids"
+            target_inventory_id: "target_inventory_ids",
+            activity_id: "activity_ids"
         };
         Object.entries(optionKeys).forEach(function (entry) {
             const propertyKey = entry[0];
@@ -2923,6 +3179,8 @@
         getSublocation: getSublocation,
         locationExitEntries: locationExitEntries,
         inventoryItems: inventoryItems,
+        canAccessInventory: canAccessInventory,
+        actorDirectlyCarriesItem: actorDirectlyCarriesItem,
         positionText: positionText,
         validateWorld: validateWorld,
         validateControlAssignments: validateControlAssignments,

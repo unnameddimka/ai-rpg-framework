@@ -42,4 +42,6 @@ if errorlevel 1 exit /b 1
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-night-timelapse-tests.js
 if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-daytime-tests.js
+if errorlevel 1 exit /b 1
 endlocal

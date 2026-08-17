@@ -55,7 +55,7 @@ assert(html.includes("Characters") && html.includes("Abilities") && html.include
     html.includes("Location inventory") && html.includes("Items in this container") && html.includes("renderEmbeddedInventory") &&
     html.includes("Generic blocked transition") && html.includes("Lock ID") && html.includes("Key lock ID") &&
     html.includes("Generic use interaction") && html.includes("Engine effect") && html.includes("Public action text") &&
-    html.includes("Locked failure text") && html.includes("localStorage.setItem"),
+    html.includes("Locked failure text") && html.includes("Required key item") && html.includes("localStorage.setItem"),
     "editor should expose character, ability, item-type, global item-instance, and embedded inventory workflows");
 assert(!/[А-Яа-яЁё]/.test(html), "visible editor source introduced by this task should remain English-only");
 assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura") && core.KNOWN_ACTIONS.includes("lock") && core.KNOWN_ACTIONS.includes("unlock") &&
@@ -130,6 +130,16 @@ const mismatchedLock = clone(lockDocument); mismatchedLock.locations.other.exits
 assert(hasError(mismatchedLock, "inconsistent reciprocal lock"), "reciprocal passage lock states must match");
 const badKeyLock = clone(lockDocument); badKeyLock.itemDefinitions.roomKey.keyLockId = "missing_lock";
 assert(hasError(badKeyLock, "invalid key lock ID"), "keys must reference an authored passage lock ID");
+const keyedContainerDocument = validDocument();
+keyedContainerDocument.locations.room.sublocations.roomFloor.inventoryId = "inventory_floor";
+keyedContainerDocument.locations.room.sublocations.roomFloor.requiredKeyItemId = "floorKey";
+keyedContainerDocument.itemDefinitions.floorKeyType = { id:"floorKeyType", name:"Floor key", familyId:"key", tags:["key"], consumable:false, equippable:false, fillable:false };
+keyedContainerDocument.items.floorKey = { id:"floorKey", definitionId:"floorKeyType", inventoryId:"inventory_hero" };
+assert(core.validateWorldDocument(keyedContainerDocument).length === 0, "editor should validate a position inventory gated by a specific ordinary key item instance");
+const missingContainerKey = clone(keyedContainerDocument); delete missingContainerKey.items.floorKey;
+assert(hasError(missingContainerKey, "invalid required key item ID"), "editor should reject a keyed container whose required key item instance does not exist");
+const keyedWithoutInventory = clone(keyedContainerDocument); delete keyedWithoutInventory.locations.room.sublocations.roomFloor.inventoryId;
+assert(hasError(keyedWithoutInventory, "cannot require a key without an inventory"), "editor should reject requiredKeyItemId when the position has no inventory");
 assert(core.createEmptyWorld().characters && core.createEmptyWorld().abilities &&
     core.createEmptyWorld().itemDefinitions && core.createEmptyWorld().items,
     "new document should include character, ability, item-definition, and item catalogs");
@@ -150,13 +160,18 @@ edited.itemDefinitions.emptyMug.description = "A plain wooden mug.";
 edited.itemDefinitions.emptyMug.useAction = { actionLabel: "Inspect memory", effectId: "report_memory_counts",
     publicText: "{actorName} holds {itemName}.", feedbackText: "Short-term memory: {shortTermCount} {shortTermEntryWord}. Long-term memory: {longTermCount} {longTermEntryWord}." };
 edited.items.mug1.inventoryId = "inventory_room";
+edited.locations.room.sublocations.roomFloor.inventoryId = "inventory_floor";
+edited.locations.room.sublocations.roomFloor.requiredKeyItemId = "floorKey";
+edited.itemDefinitions.floorKeyType = { id:"floorKeyType", name:"Floor key", familyId:"key", tags:["key"], consumable:false, equippable:false, fillable:false };
+edited.items.floorKey = { id:"floorKey", definitionId:"floorKeyType", inventoryId:"inventory_hero" };
 const roundTrip = JSON.parse(core.serializeWorldDocument(edited));
 assert(roundTrip.characters.hero.playerDescription === "Edited public description.", "character edits should export");
 assert(roundTrip.abilities.readAura.aiDescription === "Edited private instructions.", "ability edits should export");
 assert(roundTrip.itemDefinitions.emptyMug.fillAction.actionLabel === "Fill this mug" &&
     roundTrip.itemDefinitions.emptyMug.description === "A plain wooden mug." &&
     roundTrip.itemDefinitions.emptyMug.useAction.effectId === "report_memory_counts" &&
-    roundTrip.items.mug1.inventoryId === "inventory_room", "item edits including generic use effects should export");
+    roundTrip.items.mug1.inventoryId === "inventory_room" &&
+    roundTrip.locations.room.sublocations.roomFloor.requiredKeyItemId === "floorKey" && roundTrip.items.floorKey.inventoryId === "inventory_hero", "item edits including generic use effects and keyed-container authoring should export");
 assert(roundTrip.futureTopLevel.retained && roundTrip.locations.room.futureLocationField === "keep" &&
     roundTrip.locations.room.sublocations.roomFloor.futureSublocationField === 42 &&
     roundTrip.characters.hero.futureCharacterField && roundTrip.characters.hero.initialMind.knownFacts[0].futureFact === 1 &&

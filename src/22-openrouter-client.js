@@ -210,7 +210,10 @@
             providerSort: providerSort,
             allowProviderFallbacks: allowProviderFallbacks,
             sessionId: sessionId,
-            timeoutMs: timeoutMs
+            timeoutMs: timeoutMs,
+            diagnosticContext: source.diagnosticContext && typeof source.diagnosticContext === "object"
+                ? clone(source.diagnosticContext)
+                : null
         };
     }
 
@@ -242,6 +245,38 @@
             requestBody.reasoning = { max_tokens: requestOptions.reasoningMaxTokens };
         }
 
+        const diagnosticContext = requestOptions.diagnosticContext && typeof requestOptions.diagnosticContext === "object"
+            ? requestOptions.diagnosticContext
+            : {};
+        const diagnosticToken = setup.RuntimeDiagnostics && typeof setup.RuntimeDiagnostics.beginAITransport === "function"
+            ? setup.RuntimeDiagnostics.beginAITransport({
+                actorId: diagnosticContext.actorId || null,
+                purpose: diagnosticContext.purpose || null,
+                stage: diagnosticContext.stage || null,
+                attempt: diagnosticContext.attempt,
+                modelId: modelId,
+                provider: "OpenRouter",
+                endpoint: ENDPOINT
+            })
+            : null;
+        let diagnosticCompleted = false;
+        function finalizeTransport(result, extra) {
+            if (diagnosticToken && !diagnosticCompleted && setup.RuntimeDiagnostics && typeof setup.RuntimeDiagnostics.completeAITransport === "function") {
+                diagnosticCompleted = true;
+                const providerResponse = result && result.providerResponse || result && result.error && result.error.providerResponse || null;
+                setup.RuntimeDiagnostics.completeAITransport(diagnosticToken, Object.assign({
+                    ok: Boolean(result && result.ok),
+                    status: result && Number.isFinite(result.status) ? result.status : providerResponse && providerResponse.status || 0,
+                    statusText: providerResponse && providerResponse.statusText || "",
+                    timeout: Boolean(result && result.error && result.error.code === "AI_REQUEST_TIMEOUT"),
+                    error: result && result.error || null,
+                    rawContent: result && typeof result.content === "string" ? result.content : "",
+                    providerResponse: providerResponse
+                }, extra || {}));
+            }
+            return result;
+        }
+
         let response;
         let retryAfterMs = null;
         let body = null;
@@ -271,7 +306,7 @@
             await Promise.race([transportPromise, timeoutPromise]);
         } catch (error) {
             if (timedOut || error && error.code === "AI_REQUEST_TIMEOUT") {
-                return failure("AI_REQUEST_TIMEOUT", `OpenRouter request timed out after ${requestOptions.timeoutMs} ms.`, 0, {
+                return finalizeTransport(failure("AI_REQUEST_TIMEOUT", `OpenRouter request timed out after ${requestOptions.timeoutMs} ms.`, 0, {
                     providerResponse: {
                         endpoint: ENDPOINT,
                         url: ENDPOINT,
@@ -283,9 +318,9 @@
                         parsedBody: null,
                         timeoutMs: requestOptions.timeoutMs
                     }
-                });
+                }), { timeout: true });
             }
-            return failure("NETWORK_ERROR", "OpenRouter could not be reached. Check browser network or CORS access.", 0, {
+            return finalizeTransport(failure("NETWORK_ERROR", "OpenRouter could not be reached. Check browser network or CORS access.", 0, {
                 providerResponse: {
                     endpoint: ENDPOINT,
                     url: ENDPOINT,
@@ -300,7 +335,7 @@
                         message: redactSecretText(error && error.message || "Network request failed.")
                     }
                 }
-            });
+            }));
         } finally {
             if (timeoutHandle !== null) clearTimeout(timeoutHandle);
         }
@@ -308,40 +343,40 @@
         const diagnostics = providerDiagnostics(response, body, retryAfterMs);
 
         if (!response.ok) {
-            if (response.status === 401) return failure("AUTHENTICATION_FAILED", messageWithProvider("OpenRouter authentication failed.", body), 401, { providerResponse: diagnostics });
-            if (response.status === 402) return failure("INSUFFICIENT_CREDITS", messageWithProvider("OpenRouter reports insufficient credits.", body), 402, { providerResponse: diagnostics });
+            if (response.status === 401) return finalizeTransport(failure("AUTHENTICATION_FAILED", messageWithProvider("OpenRouter authentication failed.", body), 401, { providerResponse: diagnostics }));
+            if (response.status === 402) return finalizeTransport(failure("INSUFFICIENT_CREDITS", messageWithProvider("OpenRouter reports insufficient credits.", body), 402, { providerResponse: diagnostics }));
             if (response.status === 429) {
                 const suffix = Number.isFinite(retryAfterMs)
                     ? ` Retry after ${Math.max(1, Math.ceil(retryAfterMs / 1000))} seconds.`
                     : "";
-                return failure("RATE_LIMITED", messageWithProvider(`OpenRouter rate limited the request.${suffix}`, body), 429, {
+                return finalizeTransport(failure("RATE_LIMITED", messageWithProvider(`OpenRouter rate limited the request.${suffix}`, body), 429, {
                     retryAfterMs: retryAfterMs,
                     providerResponse: diagnostics
-                });
+                }));
             }
-            if (response.status >= 500) return failure("PROVIDER_UNAVAILABLE", messageWithProvider("OpenRouter is temporarily unavailable.", body), response.status, { providerResponse: diagnostics });
-            return failure("PROVIDER_REQUEST_FAILED", messageWithProvider("OpenRouter rejected the request.", body), response.status, { providerResponse: diagnostics });
+            if (response.status >= 500) return finalizeTransport(failure("PROVIDER_UNAVAILABLE", messageWithProvider("OpenRouter is temporarily unavailable.", body), response.status, { providerResponse: diagnostics }));
+            return finalizeTransport(failure("PROVIDER_REQUEST_FAILED", messageWithProvider("OpenRouter rejected the request.", body), response.status, { providerResponse: diagnostics }));
         }
 
         const parsed = body.parsedBody;
         if (!parsed || typeof parsed !== "object") {
-            return failure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned an unreadable response.", response.status, { providerResponse: diagnostics });
+            return finalizeTransport(failure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned an unreadable response.", response.status, { providerResponse: diagnostics }));
         }
         const choice = parsed && parsed.choices && parsed.choices[0];
         const finishReason = choice && typeof choice.finish_reason === "string" ? choice.finish_reason : "";
         const content = choice && choice.message && choice.message.content;
         if (finishReason === "length") {
-            return failure(
+            return finalizeTransport(failure(
                 "MODEL_OUTPUT_TRUNCATED",
                 "OpenRouter stopped generation at the completion token limit before a complete assistant response was available.",
                 response.status,
                 { providerResponse: diagnostics }
-            );
+            ));
         }
         if (typeof content !== "string") {
-            return failure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned no assistant content.", response.status, { providerResponse: diagnostics });
+            return finalizeTransport(failure("MALFORMED_PROVIDER_RESPONSE", "OpenRouter returned no assistant content.", response.status, { providerResponse: diagnostics }));
         }
-        return {
+        return finalizeTransport({
             ok: true,
             status: response.status,
             modelId: modelId,
@@ -350,7 +385,7 @@
             retryAfterMs: null,
             providerResponse: diagnostics,
             error: null
-        };
+        });
     }
 
     async function chat(messages, fetchOverride) {

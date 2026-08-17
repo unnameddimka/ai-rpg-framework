@@ -227,10 +227,11 @@
         const actorId = setup.Game.getHumanCharacterId();
         input = input && typeof input === "object" ? input : {};
         const startsNightTimelapse = Boolean(input.action && input.action.type === "sleep");
-        if (startsNightTimelapse && setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
+        const startsDayTimelapse = Boolean(input.action && input.action.type === "go_hunting");
+        if ((startsNightTimelapse || startsDayTimelapse) && setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
             return {
                 ok: false,
-                error: { code: "AI_KEY_MISSING", message: "Enter an OpenRouter API key before sleeping until morning." },
+                error: { code: "AI_KEY_MISSING", message: startsNightTimelapse ? "Enter an OpenRouter API key before sleeping until morning." : "Enter an OpenRouter API key before spending the day hunting." },
                 actorId: actorId,
                 turnConsumed: false
             };
@@ -272,8 +273,9 @@
         let waveResult;
         let timelapseResult = null;
         let extraHiddenEntries = [];
-        if (startsNightTimelapse && intentResult.actionResult && intentResult.actionResult.ok) {
-            timelapseResult = await setup.NightTimelapse.run(client || setup.OpenRouterClient, {
+        if ((startsNightTimelapse || startsDayTimelapse) && intentResult.actionResult && intentResult.actionResult.ok) {
+            const timelapseRunner = startsNightTimelapse ? setup.NightTimelapse : setup.DaytimeTimelapse;
+            timelapseResult = await timelapseRunner.run(client || setup.OpenRouterClient, {
                 onRoundCommitted: function (roundCommit) {
                     const presentation = splitPresentation(roundCommit && roundCommit.entries || []);
                     emitCommittedPresentation(options, presentation, {
@@ -350,6 +352,78 @@
         };
     }
 
+    async function resolveDayWorkOffer(accept, client, options) {
+        options = options && typeof options === "object" ? options : {};
+        const humanId = setup.Game.getHumanCharacterId();
+        if (!setup.DaytimeTimelapse || !setup.DaytimeTimelapse.hasPendingOffer()) {
+            return { ok: false, error: { code: "DAY_WORK_OFFER_MISSING", message: "There is no pending day-work offer." }, actorId: humanId, turnConsumed: false };
+        }
+        if (accept) {
+            if (setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
+                return { ok: false, error: { code: "AI_KEY_MISSING", message: "Enter an OpenRouter API key before beginning day work." }, actorId: humanId, turnConsumed: false };
+            }
+            const accepted = setup.DaytimeTimelapse.acceptPendingOffer();
+            if (!accepted.ok) return { ok: false, error: clone(accepted.error), actorId: humanId, turnConsumed: false };
+            const timelapseResult = await setup.DaytimeTimelapse.run(client || setup.OpenRouterClient, {
+                onRoundCommitted: function (roundCommit) {
+                    const presentation = splitPresentation(roundCommit && roundCommit.entries || []);
+                    emitCommittedPresentation(options, presentation, {
+                        phase: "timelapse-round",
+                        mode: roundCommit && roundCommit.mode || "daytime",
+                        round: roundCommit && roundCommit.round || null,
+                        totalRounds: roundCommit && roundCommit.totalRounds || null
+                    });
+                }
+            });
+            const presentation = splitPresentation(clone(timelapseResult.hiddenNarrativeEntries || []));
+            const narration = await narratePresentation(presentation, humanId);
+            return {
+                ok: Boolean(timelapseResult.ok),
+                error: timelapseResult.ok ? null : clone(timelapseResult.error),
+                actorId: humanId,
+                turnConsumed: false,
+                timelapseResult: clone(timelapseResult),
+                waveResult: { ok: Boolean(timelapseResult.ok), timelapse: true, processedCount: 0, reactedCharacterIds: [], results: [], remainingQueue: setup.AITurnScheduler.getQueueView() },
+                narrativeFragments: narration.used ? narration.narratedFragments : narration.rawFragments,
+                rawNarrativeFragments: narration.rawFragments,
+                narratedNarrativeFragments: narration.narratedFragments,
+                narrator: { attempted: narration.attempted, used: narration.used, fallbackUsed: Boolean(narration.attempted && !narration.used), error: narration.result && !narration.result.ok ? clone(narration.result.error) : null },
+                hiddenNarrativeEntries: presentation.hidden,
+                historyEntries: presentation.entries
+            };
+        }
+
+        const declined = setup.DaytimeTimelapse.declinePendingOffer();
+        if (!declined.ok) return { ok: false, error: clone(declined.error), actorId: humanId, turnConsumed: false };
+        const declinedEntry = presentationEntry(declined.value.text, true, humanId, setup.Game.getWorld().entities[humanId] && setup.Game.getWorld().entities[humanId].locationId, "day_work_declined");
+        const initialPresentation = splitPresentation([declinedEntry]);
+        emitCommittedPresentation(options, initialPresentation, { phase: "human", actorId: humanId });
+        const waveResult = await setup.AITurnScheduler.processAfterSubmit(client || setup.OpenRouterClient, {
+            alreadyReactedCharacterIds: declined.value.reactedCharacterIds || [],
+            onCommittedResult: function (aiResult) {
+                const described = describeAIResult(aiResult, humanId);
+                emitCommittedPresentation(options, described, { phase: "ai-reaction", actorId: aiResult.actorId || null });
+            }
+        });
+        const wavePresentation = describeWave(waveResult, humanId);
+        const presentation = splitPresentation(initialPresentation.entries.concat(wavePresentation.entries));
+        const narration = await narratePresentation(presentation, humanId);
+        return {
+            ok: Boolean(waveResult.ok),
+            error: waveResult.ok ? null : clone(waveResult.error),
+            actorId: humanId,
+            turnConsumed: false,
+            waveResult: clone(waveResult),
+            timelapseResult: null,
+            narrativeFragments: narration.used ? narration.narratedFragments : narration.rawFragments,
+            rawNarrativeFragments: narration.rawFragments,
+            narratedNarrativeFragments: narration.narratedFragments,
+            narrator: { attempted: narration.attempted, used: narration.used, fallbackUsed: Boolean(narration.attempted && !narration.used), error: narration.result && !narration.result.ok ? clone(narration.result.error) : null },
+            hiddenNarrativeEntries: presentation.hidden,
+            historyEntries: presentation.entries
+        };
+    }
+
     async function pass(client, options) {
         options = options && typeof options === "object" ? options : {};
         const actorId = setup.Game.getHumanCharacterId();
@@ -383,6 +457,7 @@
 
     setup.TurnFlow = {
         submitHumanIntent: submitHumanIntent,
+        resolveDayWorkOffer: resolveDayWorkOffer,
         pass: pass,
         describeWave: describeWave,
         describeAIResult: describeAIResult

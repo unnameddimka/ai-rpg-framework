@@ -301,8 +301,10 @@ assert(uiSource.includes("History") && uiSource.includes("framework-history") &&
     uiSource.includes("appendHistory") && uiSource.includes("Save.onSave.add") && uiSource.includes("Save.onLoad.add"),
     "player-facing History should be rendered directly by the core UI and keep a bounded save mirror");
 assert(uiSource.includes('id="action-unlock-destination"') && uiSource.includes('id="action-lock-destination"') &&
-    uiSource.includes("Unlock ${destination.name}") && uiSource.includes("Lock ${destination.name}"),
-    "lock and unlock controls should be derived directly from canonical available actions");
+    uiSource.includes('doorActionLabel("Unlock"') && uiSource.includes('doorActionLabel("Lock"') && uiSource.includes("the door to"),
+    "lock and unlock controls should be derived from canonical available actions and label the connecting door");
+assert(uiSource.includes('return "Get up"') && uiSource.includes('return "Stand up"') && uiSource.includes("moveWithinActionLabel"),
+    "same-location reverse movement should use posture-aware labels instead of re-entering the room");
 assert(uiSource.includes('id="action-submit"') && uiSource.includes('id="action-pass"') &&
     uiSource.includes('name="formal-action"') && uiSource.includes('value=""') &&
     uiSource.includes("setup.TurnFlow.submitHumanIntent") && uiSource.includes("setup.TurnFlow.pass") &&

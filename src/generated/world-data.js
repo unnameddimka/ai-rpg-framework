@@ -404,7 +404,8 @@
           "capacity": 2,
           "reachableSublocationIds": [
             "innkeeperRoomFloor",
-            "innkeeperRoomBed"
+            "innkeeperRoomBed",
+            "innkeeperRoomChest"
           ]
         },
         "innkeeperRoomBed": {
@@ -423,6 +424,27 @@
           ],
           "capabilities": [
             "sleep"
+          ]
+        },
+        "innkeeperRoomChest": {
+          "id": "innkeeperRoomChest",
+          "type": "sublocation",
+          "locationId": "innkeeperRoom",
+          "name": "Garrick's chest",
+          "publicText": "A small sturdy chest stands against the wall among Garrick's private belongings.",
+          "enterLabel": "Stand by Garrick's chest",
+          "selfText": "You are standing beside Garrick's small private chest.",
+          "occupantTemplate": "{name} stands beside Garrick's small private chest.",
+          "capacity": 2,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_innkeeperRoomChest",
+          "inventoryName": "Garrick's chest",
+          "requiredKeyItemId": "innkeeperChestKey",
+          "reachableSublocationIds": [
+            "innkeeperRoomChest",
+            "innkeeperRoomFloor"
           ]
         }
       }
@@ -683,7 +705,12 @@
       "inventoryId": "inventory_maraCottageGardenLocation",
       "exits": {
         "villageEdge": "villageEdge",
-        "secludedCottage": "secludedCottage",
+        "secludedCottage": {
+          "destinationId": "secludedCottage",
+          "lockId": "lock_mara_cottage",
+          "locked": false,
+          "lockedReason": "The cottage door is locked."
+        },
         "forestMountainStream": "forestMountainStream"
       },
       "sublocations": {
@@ -710,12 +737,17 @@
       "passage": "Mara's Cottage",
       "description": [
         "Mara's cottage is a small one-room home and workshop, practical rather than comfortable.",
-        "A modest bed, a stove and hearth, a scarred work table, and crowded shelves make the interior serve equally as living space and hedge-witch workshop."
+        "A modest bed, a stove and hearth, a scarred work table, crowded shelves, and a small sturdy chest make the interior serve equally as living space and hedge-witch workshop."
       ],
       "defaultSublocationId": "maraCottageFloor",
       "inventoryId": "inventory_secludedCottage",
       "exits": {
-        "maraCottageGardenLocation": "maraCottageGardenLocation"
+        "maraCottageGardenLocation": {
+          "destinationId": "maraCottageGardenLocation",
+          "lockId": "lock_mara_cottage",
+          "locked": false,
+          "lockedReason": "The cottage door is locked."
+        }
       },
       "sublocations": {
         "maraCottageFloor": {
@@ -732,7 +764,8 @@
             "maraCottageFloor",
             "maraCottageBed",
             "maraCottageTable",
-            "maraCottageShelves"
+            "maraCottageShelves",
+            "maraCottageChest"
           ]
         },
         "maraCottageBed": {
@@ -790,6 +823,27 @@
           "inventoryName": "Alchemical shelves",
           "reachableSublocationIds": [
             "maraCottageShelves",
+            "maraCottageFloor"
+          ]
+        },
+        "maraCottageChest": {
+          "id": "maraCottageChest",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Mara's chest",
+          "publicText": "A small sturdy wooden chest sits near the wall for Mara's private belongings and valuable working materials.",
+          "enterLabel": "Stand by Mara's chest",
+          "selfText": "You are standing beside Mara's private chest.",
+          "occupantTemplate": "{name} stands beside Mara's private chest.",
+          "capacity": 2,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_maraCottageChest",
+          "inventoryName": "Mara's chest",
+          "requiredKeyItemId": "maraChestKey",
+          "reachableSublocationIds": [
+            "maraCottageChest",
             "maraCottageFloor"
           ]
         }
@@ -886,7 +940,8 @@
           "reachableSublocationIds": [
             "smithyLivingRoom",
             "smithyForgeArea",
-            "smithyLivingBed"
+            "smithyLivingBed",
+            "smithyLivingChest"
           ]
         },
         "smithyLivingBed": {
@@ -904,6 +959,27 @@
           ],
           "reachableSublocationIds": [
             "smithyLivingBed",
+            "smithyLivingRoom"
+          ]
+        },
+        "smithyLivingChest": {
+          "id": "smithyLivingChest",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Harlan's chest",
+          "publicText": "A small iron-bound chest holds Harlan's private belongings in the rear living room.",
+          "enterLabel": "Stand by Harlan's chest",
+          "selfText": "You are standing beside Harlan's private chest.",
+          "occupantTemplate": "{name} stands beside Harlan's private chest.",
+          "capacity": 2,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_smithyLivingChest",
+          "inventoryName": "Harlan's chest",
+          "requiredKeyItemId": "blacksmithChestKey",
+          "reachableSublocationIds": [
+            "smithyLivingChest",
             "smithyLivingRoom"
           ]
         }
@@ -1623,6 +1699,97 @@
         "right_hand"
       ],
       "equippedDescription": "A well-used smith’s hammer is held ready in his right hand."
+    },
+    "healingSalve": {
+      "id": "healingSalve",
+      "name": "Healing Salve",
+      "description": "A small wrapped pot of thick herbal salve with a sharp green scent, prepared for treating ordinary cuts, burns, and soreness.",
+      "familyId": "healing_salve",
+      "tags": [
+        "medicine",
+        "remedy",
+        "crafted"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "staminaPotion": {
+      "id": "staminaPotion",
+      "name": "Stamina Potion",
+      "description": "A small stoppered bottle of bitter herbal tonic prepared to restore strength after hard work or exhaustion.",
+      "familyId": "stamina_potion",
+      "tags": [
+        "medicine",
+        "tonic",
+        "crafted"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "squirrelPelt": {
+      "id": "squirrelPelt",
+      "name": "Squirrel Pelt",
+      "description": "A cleaned small-game pelt, light enough to fold and carry with other trade goods.",
+      "familyId": "squirrel_pelt",
+      "tags": [
+        "pelt",
+        "trade_good",
+        "hunting"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "innkeeperChestKeyType": {
+      "id": "innkeeperChestKeyType",
+      "name": "Key to Garrick's chest",
+      "description": "A small iron key for Garrick's private chest.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "blacksmithChestKeyType": {
+      "id": "blacksmithChestKeyType",
+      "name": "Key to Harlan's chest",
+      "description": "A small sturdy key for Harlan's private chest.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "maraChestKeyType": {
+      "id": "maraChestKeyType",
+      "name": "Mara's Chest Key",
+      "description": "A small key for Mara's private storage chest.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "maraCottageKeyType": {
+      "id": "maraCottageKeyType",
+      "name": "Mara's Cottage Key",
+      "description": "A plain key for the door of Mara's cottage.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_mara_cottage"
     }
   },
   "items": {
@@ -1781,7 +1948,7 @@
     "arcaneKnowledgeSlab_01": {
       "id": "arcaneKnowledgeSlab_01",
       "definitionId": "arcaneKnowledgeSlab",
-      "inventoryId": "inventory_maraCottageTable"
+      "inventoryId": "inventory_maraCottageChest"
     },
     "blacksmithClothing_01": {
       "id": "blacksmithClothing_01",
@@ -1794,8 +1961,77 @@
       "definitionId": "smithHammer",
       "equippedByCharacterId": "blacksmith",
       "equippedSlot": "right_hand"
+    },
+    "innkeeperChestKey": {
+      "id": "innkeeperChestKey",
+      "definitionId": "innkeeperChestKeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "blacksmithChestKey": {
+      "id": "blacksmithChestKey",
+      "definitionId": "blacksmithChestKeyType",
+      "inventoryId": "inventory_blacksmith"
+    },
+    "maraChestKey": {
+      "id": "maraChestKey",
+      "definitionId": "maraChestKeyType",
+      "inventoryId": "inventory_hoodedWoman"
+    },
+    "maraCottageKey": {
+      "id": "maraCottageKey",
+      "definitionId": "maraCottageKeyType",
+      "inventoryId": "inventory_hoodedWoman"
     }
   },
-  "authoringRevision": "b9496919cc152218ec39d63171017cfd6538e944e516c03405e0028ed5389430"
+  "dayActivities": {
+    "maraAssistance": {
+      "id": "maraAssistance",
+      "kind": "sponsored_job",
+      "name": "Help Mara for the day",
+      "sponsorCharacterId": "hoodedWoman",
+      "workLocationId": "secludedCottage",
+      "offerDescription": "Offer the Traveler a day of simple paid work helping with herbs, remedies, gathering nearby reagents, carrying water, sorting plants, and other practical tasks around the cottage. Neutral strangers who ask reasonably for work should usually be acceptable, but personality, memories, relationships, and recent conflict may justify refusal. You may offer work proactively when there is a natural reason, but do not repeatedly offer work without context.",
+      "narrationInstructions": "Spend the working day together at Mara's cottage and its immediate grounds. Describe grounded auxiliary work such as gardening, carrying water, sorting herbs, preparing ingredients, or gathering berries, mushrooms, roots, and other reagents in the nearby unnamed woodland around the property. Do not claim travel to another named canonical location. Do not create or hand over the final reward during the five work rounds.",
+      "settlement": {
+        "type": "sponsor_items",
+        "minTotal": 1,
+        "maxTotal": 3,
+        "definitionIds": [
+          "healingSalve",
+          "staminaPotion"
+        ]
+      }
+    },
+    "forgeAssistance": {
+      "id": "forgeAssistance",
+      "kind": "sponsored_job",
+      "name": "Help Harlan at the forge",
+      "sponsorCharacterId": "blacksmith",
+      "workLocationId": "villageSmithy",
+      "offerDescription": "Offer the Traveler a day of auxiliary forge work: carrying materials, working the bellows, holding workpieces, fetching tools, moving coal, and similar assistance while you remain the actual smith. Neutral strangers who ask reasonably for work should usually be acceptable, but personality, memories, relationships, and recent conflict may justify refusal. You may offer work proactively when there is a natural reason, but do not repeatedly offer work without context.",
+      "narrationInstructions": "Spend the working day together at the smithy. Harlan does the skilled forging; the Traveler performs auxiliary work such as bellows, carrying coal or stock, holding a workpiece, fetching tools, and moving finished or unfinished pieces. Do not mint or hand over salary during the five work rounds.",
+      "settlement": {
+        "type": "sponsor_gold",
+        "min": 3,
+        "max": 7
+      }
+    },
+    "soloHunting": {
+      "id": "soloHunting",
+      "kind": "solo",
+      "name": "Go hunting",
+      "entryLocationId": "forestMountainStream",
+      "workLocationId": "forestMountainStream",
+      "entryActionLabel": "Go hunting",
+      "narrationInstructions": "Describe one grounded compressed round of the Traveler hunting small game alone in the woods around the stream. Keep the Traveler within the broad hunting area and do not determine the final catch. Do not invent tracked items or rewards before settlement.",
+      "settlement": {
+        "type": "random_items",
+        "minTotal": 1,
+        "maxTotal": 5,
+        "definitionId": "squirrelPelt"
+      }
+    }
+  },
+  "authoringRevision": "3612159fd680dd03a186918ea3554a417560beaffe1041ac8a43011a47de029e"
 };
 }());

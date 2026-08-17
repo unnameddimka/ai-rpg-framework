@@ -7,6 +7,7 @@
         "access_token", "refresh_token", "bearer"
     ]);
     const recentErrors = [];
+    let lastTimelapseResult = null;
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -52,6 +53,19 @@
         return output;
     }
 
+    function recordTimelapseResult(result) {
+        try {
+            lastTimelapseResult = safeSanitize(result, new WeakSet(), 0);
+        } catch (error) {
+            lastTimelapseResult = { ok: false, captureError: error && error.message || String(error) };
+        }
+        return clone(lastTimelapseResult);
+    }
+
+    function getLastTimelapseResult() {
+        return clone(lastTimelapseResult);
+    }
+
     function recordError(kind, errorLike) {
         try {
             const error = errorLike && errorLike.error || errorLike && errorLike.reason || errorLike;
@@ -77,7 +91,7 @@
         const files = {};
         const manifest = {
             schema: "ai-rpg.emergency-dump",
-            version: 2,
+            version: 3,
             exportedAt: exportedAt,
             application: "AI RPG Framework",
             documentTitle: typeof document !== "undefined" ? document.title : "",
@@ -155,6 +169,29 @@
             return setup.AIRequestExecutor && setup.AIRequestExecutor.getExchangeHistory
                 ? setup.AIRequestExecutor.getExchangeHistory()
                 : null;
+        });
+        section("ai-exchange-log.json", function () {
+            if (!setup.PromptLab || typeof setup.PromptLab.buildExchangeLog !== "function") return null;
+            const result = setup.PromptLab.buildExchangeLog();
+            return result && result.ok ? result.data : { available: false, error: result && result.error || null };
+        });
+        section("ai-transport-log.json", function () {
+            return setup.RuntimeDiagnostics && typeof setup.RuntimeDiagnostics.getAITransportLog === "function"
+                ? setup.RuntimeDiagnostics.getAITransportLog()
+                : null;
+        });
+        section("network-log.json", function () {
+            return setup.RuntimeDiagnostics && typeof setup.RuntimeDiagnostics.getNetworkLog === "function"
+                ? setup.RuntimeDiagnostics.getNetworkLog()
+                : null;
+        });
+        section("weather-runtime.json", function () {
+            return setup.WorldEnvironment && typeof setup.WorldEnvironment.getWeatherDiagnostics === "function"
+                ? setup.WorldEnvironment.getWeatherDiagnostics()
+                : null;
+        });
+        section("timelapse-runtime.json", function () {
+            return { lastResult: getLastTimelapseResult() };
         });
         section("ui-runtime.json", function () {
             return {
@@ -291,6 +328,8 @@
         buildStoredZip: buildStoredZip,
         download: download,
         recordError: recordError,
+        recordTimelapseResult: recordTimelapseResult,
+        getLastTimelapseResult: getLastTimelapseResult,
         getRecentErrors: function () { return safeSanitize(recentErrors, new WeakSet(), 0); }
     };
 }());

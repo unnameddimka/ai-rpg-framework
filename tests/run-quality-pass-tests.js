@@ -37,7 +37,9 @@ load("src/24-ai-turn-scheduler.js");
 load("src/20-controllers.js");
 load("src/15-ai-admin.js");
 load("src/16-emergency-diagnostics.js");
+load("src/17-runtime-diagnostics.js");
 load("src/24-memory-consolidator.js");
+load("src/24-prompt-lab.js");
 
 function fresh() {
     setup.Game.resetWorld();
@@ -274,14 +276,28 @@ async function main() {
     assert(setup.CharacterMindTransfer.validateDocument(historicalDoc, "hoodedWoman").ok,
         "portable historical relationship should preserve an absent target character");
 
-    // Emergency diagnostics are best-effort, comprehensive, and redact secrets without requiring a valid world.
+    // Emergency diagnostics are best-effort, comprehensive, and redact secrets without requiring a second Sphere export.
     setup.AITransientDebug = { apiKey: "DO-NOT-EXPORT", nested: { authorization: "Bearer hidden", useful: "keep-me" } };
+    await setup.AIRequestExecutor.executeCustom({
+        actorId:"hoodedWoman", purpose:"diagnostic-fixture", stage:"diagnostic-fixture", messages:[{role:"user",content:"fixture"}],
+        run:async function(){return {ok:true,value:{sentinel:"exchange-history-present"},modelId:"test",usage:null,rawContent:"{}",trace:null};}
+    });
+    setup.EmergencyDiagnostics.recordTimelapseResult({ok:false,mode:"overnight",committedRounds:5,failedStage:"maintenance-commit",error:{code:"SYNTHETIC_TIMELAPSE_FAILURE",message:"handled coarse-time failure"}});
     setup.EmergencyDiagnostics.recordError("synthetic-test", new Error("diagnostic sentinel"));
+    const aiToken=setup.RuntimeDiagnostics.beginAITransport({actorId:"hoodedWoman",purpose:"fixture",stage:"fixture",modelId:"test",provider:"OpenRouter",endpoint:"https://openrouter.ai/api/v1/chat/completions",attempt:1});
+    setup.RuntimeDiagnostics.completeAITransport(aiToken,{ok:false,status:503,statusText:"Unavailable",error:{code:"PROVIDER_UNAVAILABLE",message:"synthetic transport failure"},rawContent:"",providerResponse:{status:503}});
+    const netToken=setup.RuntimeDiagnostics.beginNetwork ? setup.RuntimeDiagnostics.beginNetwork({purpose:"weather-refresh",stage:"ip-geolocation",service:"fixture",url:"https://example.invalid/"}) : null;
+    if(netToken&&setup.RuntimeDiagnostics.completeNetwork) setup.RuntimeDiagnostics.completeNetwork(netToken,{ok:false,status:0,error:{code:"NETWORK_FETCH_FAILED",message:"synthetic network failure"}});
+    setup.WorldEnvironment={getWeatherDiagnostics:function(){return {ok:false,failedStage:"ip-geolocation",fallbackUsed:true,error:{code:"WEATHER_REFRESH_FAILED",message:"synthetic weather failure"}};}};
     const emergency = setup.EmergencyDiagnostics.capture();
     const emergencyJson = JSON.stringify(emergency);
-    assert(emergency.schema === "ai-rpg.emergency-dump" && emergency.version === 2 && emergency.sections["game-state.json"].world &&
-        emergency.sections["ui-runtime.json"].transientDebug.nested.useful === "keep-me" && emergency.sections["minds.json"].characters.hoodedWoman.mind.maintenanceArchive,
-        "emergency dump should contain split current game, mind/archive, and useful AI diagnostic sections");
+    assert(emergency.schema === "ai-rpg.emergency-dump" && emergency.version === 3 && emergency.sections["game-state.json"].world &&
+        emergency.sections["ui-runtime.json"].transientDebug.nested.useful === "keep-me" && emergency.sections["minds.json"].characters.hoodedWoman.mind.maintenanceArchive &&
+        emergency.sections["ai-exchange-log.json"].schema === "ai-rpg.ai-exchange-log" && emergency.sections["ai-exchange-log.json"].exchangeHistory.count > 0 &&
+        emergency.sections["ai-transport-log.json"].count === 1 && emergency.sections["ai-transport-log.json"].entries[0].error.code === "PROVIDER_UNAVAILABLE" &&
+        emergency.sections["network-log.json"] && emergency.sections["weather-runtime.json"].failedStage === "ip-geolocation" &&
+        emergency.sections["timelapse-runtime.json"].lastResult.failedStage === "maintenance-commit" && emergency.sections["timelapse-runtime.json"].lastResult.error.code === "SYNTHETIC_TIMELAPSE_FAILURE",
+        "emergency dump should contain game/mind state, semantic and transport AI logs, network/weather diagnostics, and handled coarse-time failure diagnostics");
     assert(!emergencyJson.includes("DO-NOT-EXPORT") && !emergencyJson.includes("Bearer hidden") &&
         emergencyJson.includes("[REDACTED]") && emergencyJson.includes("diagnostic sentinel"),
         "emergency dump must redact API/auth secrets while retaining captured runtime errors");

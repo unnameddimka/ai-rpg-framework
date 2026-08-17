@@ -195,6 +195,30 @@ async function main() {
     world=setup.Game.getWorld(); mara=world.entities.hoodedWoman;
     assert(ltCalls===1 && mara.mind.longTermMemories.length===28 && mara.mind.maintenanceArchive.memories.length===3 && mara.mind.longTermMemories.some(m=>m.id==="lt_29"&&m.protected),"bounded LT merge must archive sources and preserve protected memory");
 
+    // A maintenance batch prepares independent minds in parallel, waits at a barrier, then commits sequentially with fresh global IDs.
+    setup.Game.resetWorld(); world=setup.Game.getWorld();
+    const batchActors=[world.entities.hoodedWoman,world.entities.blacksmith];
+    batchActors.forEach(function(actor,index){ fillRecent(actor,11,index===0?"mara_batch":"harlan_batch"); actor.mind.beliefs=[]; actor.mind.longTermMemories=[]; actor.mind.maintenanceArchive={memories:[],beliefs:[]}; });
+    const nextBeforeBatch=world.nextMemoryId;
+    let arrivals=0,releaseBarrier; const prepareBarrier=new Promise(function(resolve){ releaseBarrier=resolve; });
+    const batchClient=scriptedClient(async function(stage,context){
+        assert(stage==="memory-consolidation-recent","parallel batch fixture should require only recent consolidation");
+        arrivals++; if(arrivals===2) releaseBarrier();
+        await prepareBarrier;
+        assert(setup.Game.getWorld().nextMemoryId===nextBeforeBatch,"parallel prepare must not advance canonical nextMemoryId before the batch barrier");
+        return {groups:[{sourceRecentMemoryIds:context.sourceRecentMemories.map(function(m){return m.id;}),replacement:{summary:"One old memory was consolidated into a durable episode.",importance:0.6}}],archiveOnlyRecentMemoryIds:[],keepActiveRecentMemoryIds:[]};
+    });
+    const batchResult=await setup.MemoryConsolidator.compressBatch(["hoodedWoman","blacksmith"],batchClient,{automatic:true});
+    ok(batchResult,"parallel prepare / sequential commit batch");
+    world=setup.Game.getWorld();
+    const maraBatchIds=world.entities.hoodedWoman.mind.longTermMemories.map(function(m){return m.id;});
+    const harlanBatchIds=world.entities.blacksmith.mind.longTermMemories.map(function(m){return m.id;});
+    assert(maraBatchIds.length===1&&harlanBatchIds.length===1&&maraBatchIds[0]!==harlanBatchIds[0]&&/^memory_ai_\d+$/.test(maraBatchIds[0])&&/^memory_ai_\d+$/.test(harlanBatchIds[0]),
+        "sequential commits must materialize distinct canonical memory_ai IDs for independent prepared minds");
+    assert(world.nextMemoryId===nextBeforeBatch+2,"global memory allocator should advance exactly once per committed generated memory");
+    assert(!JSON.stringify(world.entities.hoodedWoman.mind).includes("maintenance_tmp_")&&!JSON.stringify(world.entities.blacksmith.mind).includes("maintenance_tmp_"),
+        "temporary maintenance IDs must never escape into canonical world state");
+
     // Stale live maintenance state is protected just like mind partitions.
     setup.Game.resetWorld(); world=setup.Game.getWorld(); mara=world.entities.hoodedWoman;
     mara.mind.beliefs=[belief("a")]; mara.mind.longTermMemories=[memory("m")]; mara.mind.recentMemories=[];

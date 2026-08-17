@@ -514,6 +514,81 @@ async function main() {
         history.entries.some(function (entry) { return entry.request.purpose === "timelapse-reflection"; }),
         "timelapse internal model work should remain visible in AI interaction diagnostics");
 
+    // Live regression: only Harlan needs an active night plan, while all AI minds may reflect/maintain in one concurrent prepare batch.
+    setup.Game.resetWorld();
+    setup.Game.assignNonHumanController("blacksmith", "ai");
+    setup.AITurnQueue.repair();
+    world=setup.Game.getWorld();
+    world.environment.timePhase="evening";
+    world.entities.player.sleeping=true;
+    const maintenanceIds=["innkeeper","captainPrice","nell","hoodedWoman","blacksmith"];
+    maintenanceIds.forEach(function(id,index){
+        const actor=world.entities[id];
+        actor.sleeping=id!=="blacksmith";
+        actor.mind.recentMemories=Array.from({length:11},function(_,i){return {id:`night_batch_${index}_${i}`,summary:`Night batch ${index} memory ${i}`,importance:0.5,protected:false};});
+        actor.mind.longTermMemories=[]; actor.mind.beliefs=[]; actor.mind.maintenanceArchive={memories:[],beliefs:[]};
+        actor.mind.pendingObservations=[];
+    });
+    world.entities.hoodedWoman.mind.pendingObservations.push({
+        id: 987654,
+        kind: "event",
+        eventType: "character_slept",
+        text: "Traveler went to sleep."
+    });
+    const liveRegressionStages=[];
+    const liveRegressionClient={
+        enforceRequestTiming:false,
+        async chat(messages){
+            const payload=plannerPayload(messages);
+            if(!payload) throw new Error("Missing payload in live night regression");
+            liveRegressionStages.push(payload.stage);
+            if(payload.stage==="timelapse-plan") {
+                assert(payload.context.view.self.id==="blacksmith","only awake Harlan should receive active night planning in regression fixture");
+                return response({steps:Array.from({length:5},function(){return {locationId:"villageSmithy",action:{type:"narrate",text:"Harlan quietly winds down at the forge."}};})});
+            }
+            if(payload.stage==="timelapse-reflection") return response({memoryUpdates:emptyUpdates()});
+            if(payload.stage==="memory-consolidation-recent") {
+                return response({groups:[{sourceRecentMemoryIds:payload.context.sourceRecentMemories.map(function(memory){return memory.id;}),replacement:{summary:"An older night memory was consolidated into one durable episode.",importance:0.6}}],archiveOnlyRecentMemoryIds:[],keepActiveRecentMemoryIds:[]});
+            }
+            throw new Error(`Unexpected live regression stage ${payload.stage}`);
+        }
+    };
+    const liveNight=await setup.NightTimelapse.run(liveRegressionClient);
+    ok(liveNight,"one-awake-planner night with multi-mind maintenance should complete");
+    world=setup.Game.getWorld();
+    assert(world.environment.timePhase==="morning","successful live-regression night must finalize to Morning");
+    assert(liveRegressionStages.filter(function(stage){return stage==="timelapse-plan";}).length===1&&liveRegressionStages.filter(function(stage){return stage==="timelapse-reflection";}).length===5&&liveRegressionStages.filter(function(stage){return stage==="memory-consolidation-recent";}).length===5,
+        `regression should plan only Harlan but reflect/maintain all five AI minds: ${JSON.stringify(liveRegressionStages)}`);
+    assert(!world.entities.hoodedWoman.mind.pendingObservations.some(function(observation){return observation.id===987654;}),
+        "a pre-existing observation on an already-sleeping AI must be consumed at the committed timelapse boundary rather than survive into Morning");
+    const generatedNightIds=maintenanceIds.map(function(id){return world.entities[id].mind.longTermMemories[0]&&world.entities[id].mind.longTermMemories[0].id;});
+    assert(new Set(generatedNightIds).size===5&&generatedNightIds.every(function(id){return /^memory_ai_\d+$/.test(id||"");}),
+        "parallel night maintenance prepares must commit five distinct canonical memory IDs without false stale failures");
+
+    // Once all coarse rounds commit, reflection failure is diagnostic-only and must not leave the world in Evening.
+    world=fresh();
+    world.environment.timePhase="evening";
+    world.entities.player.sleeping=true;
+    ["innkeeper","captainPrice","nell","hoodedWoman"].forEach(function(id){
+        world.entities[id].sleeping=true;
+        world.entities[id].mind.pendingObservations=[];
+    });
+    const nonFatalReflectionClient={
+        enforceRequestTiming:false,
+        async chat(messages){
+            const payload=plannerPayload(messages);
+            if(!payload) throw new Error("Missing payload in non-fatal night reflection fixture");
+            if(payload.stage==="timelapse-reflection") return {ok:false,error:{code:"TEST_NIGHT_REFLECTION_FAILURE",message:"fixture night reflection failure"}};
+            throw new Error(`Unexpected non-fatal night stage ${payload.stage}`);
+        }
+    };
+    const nonFatalNight=await setup.NightTimelapse.run(nonFatalReflectionClient);
+    ok(nonFatalNight,"night reflection failures after committed rounds should not fail coarse-time finalization");
+    world=setup.Game.getWorld();
+    assert(nonFatalNight.committedRounds===5&&world.environment.timePhase==="morning"&&
+        nonFatalNight.mindProcessingErrors.length===4&&nonFatalNight.mindProcessingErrors.every(function(entry){return entry.stage==="reflection-prepare"&&entry.error.code==="TEST_NIGHT_REFLECTION_FAILURE";}),
+        "completed Night must transition to Morning while retaining each post-timelapse reflection failure in diagnostics");
+
     console.log("All night timelapse tests passed.");
 }
 

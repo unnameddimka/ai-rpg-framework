@@ -15,6 +15,19 @@
         return { ok: false, error: error };
     }
 
+    function recordFinalTimelapseResult(result, finalStage) {
+        if (setup.EmergencyDiagnostics && typeof setup.EmergencyDiagnostics.recordTimelapseResult === "function") {
+            try {
+                const world = setup.Game && setup.Game.getWorld ? setup.Game.getWorld() : null;
+                setup.EmergencyDiagnostics.recordTimelapseResult(Object.assign({}, clone(result || {}), {
+                    wrapperStage: finalStage || null,
+                    finalTimePhase: world && world.environment && world.environment.timePhase || null
+                }));
+            } catch (error) { /* diagnostics never affect gameplay */ }
+        }
+        return result;
+    }
+
     async function runOvernight(client, options) {
         options = options && typeof options === "object" ? options : {};
         if (inFlight) return failure("TIMELAPSE_IN_FLIGHT", "An overnight timelapse is already in progress.");
@@ -24,23 +37,36 @@
         const humanId = setup.Game.getHumanCharacterId();
         const world = setup.Game.getWorld();
         const human = world.entities[humanId];
+        if (!world.environment || world.environment.timePhase !== "evening") {
+            if (human) human.sleeping = false;
+            return failure("NIGHT_TIMELAPSE_NOT_EVENING", "Sleeping until morning is only available during Evening.");
+        }
         if (!human || human.sleeping !== true) return failure("HUMAN_NOT_SLEEPING", "The HumanController must be asleep before the overnight timelapse can begin.");
         if (setup.AIRuntimeSettings && !setup.AIRuntimeSettings.getStatus().hasKey) {
             human.sleeping = false;
             return failure("AI_KEY_MISSING", "Enter an OpenRouter API key before sleeping until morning.");
         }
 
+        world.environment.timePhase = "nighttime_timelapse";
         inFlight = true;
         try {
             const result = await setup.TimelapseCore.run(client, Object.assign({}, options, { mode: MODE, roundCount: ROUND_COUNT }));
             const currentWorld = setup.Game.getWorld();
             if (currentWorld.entities && currentWorld.entities[humanId]) currentWorld.entities[humanId].sleeping = false;
+            if (!result.ok) {
+                currentWorld.environment.timePhase = "evening";
+            } else {
+                if (setup.WorldEnvironment && typeof setup.WorldEnvironment.refreshWeather === "function") {
+                    try { await setup.WorldEnvironment.refreshWeather(client || setup.OpenRouterClient); } catch (error) { /* optional weather never blocks */ }
+                }
+                setup.Game.getWorld().environment.timePhase = "morning";
+            }
             const validation = setup.Game.validateWorld();
             if (!validation.ok) {
-                return { ok: false, mode: MODE, humanId: humanId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0,
-                    hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(validation.error) };
+                return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: humanId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0,
+                    failedStage: "wrapper-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(validation.error) }, "wrapper-validation");
             }
-            return result;
+            return recordFinalTimelapseResult(result, result.ok ? "complete" : (result.failedStage || "core-failed"));
         } finally {
             inFlight = false;
         }

@@ -65,8 +65,12 @@ assert(world.entities.villageEdge && world.entities.maraCottageGardenLocation &&
     world.entities.villageEdge.exits.street === "street" &&
     world.entities.villageEdge.exits.maraCottageGardenLocation === "maraCottageGardenLocation" &&
     world.entities.maraCottageGardenLocation.exits.villageEdge === "villageEdge" &&
-    world.entities.maraCottageGardenLocation.exits.secludedCottage === "secludedCottage" &&
-    world.entities.secludedCottage.exits.maraCottageGardenLocation === "maraCottageGardenLocation" &&
+    world.entities.maraCottageGardenLocation.exits.secludedCottage.destinationId === "secludedCottage" &&
+    world.entities.secludedCottage.exits.maraCottageGardenLocation.destinationId === "maraCottageGardenLocation" &&
+    world.entities.maraCottageGardenLocation.exits.secludedCottage.lockId === "lock_mara_cottage" &&
+    world.entities.secludedCottage.exits.maraCottageGardenLocation.lockId === "lock_mara_cottage" &&
+    world.entities.maraCottageGardenLocation.exits.secludedCottage.locked === false &&
+    world.entities.secludedCottage.exits.maraCottageGardenLocation.locked === false &&
     world.entities.maraCottageGardenLocation.exits.forestMountainStream === "forestMountainStream" &&
     world.entities.forestMountainStream.exits.maraCottageGardenLocation === "maraCottageGardenLocation",
     "street, village edge, Mara's garden, Mara's cottage, and the forest stream should form the authored bidirectional route");
@@ -208,9 +212,16 @@ world = setup.Game.getWorld();
 
 assert(world.itemDefinitions.arcaneKnowledgeSlab && world.entities.arcaneKnowledgeSlab_01 &&
     world.entities.arcaneKnowledgeSlab_01.definitionId === "arcaneKnowledgeSlab" &&
-    world.entities.arcaneKnowledgeSlab_01.containerId === "inventory_maraCottageTable" &&
-    world.inventories.inventory_maraCottageTable.itemIds.includes("arcaneKnowledgeSlab_01"),
-    "one stable Slab of Full Arcane Knowledge should be authored on Mara's work table");
+    world.entities.arcaneKnowledgeSlab_01.containerId === "inventory_maraCottageChest" &&
+    world.inventories.inventory_maraCottageChest.itemIds.includes("arcaneKnowledgeSlab_01") &&
+    world.inventories.inventory_maraCottageChest.requiredKeyItemId === "maraChestKey" &&
+    world.inventories.inventory_innkeeperRoomChest.requiredKeyItemId === "innkeeperChestKey" &&
+    world.inventories.inventory_smithyLivingChest.requiredKeyItemId === "blacksmithChestKey" &&
+    world.inventories.inventory_hoodedWoman.itemIds.includes("maraChestKey") &&
+    world.inventories.inventory_hoodedWoman.itemIds.includes("maraCottageKey") &&
+    world.inventories.inventory_innkeeper.itemIds.includes("innkeeperChestKey") &&
+    world.inventories.inventory_blacksmith.itemIds.includes("blacksmithChestKey"),
+    "private keyed chests and their ordinary owner-carried keys should be authored with the stable slab inside Mara's chest");
 assert(world.itemDefinitions.arcaneKnowledgeSlab.useAction &&
     world.itemDefinitions.arcaneKnowledgeSlab.useAction.effectId === "abstract_study" &&
     world.itemDefinitions.arcaneKnowledgeSlab.useAction.actionLabel === "Consult slab" &&
@@ -227,14 +238,35 @@ perform("player", { type: "move", destination_id: "street" }, "arcane-slab fixtu
 perform("player", { type: "move", destination_id: "villageEdge" }, "arcane-slab fixture walks to the village edge");
 perform("player", { type: "move", destination_id: "maraCottageGardenLocation" }, "arcane-slab fixture enters Mara's garden");
 perform("player", { type: "move", destination_id: "secludedCottage" }, "arcane-slab fixture steps inside Mara's cottage");
-perform("player", { type: "move_within_location", destination_id: "maraCottageTable" }, "arcane-slab fixture sits at Mara's work table");
-const slabTableView = setup.CharacterAPI.getView("player");
-assert(slabTableView.accessible_inventories.some(function (inventory) {
-    return inventory.id === "inventory_maraCottageTable" && inventory.items.some(function (item) {
+perform("player", { type: "move_within_location", destination_id: "maraCottageChest" }, "arcane-slab fixture approaches Mara's chest");
+const lockedChestView = setup.CharacterAPI.getView("player");
+assert(!lockedChestView.accessible_inventories.some(function (inventory) { return inventory.id === "inventory_maraCottageChest"; }) &&
+    !lockedChestView.available_actions.take_item.options.item_ids.includes("arcaneKnowledgeSlab_01") &&
+    !lockedChestView.available_actions.place_item.options.target_inventory_ids.includes("inventory_maraCottageChest"),
+    "a character without the exact chest key should see no canonical contents or item targets through Mara's keyed chest");
+assertFails(setup.CharacterAPI.perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }), "ITEM_NOT_ACCESSIBLE",
+    "the slab should not be directly takeable through a keyed chest without its key");
+assertFails(setup.CharacterAPI.perform("player", { type: "place_item", item_id: "silverChain_01", target_inventory_id: "inventory_maraCottageChest" }), "INVENTORY_KEY_REQUIRED",
+    "placing an item into a keyed chest should require the exact key in direct inventory");
+perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "Mara keyed-chest fixture leaves the common room");
+perform("hoodedWoman", { type: "move", destination_id: "street" }, "Mara keyed-chest fixture walks to the street");
+perform("hoodedWoman", { type: "move", destination_id: "villageEdge" }, "Mara keyed-chest fixture walks to the village edge");
+perform("hoodedWoman", { type: "move", destination_id: "maraCottageGardenLocation" }, "Mara keyed-chest fixture enters her garden");
+perform("hoodedWoman", { type: "move", destination_id: "secludedCottage" }, "Mara keyed-chest fixture steps inside");
+perform("hoodedWoman", { type: "move_within_location", destination_id: "maraCottageChest" }, "Mara keyed-chest fixture approaches her chest");
+perform("hoodedWoman", { type: "give_item", target_id: "player", item_id: "maraChestKey" }, "Mara gives Traveler her ordinary transferable chest key");
+const unlockedChestView = setup.CharacterAPI.getView("player");
+assert(unlockedChestView.accessible_inventories.some(function (inventory) {
+    return inventory.id === "inventory_maraCottageChest" && inventory.items.some(function (item) {
         return item.id === "arcaneKnowledgeSlab_01" && item.description.includes("library too large");
     });
-}), "the slab should be visible as a grounded item on Mara's accessible work table");
-perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }, "arcane-slab fixture takes the slab");
+}) && unlockedChestView.available_actions.take_item.options.item_ids.includes("arcaneKnowledgeSlab_01") &&
+    unlockedChestView.available_actions.place_item.options.target_inventory_ids.includes("inventory_maraCottageChest"),
+    "direct possession of the ordinary chest key should reveal and unlock normal interaction with protected contents");
+perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }, "arcane-slab fixture takes the slab with Mara's key");
+perform("player", { type: "give_item", target_id: "hoodedWoman", item_id: "maraChestKey" }, "Traveler returns Mara's chest key");
+assert(!setup.CharacterAPI.getView("player").accessible_inventories.some(function (inventory) { return inventory.id === "inventory_maraCottageChest"; }),
+    "transferring the chest key away should immediately remove protected-container access");
 const slabUseView = setup.CharacterAPI.getView("player").available_actions.use_item;
 assert(slabUseView && slabUseView.options.items.some(function (item) {
     return item.id === "arcaneKnowledgeSlab_01" && item.action_label === "Consult slab" &&
@@ -279,12 +311,10 @@ assert(!Object.prototype.hasOwnProperty.call(world.entities.player.mind, "abstra
     "abstract study progress should live on the item instance under the current reader ID, not in character mind");
 const playerStudySnapshot = JSON.stringify(world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.player);
 // Bring Mara to the same table, hand her the same physical slab, and verify her thread is independent.
-perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "Mara study fixture leaves the common room");
-perform("hoodedWoman", { type: "move", destination_id: "street" }, "Mara study fixture walks to the street");
-perform("hoodedWoman", { type: "move", destination_id: "villageEdge" }, "Mara study fixture walks to the village edge");
-perform("hoodedWoman", { type: "move", destination_id: "maraCottageGardenLocation" }, "Mara study fixture enters her garden");
-perform("hoodedWoman", { type: "move", destination_id: "secludedCottage" }, "Mara study fixture steps inside");
+perform("hoodedWoman", { type: "move_within_location", destination_id: "maraCottageFloor" }, "Mara study fixture leaves her chest");
 perform("hoodedWoman", { type: "move_within_location", destination_id: "maraCottageTable" }, "Mara study fixture sits at her table");
+perform("player", { type: "move_within_location", destination_id: "maraCottageFloor" }, "Traveler study fixture leaves Mara's chest");
+perform("player", { type: "move_within_location", destination_id: "maraCottageTable" }, "Traveler study fixture joins Mara at her table");
 perform("player", { type: "give_item", target_id: "hoodedWoman", item_id: "arcaneKnowledgeSlab_01" }, "Traveler gives Mara the studied slab");
 const maraSlabResult = perform("hoodedWoman", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "protective wards around a cottage" },
     "Mara starts her own study thread on the same slab");

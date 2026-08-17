@@ -32,7 +32,8 @@
     }
 
     function isOptionalPresentationPurpose(purpose) {
-        return purpose === "presentation-location" || purpose === "presentation-tick";
+        return purpose === "presentation-location" || purpose === "presentation-tick" ||
+            purpose === "daytime-hunting-narration" || purpose === "weather-narration";
     }
 
     function rateLimitCooldownRemainingMs() {
@@ -167,12 +168,23 @@
         const executionStartedAt = Date.now();
         let result;
         try {
+            let transportAttempt = 0;
             const policyClient = {
                 chat: function (messages, requestOptions) {
+                    transportAttempt += 1;
+                    const baseOptions = requestOptions || spec.requestOptions || {};
+                    const enrichedOptions = Object.assign({}, baseOptions, {
+                        diagnosticContext: {
+                            actorId: spec.actorId || null,
+                            purpose: spec.purpose || "unspecified",
+                            stage: spec.stage || null,
+                            attempt: transportAttempt
+                        }
+                    });
                     return chatWithPolicy(
                         messages,
                         spec.client || setup.OpenRouterClient,
-                        requestOptions || spec.requestOptions || null
+                        enrichedOptions
                     );
                 }
             };

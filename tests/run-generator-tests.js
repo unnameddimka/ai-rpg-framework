@@ -35,6 +35,8 @@ rejects(function (doc) { doc.characters.player.initialControllerId = "dummy"; },
 rejects(function (doc) { doc.abilities.readAura.actionType = "execute_code"; }, "unknown action");
 rejects(function (doc) { doc.items.emptyMug_1.definitionId = "missing"; }, "references missing definition");
 rejects(function (doc) { doc.items.emptyMug_1.inventoryId = "inventory_missing"; }, "missing inventory");
+rejects(function (doc) { doc.locations.secludedCottage.sublocations.maraCottageChest.requiredKeyItemId = "missingChestKey"; }, "references missing required key item");
+rejects(function (doc) { delete doc.locations.secludedCottage.sublocations.maraCottageChest.inventoryId; }, "cannot require a key without an inventory");
 rejects(function (doc) { doc.itemDefinitions.mugOfAle.consumeAction.resultDefinitionId = "missing"; }, "references missing result definition");
 rejects(function (doc) { doc.itemDefinitions.emptyMug.fillAction.resultDefinitionId = "missing"; }, "references missing result definition");
 rejects(function (doc) { doc.itemDefinitions.memoryStone.useAction.effectId = "execute_arbitrary_code"; }, "invalid useAction");
@@ -89,6 +91,21 @@ assert(harlanRelations.has("innkeeper") && harlanRelations.has("nell") && harlan
     assert(source.characters[characterId].initialMind.relationships.some(function (record) { return record.targetCharacterId === "blacksmith"; }),
         `${characterId} should have an authored relationship seed toward the new blacksmith`);
 });
+assert(source.locations.innkeeperRoom.sublocations.innkeeperRoomChest.requiredKeyItemId === "innkeeperChestKey" &&
+    source.locations.villageSmithy.sublocations.smithyLivingChest.requiredKeyItemId === "blacksmithChestKey" &&
+    source.locations.secludedCottage.sublocations.maraCottageChest.requiredKeyItemId === "maraChestKey" &&
+    source.items.arcaneKnowledgeSlab_01.inventoryId === "inventory_maraCottageChest",
+    "private storage should use authored instance-key gating and the stable Slab should begin inside Mara's chest");
+assert(source.items.innkeeperChestKey.inventoryId === "inventory_innkeeper" &&
+    source.items.blacksmithChestKey.inventoryId === "inventory_blacksmith" &&
+    source.items.maraChestKey.inventoryId === "inventory_hoodedWoman" &&
+    source.items.maraCottageKey.inventoryId === "inventory_hoodedWoman",
+    "each private chest key and Mara's separate cottage key should begin as ordinary transferable owner inventory items");
+assert(source.locations.secludedCottage.exits.maraCottageGardenLocation.lockId === "lock_mara_cottage" &&
+    source.locations.maraCottageGardenLocation.exits.secludedCottage.lockId === "lock_mara_cottage" &&
+    source.locations.secludedCottage.exits.maraCottageGardenLocation.locked === false &&
+    source.locations.maraCottageGardenLocation.exits.secludedCottage.locked === false,
+    "Mara's cottage entrance should be an initially unlocked reciprocal ordinary lockable passage");
 
 const modelSource = JSON.parse(fs.readFileSync(path.join(root, "data/model_list.json"), "utf8"));
 function rejectsModelList(mutator, expected) {

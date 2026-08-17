@@ -118,8 +118,8 @@ function validateWorld(document) {
     requireCondition(isObject(document), "world.json must contain a JSON object.");
     requireCondition(document.schemaVersion === 2, "Unsupported world schemaVersion. Expected 2.");
     requireCondition(isObject(document.locations) && isObject(document.characters) && isObject(document.abilities) &&
-        isObject(document.itemDefinitions) && isObject(document.items),
-        "world.json must contain locations, characters, abilities, itemDefinitions, and items objects.");
+        isObject(document.itemDefinitions) && isObject(document.items) && isObject(document.dayActivities),
+        "world.json must contain locations, characters, abilities, itemDefinitions, items, and dayActivities objects.");
     requireCondition(nonBlank(document.startLocationId) && own(document.locations, document.startLocationId),
         "startLocationId must reference an existing location.");
 
@@ -127,6 +127,7 @@ function validateWorld(document) {
     const inventoryOwners = new Map();
     const technicalIdOwners = new Map();
     const lockIds = new Set();
+    const keyedContainerRefs = [];
 
     for (const [id, location] of entries(document.locations)) {
         requireCondition(isObject(location) && location.id === id, `Location key ${id} must match its id.`);
@@ -207,6 +208,13 @@ function validateWorld(document) {
             registerTechnicalId(technicalIdOwners, sublocationId, `sublocation ${sublocationId}`);
             if (nonBlank(String(sublocation.inventoryId || ""))) {
                 registerInventory(inventoryOwners, String(sublocation.inventoryId), `sublocation ${sublocationId}`);
+            }
+            if (own(sublocation, "requiredKeyItemId")) {
+                requireCondition(nonBlank(String(sublocation.inventoryId || "")),
+                    `Sublocation ${sublocationId} cannot require a key without an inventory.`);
+                requireCondition(/^[A-Za-z][A-Za-z0-9_-]*$/.test(String(sublocation.requiredKeyItemId || "")),
+                    `Sublocation ${sublocationId} has invalid requiredKeyItemId '${String(sublocation.requiredKeyItemId)}'.`);
+                keyedContainerRefs.push({ sublocationId: sublocationId, itemId: String(sublocation.requiredKeyItemId) });
             }
             const capabilities = Array.isArray(sublocation.capabilities) ? sublocation.capabilities : [];
             for (const capability of capabilities) {
@@ -382,6 +390,44 @@ function validateWorld(document) {
         }
     }
 
+
+    for (const [id, activity] of entries(document.dayActivities)) {
+        requireCondition(isObject(activity) && activity.id === id, `Day activity key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `day activity ${id}`);
+        requireCondition(activity.kind === "sponsored_job" || activity.kind === "solo",
+            `Day activity ${id} has invalid kind.`);
+        requireCondition(nonBlank(activity.name) && own(document.locations, String(activity.workLocationId || "")),
+            `Day activity ${id} needs a name and valid workLocationId.`);
+        requireCondition(nonBlank(activity.narrationInstructions),
+            `Day activity ${id} needs narrationInstructions.`);
+        if (activity.kind === "sponsored_job") {
+            requireCondition(own(document.characters, String(activity.sponsorCharacterId || "")),
+                `Day activity ${id} references missing sponsorCharacterId '${activity.sponsorCharacterId}'.`);
+            requireCondition(nonBlank(activity.offerDescription),
+                `Day activity ${id} needs offerDescription.`);
+        } else {
+            requireCondition(!activity.sponsorCharacterId && own(document.locations, String(activity.entryLocationId || "")) && nonBlank(activity.entryActionLabel),
+                `Solo day activity ${id} needs a valid entryLocationId and entryActionLabel.`);
+        }
+        const settlement = activity.settlement;
+        requireCondition(isObject(settlement) && ["sponsor_items", "sponsor_gold", "random_items"].includes(settlement.type),
+            `Day activity ${id} has invalid settlement.`);
+        if (settlement.type === "sponsor_items") {
+            requireCondition(Number.isInteger(settlement.minTotal) && Number.isInteger(settlement.maxTotal) &&
+                settlement.minTotal >= 1 && settlement.maxTotal >= settlement.minTotal && Array.isArray(settlement.definitionIds) && settlement.definitionIds.length > 0,
+                `Day activity ${id} has invalid sponsor_items settlement bounds.`);
+            settlement.definitionIds.forEach((definitionId) => requireCondition(own(document.itemDefinitions, String(definitionId || "")),
+                `Day activity ${id} settlement references missing item definition '${definitionId}'.`));
+        } else if (settlement.type === "sponsor_gold") {
+            requireCondition(Number.isInteger(settlement.min) && Number.isInteger(settlement.max) && settlement.min >= 0 && settlement.max >= settlement.min,
+                `Day activity ${id} has invalid sponsor_gold settlement bounds.`);
+        } else if (settlement.type === "random_items") {
+            requireCondition(Number.isInteger(settlement.minTotal) && Number.isInteger(settlement.maxTotal) && settlement.minTotal >= 1 &&
+                settlement.maxTotal >= settlement.minTotal && own(document.itemDefinitions, String(settlement.definitionId || "")),
+                `Day activity ${id} has invalid random_items settlement.`);
+        }
+    }
+
     const authoredEquipmentSlots = new Set();
     for (const [id, item] of entries(document.items)) {
         requireCondition(isObject(item) && item.id === id, `Item key ${id} must match its id.`);
@@ -408,6 +454,11 @@ function validateWorld(document) {
             authoredEquipmentSlots.add(occupancyKey);
         }
     }
+
+    keyedContainerRefs.forEach(function (record) {
+        requireCondition(own(document.items, record.itemId),
+            `Sublocation ${record.sublocationId} references missing required key item '${record.itemId}'.`);
+    });
 
     requireCondition(humanCount === 1,
         `Exactly one initial human-controlled character is required; found ${humanCount}.`);

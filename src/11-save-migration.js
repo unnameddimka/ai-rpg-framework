@@ -372,6 +372,38 @@
         try {
             const source = clone(savedWorld);
             const candidate = createInitialWorld();
+            if (source.environment && typeof source.environment === "object" && !Array.isArray(source.environment)) {
+                const validPhases = new Set(["evening", "nighttime_timelapse", "morning", "daytime_timelapse"]);
+                if (validPhases.has(source.environment.timePhase)) candidate.environment.timePhase = source.environment.timePhase;
+                if (typeof source.environment.weatherNarrative === "string" && source.environment.weatherNarrative.trim()) {
+                    candidate.environment.weatherNarrative = source.environment.weatherNarrative.trim().slice(0, 2000);
+                    candidate.environment.weatherInitialized = typeof source.environment.weatherInitialized === "boolean"
+                        ? source.environment.weatherInitialized
+                        : true;
+                    candidate.environment.weatherSource = typeof source.environment.weatherSource === "string" && source.environment.weatherSource.trim()
+                        ? source.environment.weatherSource.trim().slice(0, 80)
+                        : "saved";
+                }
+            }
+            if (source.daytime && source.daytime.pendingOffer && candidate.environment.timePhase === "morning") {
+                const savedOffer = source.daytime.pendingOffer;
+                const activity = savedOffer && candidate.dayActivities[savedOffer.activityId];
+                const sponsor = activity && candidate.entities[activity.sponsorCharacterId];
+                const human = savedOffer && candidate.entities[savedOffer.humanCharacterId];
+                if (activity && activity.kind === "sponsored_job" && sponsor && sponsor.type === "character" && human && human.type === "character") {
+                    candidate.daytime.pendingOffer = {
+                        activityId: activity.id,
+                        sponsorCharacterId: activity.sponsorCharacterId,
+                        humanCharacterId: human.id,
+                        reactedCharacterIds: Array.isArray(savedOffer.reactedCharacterIds)
+                            ? Array.from(new Set(savedOffer.reactedCharacterIds.filter(function (id) {
+                                const character = candidate.entities[id];
+                                return character && character.type === "character";
+                            })))
+                            : []
+                    };
+                }
+            }
             candidate.events = [];
             candidate.ai.turnQueue = [];
             candidate.ai.continuations = {};

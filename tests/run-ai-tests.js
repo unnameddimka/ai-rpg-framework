@@ -39,7 +39,7 @@ load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/08-
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js");
-load("src/14-event-perception.js"); load("src/21-ai-settings.js");
+load("src/14-event-perception.js"); load("src/17-runtime-diagnostics.js"); load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
 load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-item-model-effects.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
 
@@ -298,6 +298,37 @@ async function main() {
         requestBody.max_tokens === 6000 && requestBody.reasoning && requestBody.reasoning.max_tokens === 1500 &&
         requestBody.provider && requestBody.provider.sort === "latency" && requestBody.provider.allow_fallbacks === true,
         "client should use the selected model, Bearer key, non-streaming transport, explicit completion/reasoning headroom, and latency-first provider routing");
+    setup.RuntimeDiagnostics.clear();
+    const diagnosticTransportClient = {
+        enforceRequestTiming:false,
+        chatWithOptions:function(messages, options){ return setup.OpenRouterClient.chatWithOptions(messages, options, fetchOk); }
+    };
+    const diagnosticTransportResult = await setup.AIRequestExecutor.executeCustom({
+        actorId:"hoodedWoman", purpose:"transport-diagnostic-fixture", stage:"transport-stage", client:diagnosticTransportClient,
+        messages:[{role:"user",content:"transport fixture"}],
+        run:async function(policyClient){
+            const response=await policyClient.chat([{role:"user",content:"transport fixture"}]);
+            return {ok:response.ok,value:response.ok?{done:true}:null,error:response.error||null,modelId:response.modelId||null,usage:response.usage||null,rawContent:response.content||"",trace:null};
+        }
+    });
+    assert(diagnosticTransportResult.ok,"transport diagnostic fixture should succeed");
+    let transportLog=setup.RuntimeDiagnostics.getAITransportLog();
+    const transportEntry=transportLog.entries.slice(-1)[0];
+    assert(transportLog.count===1&&transportEntry.ok===true&&transportEntry.actorId==="hoodedWoman"&&transportEntry.purpose==="transport-diagnostic-fixture"&&transportEntry.stage==="transport-stage"&&transportEntry.attempt===1&&transportEntry.endpoint===setup.OpenRouterClient.ENDPOINT,
+        "low-level AI transport log should capture physical provider calls with propagated semantic metadata");
+    const failingTransportClient={
+        enforceRequestTiming:false,
+        chatWithOptions:function(messages, options){ return setup.OpenRouterClient.chatWithOptions(messages, options, async function(){throw new Error("socket diagnostic failure");}); }
+    };
+    const failedTransportResult=await setup.AIRequestExecutor.executeCustom({
+        actorId:"hoodedWoman",purpose:"transport-failure-fixture",stage:"transport-failure",client:failingTransportClient,messages:[],
+        run:async function(policyClient){const response=await policyClient.chat([]);return {ok:false,value:null,error:response.error,modelId:response.modelId||null,usage:null,rawContent:"",trace:null};}
+    });
+    assert(!failedTransportResult.ok,"transport failure fixture should fail");
+    transportLog=setup.RuntimeDiagnostics.getAITransportLog();
+    const failedTransportEntry=transportLog.entries.slice(-1)[0];
+    assert(failedTransportEntry.ok===false&&failedTransportEntry.error.code==="NETWORK_ERROR"&&failedTransportEntry.providerResponse.networkError.message.includes("socket diagnostic failure"),
+        "low-level AI transport log should retain pre-response network failures");
     const boundedClientOk = await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "structured" }], {
         maxTokens: 1200, reasoningEffort: "none", temperature: 0.2
     }, fetchOk);
@@ -327,8 +358,15 @@ async function main() {
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "villageEdge" }), "item utility fixture reaches village edge");
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "maraCottageGardenLocation" }), "item utility fixture reaches Mara garden");
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "secludedCottage" }), "item utility fixture reaches Mara cottage");
-    ok(setup.CharacterAPI.perform("player", { type: "move_within_location", destination_id: "maraCottageTable" }), "item utility fixture reaches table");
-    ok(setup.CharacterAPI.perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }), "item utility fixture takes slab");
+    ok(setup.CharacterAPI.perform("player", { type: "move_within_location", destination_id: "maraCottageChest" }), "item utility fixture reaches Mara's keyed chest");
+    ok(setup.CharacterAPI.perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }), "Mara utility fixture leaves common room");
+    ok(setup.CharacterAPI.perform("hoodedWoman", { type: "move", destination_id: "street" }), "Mara utility fixture reaches street");
+    ok(setup.CharacterAPI.perform("hoodedWoman", { type: "move", destination_id: "villageEdge" }), "Mara utility fixture reaches village edge");
+    ok(setup.CharacterAPI.perform("hoodedWoman", { type: "move", destination_id: "maraCottageGardenLocation" }), "Mara utility fixture reaches garden");
+    ok(setup.CharacterAPI.perform("hoodedWoman", { type: "move", destination_id: "secludedCottage" }), "Mara utility fixture reaches cottage");
+    ok(setup.CharacterAPI.perform("hoodedWoman", { type: "move_within_location", destination_id: "maraCottageChest" }), "Mara utility fixture reaches chest");
+    ok(setup.CharacterAPI.perform("hoodedWoman", { type: "give_item", target_id: "player", item_id: "maraChestKey" }), "Mara utility fixture lends the chest key");
+    ok(setup.CharacterAPI.perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }), "item utility fixture takes slab with the keyed-container capability");
     world.itemDefinitions.arcaneKnowledgeSlab.useAction = {
         actionLabel: "Consult test source",
         effectId: "utility_query",
@@ -457,8 +495,12 @@ async function main() {
         decisionPrompt.includes("available_actions describes only what is possible right now") &&
         decisionPrompt.includes("Choose the action type from its semantic description first") &&
         decisionPrompt.includes("continuation never overrides the current canonical view") &&
-        decisionPrompt.includes("do not blindly repeat the same action"),
-        "decision prompt should distinguish capabilities from motives, preserve unfinished purpose, and advance one current grounded step without creating a plan queue");
+        decisionPrompt.includes("do not blindly repeat the same action") &&
+        decisionPrompt.includes("EPISTEMIC GROUNDING") &&
+        decisionPrompt.includes("deliberate in-character deception") &&
+        decisionPrompt.includes("concrete motivation") &&
+        decisionPrompt.includes("do not invent an unobserved event"),
+        "decision prompt should distinguish capabilities from motives, require motivated fabrication, preserve unfinished purpose, and advance one current grounded step without creating a plan queue");
     assert(decisionPrompt.includes("Directly addressed meaningful speech normally deserves an in-character response") &&
         decisionPrompt.includes("completely empty no-op after direct address should be deliberate") &&
         decisionPrompt.includes("already passed deterministic perception and delivery rules") &&
