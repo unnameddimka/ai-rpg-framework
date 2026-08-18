@@ -225,6 +225,9 @@
     async function submitHumanIntent(input, client, options) {
         options = options && typeof options === "object" ? options : {};
         const actorId = setup.Game.getHumanCharacterId();
+        if (setup.Game.isPlayerSetupComplete && !setup.Game.isPlayerSetupComplete()) {
+            return { ok: false, error: { code: "PLAYER_SETUP_INCOMPLETE", message: "Complete Traveler setup before gameplay begins." }, actorId: actorId, turnConsumed: false };
+        }
         input = input && typeof input === "object" ? input : {};
         const startsNightTimelapse = Boolean(input.action && input.action.type === "sleep");
         const startsDayTimelapse = Boolean(input.action && input.action.type === "go_hunting");
@@ -355,6 +358,9 @@
     async function resolveDayWorkOffer(accept, client, options) {
         options = options && typeof options === "object" ? options : {};
         const humanId = setup.Game.getHumanCharacterId();
+        if (setup.Game.isPlayerSetupComplete && !setup.Game.isPlayerSetupComplete()) {
+            return { ok: false, error: { code: "PLAYER_SETUP_INCOMPLETE", message: "Complete Traveler setup before gameplay begins." }, actorId: humanId, turnConsumed: false };
+        }
         if (!setup.DaytimeTimelapse || !setup.DaytimeTimelapse.hasPendingOffer()) {
             return { ok: false, error: { code: "DAY_WORK_OFFER_MISSING", message: "There is no pending day-work offer." }, actorId: humanId, turnConsumed: false };
         }
@@ -427,6 +433,9 @@
     async function pass(client, options) {
         options = options && typeof options === "object" ? options : {};
         const actorId = setup.Game.getHumanCharacterId();
+        if (setup.Game.isPlayerSetupComplete && !setup.Game.isPlayerSetupComplete()) {
+            return { ok: false, error: { code: "PLAYER_SETUP_INCOMPLETE", message: "Complete Traveler setup before gameplay begins." }, actorId: actorId, turnConsumed: false };
+        }
         const waveResult = await setup.AITurnScheduler.processWave(client || setup.OpenRouterClient, {
             onCommittedResult: function (aiResult) {
                 const described = describeAIResult(aiResult, actorId);

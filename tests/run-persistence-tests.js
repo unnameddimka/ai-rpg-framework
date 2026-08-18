@@ -30,11 +30,11 @@ function saveObjectFromVariables(variables) {
 }
 
 load("src/generated/world-data.js");
-load("src/08-mind-validators.js");
+load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
 load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
-load("src/13-character-memory.js");
+load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
 load("src/14-event-perception.js");
 load("src/09-persistence.js");
 
@@ -71,8 +71,8 @@ assert(State.variables.world.entities.player.locationId === "commonRoom" &&
 
 // Character mind import is also an in-place canonical mutation and must be captured immediately by onSave.
 State.variables.world = setup.Game.createInitialWorld();
-State.variables.world.entities.hoodedWoman.mind.beliefs = [{ id: "portable_test", text: "A portable belief before export.", confidence: "high" }];
-State.variables.world.entities.hoodedWoman.mind.recentMemories = [{ id: "memory_ai_77", summary: "A portable memory before export.", importance: 0.8, protected: false }];
+State.variables.world.entities.hoodedWoman.mind.beliefs = [{ id: "portable_test", text: "A portable belief before export.", confidence: 0.85, activation: 0.6 }];
+State.variables.world.entities.hoodedWoman.mind.shortTermMemories = [{ id: "memory_ai_77", topic: "Portable memory", summary: "A portable memory before export.", importance: 0.8, protected: false }];
 const exportedMind = setup.CharacterMindTransfer.exportMind("hoodedWoman");
 assert(exportedMind.ok, "portable mind fixture should export");
 State.variables.world = setup.Game.createInitialWorld();
@@ -83,7 +83,7 @@ assert(importedMind.ok && State.variables.world.entities.hoodedWoman.mind.belief
 synchronize(staleMindSave);
 State.variables = clone(staleMindSave.state.history[1].variables);
 assert(State.variables.world.entities.hoodedWoman.mind.beliefs[0].id === "portable_test" &&
-    State.variables.world.entities.hoodedWoman.mind.recentMemories[0].id === "memory_ai_77",
+    State.variables.world.entities.hoodedWoman.mind.shortTermMemories[0].id === "memory_ai_77",
     "a save made immediately after mind import should restore the imported portable mind");
 
 // Reproduce the overnight symptom with deterministic timelapse APIs: the stale

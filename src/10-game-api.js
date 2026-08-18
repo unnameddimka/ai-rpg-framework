@@ -2,8 +2,8 @@
     "use strict";
 
     const LEGACY_WORLD_VERSION = 6;
-    const WORLD_SCHEMA_VERSION = 11;
-    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, 9, 10, WORLD_SCHEMA_VERSION]);
+    const WORLD_SCHEMA_VERSION = 13;
+    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, 9, 10, 11, 12, WORLD_SCHEMA_VERSION]);
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
     const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden"]);
@@ -46,6 +46,7 @@
         world.abilities = clone(document.abilities);
         world.itemDefinitions = clone(document.itemDefinitions);
         world.dayActivities = clone(document.dayActivities || {});
+        world.travelerProfiles = clone(document.travelerProfiles || {});
 
         for (const [locationId, sourceLocation] of Object.entries(document.locations)) {
             const location = clone(sourceLocation);
@@ -91,11 +92,16 @@
             character.type = "character";
             character.mind = clone(character.initialMind || {});
             delete character.initialMind;
+            character.mind.schemaVersion = setup.MindV3.CONFIG.SCHEMA_VERSION;
+            character.mind.verbatimObservations = Array.isArray(character.mind.verbatimObservations) ? character.mind.verbatimObservations : [];
+            character.mind.shortTermMemories = Array.isArray(character.mind.shortTermMemories) ? character.mind.shortTermMemories : [];
+            delete character.mind.recentMemories;
             character.mind.pendingObservations = [];
-            character.mind.maintenanceArchive = { memories: [], beliefs: [] };
             character.recentDialogue = [];
+            character.mindRevision = 0;
+            character.mindDiagnostics = { beliefHistoryById: {} };
             character.mindMaintenanceSnapshots = [];
-            character.mindMaintenanceState = { reconciliationCursor: { afterBeliefId: null } };
+            character.mindMaintenanceState = {};
             character.equippedItems = [];
             character.sleeping = character.sleeping === true;
             world.entities[characterId] = character;
@@ -158,6 +164,7 @@
                 weatherSource: "fallback"
             },
             daytime: { pendingOffer: null, activeActivity: null },
+            playerSetup: { disclaimerAccepted: false, completed: false, mode: null, profileId: null, customAuthoring: null },
 
             control: {
                 assignments: {}
@@ -184,6 +191,67 @@
             throw new Error(validation.error.message);
         }
         return world;
+    }
+
+    function validTravelerProfile(profile, id) {
+        return Boolean(profile && typeof profile === "object" && !Array.isArray(profile) &&
+            profile.id === id && LOCK_ID_PATTERN.test(id) &&
+            typeof profile.name === "string" && profile.name.trim() && profile.name.trim().length <= 120 &&
+            typeof profile.playerDescription === "string" && profile.playerDescription.trim() && profile.playerDescription.trim().length <= 2000 &&
+            typeof profile.aiDescription === "string" && profile.aiDescription.trim() && profile.aiDescription.trim().length <= 4000);
+    }
+
+    function validCustomTravelerAuthoring(value) {
+        return Boolean(value && typeof value === "object" && !Array.isArray(value) &&
+            Object.keys(value).length === 3 &&
+            typeof value.name === "string" && value.name.trim() && value.name.trim().length <= 120 &&
+            typeof value.playerDescription === "string" && value.playerDescription.trim() && value.playerDescription.trim().length <= 2000 &&
+            typeof value.aiDescription === "string" && value.aiDescription.trim() && value.aiDescription.trim().length <= 4000);
+    }
+
+    function normalizePlayerSetup(setupState, fallbackLegacy) {
+        if (!setupState || typeof setupState !== "object" || Array.isArray(setupState)) {
+            return fallbackLegacy
+                ? { disclaimerAccepted: true, completed: true, mode: "legacy", profileId: null, customAuthoring: null }
+                : { disclaimerAccepted: false, completed: false, mode: null, profileId: null, customAuthoring: null };
+        }
+        const accepted = setupState.disclaimerAccepted === true;
+        const completed = setupState.completed === true;
+        const mode = ["generic", "authored", "custom", "legacy"].includes(setupState.mode) ? setupState.mode : null;
+        const profileId = typeof setupState.profileId === "string" && LOCK_ID_PATTERN.test(setupState.profileId) ? setupState.profileId : null;
+        const customAuthoring = validCustomTravelerAuthoring(setupState.customAuthoring)
+            ? {
+                name: setupState.customAuthoring.name.trim(),
+                playerDescription: setupState.customAuthoring.playerDescription.trim(),
+                aiDescription: setupState.customAuthoring.aiDescription.trim()
+            }
+            : null;
+        return { disclaimerAccepted: accepted, completed: completed, mode: mode, profileId: profileId, customAuthoring: customAuthoring };
+    }
+
+    function applyTravelerIdentity(world, identity) {
+        const player = getCharacter("player", world);
+        if (!player) return fail("PLAYER_CHARACTER_MISSING", "The canonical Traveler character is missing.");
+        if (!identity || typeof identity !== "object") return fail("TRAVELER_IDENTITY_INVALID", "Traveler identity authoring is invalid.");
+        const normalized = {
+            name: typeof identity.name === "string" ? identity.name.trim() : "",
+            playerDescription: typeof identity.playerDescription === "string" ? identity.playerDescription.trim() : "",
+            aiDescription: typeof identity.aiDescription === "string" ? identity.aiDescription.trim() : ""
+        };
+        if (!normalized.name || normalized.name.length > 120) return fail("TRAVELER_NAME_INVALID", "Traveler name must contain 1 to 120 characters.");
+        if (!normalized.playerDescription || normalized.playerDescription.length > 2000) return fail("TRAVELER_DESCRIPTION_INVALID", "Traveler visible description must contain 1 to 2000 characters.");
+        if (!normalized.aiDescription || normalized.aiDescription.length > 4000) return fail("TRAVELER_AUTHORING_INVALID", "Traveler character authoring must contain 1 to 4000 characters.");
+        player.name = normalized.name;
+        player.playerDescription = normalized.playerDescription;
+        player.aiDescription = normalized.aiDescription;
+        player.interactionLabel = `Speak with ${normalized.name}`;
+        if (world.inventories[player.inventoryId]) world.inventories[player.inventoryId].name = normalized.name;
+        return ok({ identity: normalized });
+    }
+
+    function playerSetupComplete(world) {
+        const state = world && world.playerSetup;
+        return Boolean(state && state.disclaimerAccepted === true && state.completed === true);
     }
 
     function getWorld() {
@@ -715,7 +783,6 @@
                     return fail("EQUIPMENT_ITEM_INVALID", `Character ${character.id} has invalid equipped item ${record.itemId}.`);
                 }
                 if (itemMembership[item.id] || equipmentMembership[item.id]) return fail("ITEM_MULTIPLE_PLACEMENT", `Item ${item.id} has more than one physical placement.`);
-                if (item.containerId !== character.id) return fail("ITEM_CONTAINER_MISMATCH", `Equipped item ${item.id} containerId must match character ${character.id}.`);
                 equipmentMembership[item.id] = character.id;
             }
         }
@@ -724,7 +791,10 @@
             if (entity.type !== "item") continue;
             if (!getItemDefinition(entity, world)) return fail("ITEM_DEFINITION_MISSING", `Item ${entity.id} references missing definition ${entity.definitionId}.`);
             const placedIn = itemMembership[entity.id] || equipmentMembership[entity.id];
-            if (!placedIn || placedIn !== entity.containerId) return fail("ITEM_CONTAINER_MISMATCH", `Item ${entity.id} containerId does not match canonical placement.`);
+            if (!placedIn) return fail("ITEM_CONTAINER_MISSING", `Item ${entity.id} does not have a canonical physical placement.`);
+            // Inventory/equipment membership is canonical. containerId is a derived compatibility/cache field
+            // and must never make an otherwise valid saved placement unloadable.
+            entity.containerId = placedIn;
             if (entity.abstractStudyProgressByCharacterId !== undefined) {
                 const progressByReader = entity.abstractStudyProgressByCharacterId;
                 if (!progressByReader || typeof progressByReader !== "object" || Array.isArray(progressByReader)) return fail("ITEM_STUDY_PROGRESS_INVALID", `Item ${entity.id} has invalid abstract-study reader progress.`);
@@ -871,29 +941,20 @@
             if (!CONTROLLER_IDS.has(character.defaultControllerId) || character.defaultControllerId === "human") {
                 return fail("DEFAULT_CONTROLLER_INVALID", `Character ${character.id} has an invalid default controller.`);
             }
-            if (!character.mind || !Array.isArray(character.mind.pendingObservations)) {
-                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} has an invalid mind.`);
+            if (!character.mind || character.mind.schemaVersion !== setup.MindV3.CONFIG.SCHEMA_VERSION || !Array.isArray(character.mind.pendingObservations)) {
+                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} has an invalid Mind v3 state.`);
             }
-            for (const partition of ["knownFacts", "beliefs", "relationships", "recentMemories", "longTermMemories"]) {
+            for (const partition of ["knownFacts", "beliefs", "relationships", "verbatimObservations", "shortTermMemories", "longTermMemories"]) {
                 if (!Array.isArray(character.mind[partition])) {
                     return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.${partition} must be an array.`);
                 }
             }
-            if (!character.mind.maintenanceArchive || typeof character.mind.maintenanceArchive !== "object" || Array.isArray(character.mind.maintenanceArchive) ||
-                    !Array.isArray(character.mind.maintenanceArchive.memories) || !Array.isArray(character.mind.maintenanceArchive.beliefs)) {
-                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind.maintenanceArchive must contain memory and belief arrays.`);
+            if (!Number.isInteger(character.mindRevision) || character.mindRevision < 0) {
+                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mindRevision must be a non-negative integer.`);
             }
-            for (const entry of character.mind.maintenanceArchive.memories) {
-                if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.archivedAt !== "string" || !entry.archivedAt.trim() ||
-                        !["recentMemories", "longTermMemories"].includes(entry.sourcePartition) || !setup.MindValidators.validateMemoryRecord(entry.record).ok) {
-                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid archived memory.`);
-                }
-            }
-            for (const entry of character.mind.maintenanceArchive.beliefs) {
-                if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.archivedAt !== "string" || !entry.archivedAt.trim() ||
-                        !setup.MindValidators.validateBeliefRecord(entry.record).ok) {
-                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid archived belief.`);
-                }
+            if (!character.mindDiagnostics || typeof character.mindDiagnostics !== "object" || Array.isArray(character.mindDiagnostics) ||
+                    !character.mindDiagnostics.beliefHistoryById || typeof character.mindDiagnostics.beliefHistoryById !== "object" || Array.isArray(character.mindDiagnostics.beliefHistoryById)) {
+                return fail("CHARACTER_MIND_INVALID", `Character ${character.id} mind diagnostics are invalid.`);
             }
             if (!Array.isArray(character.recentDialogue)) {
                 return fail("CHARACTER_DIALOGUE_INVALID", `Character ${character.id} recentDialogue must be an array.`);
@@ -906,43 +967,36 @@
             }
             for (const snapshot of character.mindMaintenanceSnapshots) {
                 if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) || typeof snapshot.createdAt !== "string" || !snapshot.createdAt.trim() ||
-                        !Number.isInteger(snapshot.turn) || snapshot.turn < 1 || !["manual", "automatic"].includes(snapshot.trigger) ||
+                        !Number.isInteger(snapshot.turn) || snapshot.turn < 1 || !["manual", "automatic", "timelapse", "timelapse-boundary"].includes(snapshot.trigger) ||
                         !snapshot.mind || typeof snapshot.mind !== "object" || Array.isArray(snapshot.mind)) {
                     return fail("CHARACTER_MIND_SNAPSHOT_INVALID", `Character ${character.id} has an invalid maintenance snapshot.`);
                 }
             }
-            const maintenanceState = character.mindMaintenanceState;
-            const maintenanceCursor = maintenanceState && maintenanceState.reconciliationCursor;
-            if (!maintenanceState || typeof maintenanceState !== "object" || Array.isArray(maintenanceState) ||
-                    !maintenanceCursor || typeof maintenanceCursor !== "object" || Array.isArray(maintenanceCursor) ||
-                    (maintenanceCursor.afterBeliefId !== null && (typeof maintenanceCursor.afterBeliefId !== "string" || !setup.MindValidators.ID_PATTERN.test(maintenanceCursor.afterBeliefId)))) {
-                return fail("CHARACTER_MIND_MAINTENANCE_STATE_INVALID", `Character ${character.id} has invalid mind-maintenance reconciliation state.`);
-            }
             const beliefIds = new Set();
             for (const belief of character.mind.beliefs) {
                 const recordValidation = setup.MindValidators.validateBeliefRecord(belief);
-                if (!recordValidation.ok || beliefIds.has(belief.id)) {
-                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate belief.`);
-                }
+                if (!recordValidation.ok || beliefIds.has(belief.id)) return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate belief.`);
                 beliefIds.add(belief.id);
             }
             const relationshipTargets = new Set();
             for (const relationship of character.mind.relationships) {
                 const recordValidation = setup.MindValidators.validateRelationshipRecord(relationship, character.id, world, { requireTargetExists: false });
-                if (!recordValidation.ok || relationshipTargets.has(relationship.targetCharacterId)) {
-                    return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate relationship.`);
-                }
+                if (!recordValidation.ok || relationshipTargets.has(relationship.targetCharacterId)) return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate relationship.`);
                 relationshipTargets.add(relationship.targetCharacterId);
             }
             const memoryIds = new Set();
-            for (const partition of ["recentMemories", "longTermMemories"]) {
+            for (const partition of ["shortTermMemories", "longTermMemories"]) {
                 for (const memory of character.mind[partition]) {
                     const recordValidation = setup.MindValidators.validateMemoryRecord(memory);
-                    if (!recordValidation.ok || memoryIds.has(memory.id)) {
-                        return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate memory.`);
-                    }
+                    if (!recordValidation.ok || memoryIds.has(memory.id)) return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate memory.`);
                     memoryIds.add(memory.id);
                 }
+            }
+            const verbatimIds = new Set();
+            for (const observation of character.mind.verbatimObservations) {
+                const recordValidation = setup.MindValidators.validateVerbatimObservation(observation);
+                if (!recordValidation.ok || verbatimIds.has(observation.id)) return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate verbatim observation.`);
+                verbatimIds.add(observation.id);
             }
             for (const dialogue of character.recentDialogue) {
                 const recordValidation = setup.MindValidators.validateRecentDialogueRecord(dialogue, world, { requireSpeakerExists: false });
@@ -1013,6 +1067,38 @@
         return ok();
     }
 
+    function validateTravelerProfilesAndSetup(world) {
+        if (!world.travelerProfiles || typeof world.travelerProfiles !== "object" || Array.isArray(world.travelerProfiles)) {
+            return fail("TRAVELER_PROFILES_INVALID", "World Traveler profiles are missing or invalid.");
+        }
+        for (const [id, profile] of Object.entries(world.travelerProfiles)) {
+            if (!validTravelerProfile(profile, id)) return fail("TRAVELER_PROFILE_INVALID", `Traveler profile ${id} is invalid.`);
+        }
+        const state = world.playerSetup;
+        if (!state || typeof state !== "object" || Array.isArray(state)) return fail("PLAYER_SETUP_INVALID", "Player initialization state is missing.");
+        const keys = Object.keys(state).sort();
+        const expected = ["completed", "customAuthoring", "disclaimerAccepted", "mode", "profileId"].sort();
+        if (keys.length !== expected.length || keys.some(function (key, index) { return key !== expected[index]; })) {
+            return fail("PLAYER_SETUP_INVALID", "Player initialization state has an invalid shape.");
+        }
+        if (typeof state.disclaimerAccepted !== "boolean" || typeof state.completed !== "boolean") return fail("PLAYER_SETUP_INVALID", "Player initialization flags must be Boolean.");
+        if (!state.completed) {
+            if (state.mode !== null || state.profileId !== null || state.customAuthoring !== null) return fail("PLAYER_SETUP_INVALID", "Incomplete player setup cannot contain a selected Traveler identity.");
+            return ok();
+        }
+        if (!state.disclaimerAccepted || !["generic", "authored", "custom", "legacy"].includes(state.mode)) {
+            return fail("PLAYER_SETUP_INVALID", "Completed player setup must have an accepted disclaimer and valid mode.");
+        }
+        if (state.mode === "authored") {
+            if (typeof state.profileId !== "string" || !LOCK_ID_PATTERN.test(state.profileId) || state.customAuthoring !== null) return fail("PLAYER_SETUP_INVALID", "Authored Traveler setup has invalid profile state.");
+        } else if (state.mode === "custom") {
+            if (state.profileId !== null || !validCustomTravelerAuthoring(state.customAuthoring)) return fail("PLAYER_SETUP_INVALID", "Custom Traveler setup has invalid authoring state.");
+        } else if (state.profileId !== null || state.customAuthoring !== null) {
+            return fail("PLAYER_SETUP_INVALID", "Generic/legacy Traveler setup cannot contain profile authoring.");
+        }
+        return ok();
+    }
+
     function validateWorld(world) {
         if (!world || typeof world !== "object") {
             return fail("WORLD_MISSING", "World state does not exist.");
@@ -1023,6 +1109,8 @@
         if (world.authoringRevision !== currentAuthoringRevision()) {
             return fail("WORLD_AUTHORING_REVISION_INVALID", "World authoringRevision does not match the current generated world.");
         }
+        const travelerResult = validateTravelerProfilesAndSetup(world);
+        if (!travelerResult.ok) return travelerResult;
 
         const controlResult = validateControlAssignments(
             world.control && world.control.assignments
@@ -1080,6 +1168,8 @@
         if (typeof world.environment.weatherInitialized !== "boolean") world.environment.weatherInitialized = false;
         if (typeof world.environment.weatherSource !== "string") world.environment.weatherSource = world.environment.weatherInitialized ? "saved" : "fallback";
         if (!world.dayActivities || typeof world.dayActivities !== "object" || Array.isArray(world.dayActivities)) world.dayActivities = clone(setup.GeneratedWorldData.dayActivities || {});
+        world.travelerProfiles = clone(setup.GeneratedWorldData.travelerProfiles || {});
+        world.playerSetup = normalizePlayerSetup(world.playerSetup, true);
         if (!world.daytime || typeof world.daytime !== "object" || Array.isArray(world.daytime)) world.daytime = { pendingOffer: null, activeActivity: null };
         if (!Object.prototype.hasOwnProperty.call(world.daytime, "pendingOffer")) world.daytime.pendingOffer = null;
         if (!Object.prototype.hasOwnProperty.call(world.daytime, "activeActivity")) world.daytime.activeActivity = null;
@@ -1099,9 +1189,7 @@
         });
         getCharacters(world).forEach(function (character) {
             character.recentDialogue = setup.MindValidators.sanitizeRecentDialogue(character.recentDialogue, world);
-            character.mind.maintenanceArchive = setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceArchive === "function"
-                ? setup.AIMemory.sanitizeMaintenanceArchive(character.mind.maintenanceArchive)
-                : (character.mind.maintenanceArchive || { memories: [], beliefs: [] });
+            if (setup.AIMemory && typeof setup.AIMemory.ensureRuntimeMindFields === "function") setup.AIMemory.ensureRuntimeMindFields(character);
             if (setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceSnapshots === "function") {
                 character.mindMaintenanceSnapshots = setup.AIMemory.sanitizeMaintenanceSnapshots(character.mindMaintenanceSnapshots);
             } else if (!Array.isArray(character.mindMaintenanceSnapshots)) {
@@ -1109,7 +1197,7 @@
             }
             character.mindMaintenanceState = setup.AIMemory && typeof setup.AIMemory.sanitizeMindMaintenanceState === "function"
                 ? setup.AIMemory.sanitizeMindMaintenanceState(character.mindMaintenanceState)
-                : { reconciliationCursor: { afterBeliefId: null } };
+                : {};
         });
         if (!world.ai || typeof world.ai !== "object") world.ai = { turnQueue: [], continuations: {} };
         if (typeof world.ai.inferenceSessionId !== "string" || !world.ai.inferenceSessionId.trim()) {
@@ -1372,8 +1460,8 @@
     const ItemEffectRegistry = {
         report_memory_counts: {
             execute: function (actor, item, definition, useAction) {
-                const recentCount = actor.mind && Array.isArray(actor.mind.recentMemories)
-                    ? actor.mind.recentMemories.length
+                const recentCount = actor.mind && Array.isArray(actor.mind.shortTermMemories)
+                    ? actor.mind.shortTermMemories.length
                     : 0;
                 const longTermCount = actor.mind && Array.isArray(actor.mind.longTermMemories)
                     ? actor.mind.longTermMemories.length
@@ -3192,7 +3280,11 @@
         enqueueAITurn: enqueueAITurn,
         pushDebugLog: pushDebugLog,
         enqueueObservation: enqueueObservation,
-        createInferenceSessionId: createInferenceSessionId
+        createInferenceSessionId: createInferenceSessionId,
+        normalizePlayerSetup: normalizePlayerSetup,
+        applyTravelerIdentity: applyTravelerIdentity,
+        validCustomTravelerAuthoring: validCustomTravelerAuthoring,
+        playerSetupComplete: playerSetupComplete
     };
 
     setup.Game = {
@@ -3218,6 +3310,53 @@
         resetWorld: function () {
             State.variables.world = createInitialWorld();
             return ok();
+        },
+        getPlayerSetup: function () {
+            return clone(ensureWorld().playerSetup);
+        },
+        isPlayerSetupComplete: function () {
+            return playerSetupComplete(ensureWorld());
+        },
+        acceptPlayerDisclaimer: function () {
+            const world = ensureWorld();
+            if (world.playerSetup.completed) return fail("PLAYER_SETUP_ALREADY_COMPLETED", "Player setup is already complete.");
+            world.playerSetup.disclaimerAccepted = true;
+            return ok({ playerSetup: clone(world.playerSetup) });
+        },
+        finalizePlayerSetup: function (input) {
+            const world = ensureWorld();
+            if (!world.playerSetup.disclaimerAccepted) return fail("PLAYER_DISCLAIMER_REQUIRED", "Accept the AI interaction disclaimer before choosing a Traveler.");
+            if (world.playerSetup.completed) return fail("PLAYER_SETUP_ALREADY_COMPLETED", "Player setup is already complete.");
+            input = input && typeof input === "object" ? input : {};
+            const mode = input.mode;
+            const candidate = clone(world);
+            let applied = null;
+            if (mode === "generic") {
+                candidate.playerSetup = { disclaimerAccepted: true, completed: true, mode: "generic", profileId: null, customAuthoring: null };
+            } else if (mode === "authored") {
+                const profileId = typeof input.profileId === "string" ? input.profileId : "";
+                const profile = candidate.travelerProfiles[profileId];
+                if (!validTravelerProfile(profile, profileId)) return fail("TRAVELER_PROFILE_NOT_FOUND", "The selected Traveler profile does not exist or is invalid.");
+                applied = applyTravelerIdentity(candidate, profile);
+                if (!applied.ok) return applied;
+                candidate.playerSetup = { disclaimerAccepted: true, completed: true, mode: "authored", profileId: profileId, customAuthoring: null };
+            } else if (mode === "custom") {
+                if (!validCustomTravelerAuthoring(input.customAuthoring)) return fail("TRAVELER_CUSTOM_INVALID", "Custom Traveler authoring is incomplete or invalid.");
+                const custom = {
+                    name: input.customAuthoring.name.trim(),
+                    playerDescription: input.customAuthoring.playerDescription.trim(),
+                    aiDescription: input.customAuthoring.aiDescription.trim()
+                };
+                applied = applyTravelerIdentity(candidate, custom);
+                if (!applied.ok) return applied;
+                candidate.playerSetup = { disclaimerAccepted: true, completed: true, mode: "custom", profileId: null, customAuthoring: clone(custom) };
+            } else {
+                return fail("TRAVELER_MODE_INVALID", "Choose the generic Traveler, an authored Traveler profile, or Custom.");
+            }
+            const validation = validateWorld(candidate);
+            if (!validation.ok) return validation;
+            State.variables.world = candidate;
+            return ok({ playerSetup: clone(candidate.playerSetup), character: clone(candidate.entities.player) });
         },
         getWorld: function () {
             return ensureWorld();

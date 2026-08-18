@@ -19,6 +19,9 @@
     const validateControlAssignments = I.validateControlAssignments;
     const repairControlInvariant = I.repairControlInvariant;
     const currentAuthoringRevision = I.currentAuthoringRevision;
+    const normalizePlayerSetup = I.normalizePlayerSetup;
+    const applyTravelerIdentity = I.applyTravelerIdentity;
+    const validCustomTravelerAuthoring = I.validCustomTravelerAuthoring;
     let migrationInFlight = false;
     let lastMigrationReport = null;
 
@@ -62,21 +65,78 @@
         });
     }
 
-    function migrationArray(savedCharacter, partition, candidate) {
-        if (!savedCharacter || !savedCharacter.mind || !Array.isArray(savedCharacter.mind[partition])) {
-            throw new Error(`Character ${savedCharacter && savedCharacter.id || "unknown"} has invalid saved mind.${partition}.`);
-        }
-        const records = clone(savedCharacter.mind[partition]);
-        const actorId = savedCharacter.id;
-        const validators = setup.MindValidators;
+    function legacyBeliefValid(record) {
+        return record && typeof record === "object" && !Array.isArray(record) &&
+            typeof record.id === "string" && setup.MindValidators.ID_PATTERN.test(record.id) &&
+            typeof record.text === "string" && record.text.trim() &&
+            (["low", "medium", "high"].includes(record.confidence) ||
+                (typeof record.confidence === "number" && Number.isFinite(record.confidence) && record.confidence > 0 && record.confidence < 1));
+    }
+
+    function legacyMemoryValid(record) {
+        return record && typeof record === "object" && !Array.isArray(record) && typeof record.id === "string" && record.id.trim() &&
+            typeof record.summary === "string" && record.summary.trim() && typeof record.importance === "number" && Number.isFinite(record.importance) &&
+            record.importance >= 0 && record.importance <= 1 && typeof record.protected === "boolean";
+    }
+
+    function migrationRelationships(savedCharacter, candidate) {
+        if (!savedCharacter || !savedCharacter.mind || !Array.isArray(savedCharacter.mind.relationships)) throw new Error(`Character ${savedCharacter && savedCharacter.id || "unknown"} has invalid saved relationships.`);
+        const records = clone(savedCharacter.mind.relationships);
         records.forEach(function (record) {
-            let validation = { ok: true };
-            if (partition === "beliefs") validation = validators.validateBeliefRecord(record, { maxTextLength: 2000 });
-            else if (partition === "relationships") validation = validators.validateRelationshipRecord(record, actorId, candidate, { requireTargetExists: false, maxSummaryLength: 2000 });
-            else if (partition === "recentMemories" || partition === "longTermMemories") validation = validators.validateMemoryRecord(record, { maxSummaryLength: 2000 });
-            if (!validation.ok) throw new Error(`Character ${actorId} has invalid saved mind.${partition}: ${validation.error.message}`);
+            const validation = setup.MindValidators.validateRelationshipRecord(record, savedCharacter.id, candidate, { requireTargetExists: false, maxSummaryLength: 2000 });
+            if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid saved relationship: ${validation.error.message}`);
         });
         return records;
+    }
+
+    function migrateSavedMind(savedCharacter, candidate) {
+        const sourceMind = savedCharacter && savedCharacter.mind;
+        if (!sourceMind || typeof sourceMind !== "object" || Array.isArray(sourceMind)) throw new Error(`Character ${savedCharacter && savedCharacter.id || "unknown"} has invalid saved mind.`);
+        const isV3 = sourceMind.schemaVersion === setup.MindV3.CONFIG.SCHEMA_VERSION &&
+            !Object.prototype.hasOwnProperty.call(sourceMind, "recentMemories") &&
+            Array.isArray(sourceMind.beliefs) && Array.isArray(sourceMind.relationships) && Array.isArray(sourceMind.shortTermMemories) &&
+            Array.isArray(sourceMind.longTermMemories) && Array.isArray(sourceMind.verbatimObservations);
+        if (isV3) {
+            const beliefs = clone(sourceMind.beliefs);
+            const shortTermMemories = clone(sourceMind.shortTermMemories);
+            const longTermMemories = clone(sourceMind.longTermMemories);
+            const verbatimObservations = clone(sourceMind.verbatimObservations);
+            beliefs.forEach(function (record) {
+                const validation = setup.MindValidators.validateBeliefRecord(record, { maxTextLength: 2000 });
+                if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 belief: ${validation.error.message}`);
+            });
+            shortTermMemories.concat(longTermMemories).forEach(function (record) {
+                const validation = setup.MindValidators.validateMemoryRecord(record, { maxSummaryLength: 2000 });
+                if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 memory: ${validation.error.message}`);
+            });
+            verbatimObservations.forEach(function (record) {
+                const validation = setup.MindValidators.validateVerbatimObservation(record);
+                if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 verbatim observation: ${validation.error.message}`);
+            });
+            return {
+                schemaVersion: setup.MindV3.CONFIG.SCHEMA_VERSION,
+                beliefs: beliefs,
+                relationships: migrationRelationships(savedCharacter, candidate),
+                shortTermMemories: shortTermMemories,
+                longTermMemories: longTermMemories,
+                verbatimObservations: verbatimObservations,
+                migratedFromV2: false
+            };
+        }
+        if (!Array.isArray(sourceMind.beliefs) || !Array.isArray(sourceMind.recentMemories) || !Array.isArray(sourceMind.longTermMemories)) {
+            throw new Error(`Character ${savedCharacter.id} has invalid legacy mind partitions.`);
+        }
+        sourceMind.beliefs.forEach(function (record) { if (!legacyBeliefValid(record)) throw new Error(`Character ${savedCharacter.id} has invalid legacy belief.`); });
+        sourceMind.recentMemories.concat(sourceMind.longTermMemories).forEach(function (record) { if (!legacyMemoryValid(record)) throw new Error(`Character ${savedCharacter.id} has invalid legacy memory.`); });
+        return {
+            schemaVersion: setup.MindV3.CONFIG.SCHEMA_VERSION,
+            beliefs: sourceMind.beliefs.map(setup.AIMemory.migrateLegacyBelief),
+            relationships: migrationRelationships(savedCharacter, candidate),
+            shortTermMemories: sourceMind.recentMemories.map(function (record) { return setup.AIMemory.migrateLegacyMemory(record, "stm"); }),
+            longTermMemories: sourceMind.longTermMemories.map(function (record) { return setup.AIMemory.migrateLegacyMemory(record, "ltm"); }),
+            verbatimObservations: [],
+            migratedFromV2: true
+        };
     }
 
     function migrationAbstractStudyProgress(savedCharacter) {
@@ -302,18 +362,14 @@
         let nextEventId = Number.isInteger(savedWorld.nextEventId) && savedWorld.nextEventId > 0 ? savedWorld.nextEventId : 1;
         let nextObservationId = Number.isInteger(savedWorld.nextObservationId) && savedWorld.nextObservationId > 0 ? savedWorld.nextObservationId : 1;
         getCharacters(candidate).forEach(function (character) {
-            ["recentMemories", "longTermMemories"].forEach(function (partition) {
+            ["shortTermMemories", "longTermMemories"].forEach(function (partition) {
                 (character.mind[partition] || []).forEach(function (memory) {
                     const match = memory && typeof memory.id === "string" && memory.id.match(/^memory_ai_(\d+)$/);
                     if (match) nextMemoryId = Math.max(nextMemoryId, Number(match[1]) + 1);
                 });
             });
-            const archivedMemories = character.mind && character.mind.maintenanceArchive && Array.isArray(character.mind.maintenanceArchive.memories)
-                ? character.mind.maintenanceArchive.memories
-                : [];
-            archivedMemories.forEach(function (entry) {
-                const memory = entry && entry.record;
-                const match = memory && typeof memory.id === "string" && memory.id.match(/^memory_ai_(\d+)$/);
+            (character.mind.beliefs || []).forEach(function (belief) {
+                const match = belief && typeof belief.id === "string" && belief.id.match(/^belief_ai_(\d+)$/);
                 if (match) nextMemoryId = Math.max(nextMemoryId, Number(match[1]) + 1);
             });
             (character.mind.pendingObservations || []).forEach(function (observation) {
@@ -332,6 +388,46 @@
         candidate.nextIntentId = Number.isInteger(savedWorld.nextIntentId) && savedWorld.nextIntentId > 0
             ? savedWorld.nextIntentId
             : 1;
+    }
+
+    function restorePlayerSetup(candidate, source, report) {
+        const setupState = normalizePlayerSetup(source.playerSetup, true);
+        candidate.playerSetup = clone(setupState);
+        if (!setupState.completed) return;
+        if (setupState.mode === "generic" || setupState.mode === "legacy") return;
+
+        if (setupState.mode === "custom") {
+            if (validCustomTravelerAuthoring(setupState.customAuthoring)) {
+                const applied = applyTravelerIdentity(candidate, setupState.customAuthoring);
+                if (!applied.ok) throw new Error(applied.error.message);
+                return;
+            }
+            report.warnings.push("Saved Custom Traveler authoring was invalid; current generic Traveler identity was used.");
+            candidate.playerSetup = { disclaimerAccepted: true, completed: true, mode: "legacy", profileId: null, customAuthoring: null };
+            return;
+        }
+
+        if (setupState.mode === "authored") {
+            const profile = candidate.travelerProfiles && candidate.travelerProfiles[setupState.profileId];
+            if (profile) {
+                const applied = applyTravelerIdentity(candidate, profile);
+                if (!applied.ok) throw new Error(applied.error.message);
+                return;
+            }
+            const savedPlayer = source.entities && source.entities.player;
+            const fallbackIdentity = savedPlayer && {
+                name: savedPlayer.name,
+                playerDescription: savedPlayer.playerDescription,
+                aiDescription: savedPlayer.aiDescription
+            };
+            const applied = fallbackIdentity ? applyTravelerIdentity(candidate, fallbackIdentity) : null;
+            if (applied && applied.ok) {
+                report.warnings.push(`Traveler profile ${setupState.profileId} no longer exists; the saved runtime Traveler identity was preserved.`);
+                return;
+            }
+            report.warnings.push(`Traveler profile ${setupState.profileId} no longer exists and its saved identity was invalid; current generic Traveler identity was used.`);
+            candidate.playerSetup = { disclaimerAccepted: true, completed: true, mode: "legacy", profileId: null, customAuthoring: null };
+        }
     }
 
     function migrateSavedWorld(savedWorld) {
@@ -372,6 +468,7 @@
         try {
             const source = clone(savedWorld);
             const candidate = createInitialWorld();
+            restorePlayerSetup(candidate, source, report);
             if (source.environment && typeof source.environment === "object" && !Array.isArray(source.environment)) {
                 const validPhases = new Set(["evening", "nighttime_timelapse", "morning", "daytime_timelapse"]);
                 if (validPhases.has(source.environment.timePhase)) candidate.environment.timePhase = source.environment.timePhase;
@@ -431,9 +528,11 @@
                 if (!savedCharacter || savedCharacter.type !== "character") return;
 
                 report.charactersPreserved += 1;
-                character.mind.beliefs = migrationArray(savedCharacter, "beliefs", candidate);
+                const migratedMind = migrateSavedMind(savedCharacter, candidate);
+                character.mind.schemaVersion = setup.MindV3.CONFIG.SCHEMA_VERSION;
+                character.mind.beliefs = migratedMind.beliefs;
                 const authoredRelationships = clone(character.mind.relationships || []);
-                character.mind.relationships = migrationArray(savedCharacter, "relationships", candidate);
+                character.mind.relationships = migratedMind.relationships;
                 const savedRelationshipTargets = new Set(character.mind.relationships.map(function (record) { return record.targetCharacterId; }));
                 authoredRelationships.forEach(function (record) {
                     const targetExistedInSavedWorld = Boolean(source.entities && source.entities[record.targetCharacterId] && source.entities[record.targetCharacterId].type === "character");
@@ -442,24 +541,24 @@
                         savedRelationshipTargets.add(record.targetCharacterId);
                     }
                 });
-                character.mind.recentMemories = migrationArray(savedCharacter, "recentMemories", candidate);
-                character.mind.longTermMemories = migrationArray(savedCharacter, "longTermMemories", candidate);
-                character.mind.maintenanceArchive = setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceArchive === "function"
-                    ? setup.AIMemory.sanitizeMaintenanceArchive(savedCharacter.mind.maintenanceArchive)
-                    : { memories: [], beliefs: [] };
+                character.mind.shortTermMemories = migratedMind.shortTermMemories;
+                character.mind.longTermMemories = migratedMind.longTermMemories;
+                character.mind.verbatimObservations = migratedMind.verbatimObservations;
                 character.recentDialogue = setup.MindValidators.sanitizeRecentDialogue(savedCharacter.recentDialogue, candidate);
-                character.mindMaintenanceSnapshots = setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceSnapshots === "function"
-                    ? setup.AIMemory.sanitizeMaintenanceSnapshots(savedCharacter.mindMaintenanceSnapshots)
-                    : [];
-                character.mindMaintenanceState = setup.AIMemory && typeof setup.AIMemory.sanitizeMindMaintenanceState === "function"
-                    ? setup.AIMemory.sanitizeMindMaintenanceState(savedCharacter.mindMaintenanceState)
-                    : { reconciliationCursor: { afterBeliefId: null } };
+                character.mindRevision = migratedMind.migratedFromV2 ? 0 : (Number.isInteger(savedCharacter.mindRevision) && savedCharacter.mindRevision >= 0 ? savedCharacter.mindRevision : 0);
+                character.mindDiagnostics = !migratedMind.migratedFromV2 && savedCharacter.mindDiagnostics && typeof savedCharacter.mindDiagnostics === "object" && !Array.isArray(savedCharacter.mindDiagnostics)
+                    ? clone(savedCharacter.mindDiagnostics) : { beliefHistoryById: {} };
+                setup.AIMemory.ensureRuntimeMindFields(character);
+                character.mindMaintenanceSnapshots = migratedMind.migratedFromV2 ? [] : (setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceSnapshots === "function"
+                    ? setup.AIMemory.sanitizeMaintenanceSnapshots(savedCharacter.mindMaintenanceSnapshots) : []);
+                character.mindMaintenanceState = {};
+                if (migratedMind.migratedFromV2) report.warnings.push(`Character ${character.id} mind migrated deterministically from v2 to v3 without model reinterpretation.`);
                 delete character.mind.abstractStudyProgress;
                 character.mind.pendingObservations = [];
                 character.sleeping = savedCharacter.sleeping === true;
                 report.beliefsPreserved += character.mind.beliefs.length;
                 report.relationshipsPreserved += character.mind.relationships.length;
-                report.memoriesPreserved += character.mind.recentMemories.length + character.mind.longTermMemories.length;
+                report.memoriesPreserved += character.mind.shortTermMemories.length + character.mind.longTermMemories.length;
 
                 if (Number.isInteger(savedCharacter.wallet) && savedCharacter.wallet >= 0) {
                     character.wallet = savedCharacter.wallet;

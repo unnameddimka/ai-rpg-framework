@@ -21,7 +21,6 @@ const knownEnvironmentCapabilities = new Set(["ale_source"]);
 const knownItemEffects = new Set(["report_memory_counts", "narrative_feedback", "abstract_study", "utility_query"]);
 const knownTimelapseEffects = new Set(["collect_mugs_to_storage"]);
 const controllers = new Set(["human", "dummy", "ai"]);
-const confidences = new Set(["low", "medium", "high"]);
 
 function requireCondition(condition, message) {
     if (!condition) {
@@ -84,11 +83,12 @@ function registerTechnicalId(owners, id, owner) {
 
 function validateMind(mind, characterId) {
     requireCondition(isObject(mind), `Character ${characterId} must define initialMind.`);
-    for (const listName of ["knownFacts", "beliefs", "relationships", "recentMemories", "longTermMemories"]) {
+    requireCondition(mind.schemaVersion === 3, `Character ${characterId} initialMind.schemaVersion must be 3.`);
+    for (const listName of ["knownFacts", "beliefs", "relationships", "verbatimObservations", "shortTermMemories", "longTermMemories"]) {
         requireCondition(Array.isArray(mind[listName]), `Character ${characterId} initialMind.${listName} must be an array.`);
     }
 
-    for (const listName of ["knownFacts", "beliefs", "recentMemories", "longTermMemories"]) {
+    for (const listName of ["knownFacts", "beliefs", "shortTermMemories", "longTermMemories"]) {
         const seen = new Set();
         for (const record of mind[listName]) {
             const id = record && String(record.id || "");
@@ -99,17 +99,18 @@ function validateMind(mind, characterId) {
     }
 
     for (const belief of mind.beliefs) {
-        requireCondition(confidences.has(String(belief.confidence)),
+        requireCondition(typeof belief.confidence === "number" && Number.isFinite(belief.confidence) && belief.confidence > 0 && belief.confidence < 1,
             `Character ${characterId} belief '${belief.id}' has invalid confidence.`);
+        requireCondition(typeof belief.activation === "number" && Number.isFinite(belief.activation) && belief.activation > 0 && belief.activation < 1,
+            `Character ${characterId} belief '${belief.id}' has invalid activation.`);
     }
 
-    for (const listName of ["recentMemories", "longTermMemories"]) {
+    for (const listName of ["shortTermMemories", "longTermMemories"]) {
         for (const memory of mind[listName]) {
-            requireCondition(typeof memory.importance === "number" && Number.isFinite(memory.importance) &&
-                memory.importance >= 0 && memory.importance <= 1,
-            `Character ${characterId} memory '${memory.id}' has invalid importance.`);
-            requireCondition(typeof memory.protected === "boolean",
-                `Character ${characterId} memory '${memory.id}' protected must be Boolean.`);
+            requireCondition(nonBlank(memory.topic), `Character ${characterId} memory '${memory.id}' needs a topic.`);
+            requireCondition(typeof memory.importance === "number" && Number.isFinite(memory.importance) && memory.importance >= 0 && memory.importance <= 1,
+                `Character ${characterId} memory '${memory.id}' has invalid importance.`);
+            requireCondition(typeof memory.protected === "boolean", `Character ${characterId} memory '${memory.id}' protected must be Boolean.`);
         }
     }
 }
@@ -118,8 +119,8 @@ function validateWorld(document) {
     requireCondition(isObject(document), "world.json must contain a JSON object.");
     requireCondition(document.schemaVersion === 2, "Unsupported world schemaVersion. Expected 2.");
     requireCondition(isObject(document.locations) && isObject(document.characters) && isObject(document.abilities) &&
-        isObject(document.itemDefinitions) && isObject(document.items) && isObject(document.dayActivities),
-        "world.json must contain locations, characters, abilities, itemDefinitions, items, and dayActivities objects.");
+        isObject(document.itemDefinitions) && isObject(document.items) && isObject(document.dayActivities) && isObject(document.travelerProfiles),
+        "world.json must contain locations, characters, abilities, itemDefinitions, items, dayActivities, and travelerProfiles objects.");
     requireCondition(nonBlank(document.startLocationId) && own(document.locations, document.startLocationId),
         "startLocationId must reference an existing location.");
 
@@ -328,6 +329,16 @@ function validateWorld(document) {
         registerTechnicalId(technicalIdOwners, id, `ability ${id}`);
         requireCondition(knownActions.has(String(ability.actionType)),
             `Ability ${id} references unknown action '${ability.actionType}'.`);
+    }
+
+    for (const [id, profile] of entries(document.travelerProfiles)) {
+        requireCondition(isObject(profile) && profile.id === id, `Traveler profile key ${id} must match its id.`);
+        requireCondition(/^[A-Za-z][A-Za-z0-9_-]*$/.test(id), `Traveler profile ${id} has an invalid technical ID.`);
+        requireCondition(nonBlank(profile.name) && profile.name.trim().length <= 120, `Traveler profile ${id} needs a name up to 120 characters.`);
+        requireCondition(nonBlank(profile.playerDescription) && profile.playerDescription.trim().length <= 2000, `Traveler profile ${id} needs a visible description up to 2000 characters.`);
+        requireCondition(nonBlank(profile.aiDescription) && profile.aiDescription.trim().length <= 4000, `Traveler profile ${id} needs AI-facing authoring up to 4000 characters.`);
+        requireCondition(Object.keys(profile).every((key) => ["id", "name", "playerDescription", "aiDescription"].includes(key)),
+            `Traveler profile ${id} may contain only id, name, playerDescription, and aiDescription.`);
     }
 
     let humanCount = 0;

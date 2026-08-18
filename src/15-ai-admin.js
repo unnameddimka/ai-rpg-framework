@@ -15,7 +15,7 @@
         const controllerBusy = Boolean(setup.AIController && setup.AIController.isInFlight && setup.AIController.isInFlight());
         const waveBusy = Boolean(setup.AITurnScheduler && setup.AITurnScheduler.isWaveInFlight && setup.AITurnScheduler.isWaveInFlight());
         const executor = setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus ? setup.AIRequestExecutor.getStatus() : null;
-        const executorBusy = Boolean(executor && executor.busy);
+        const executorBusy = Boolean(executor && (executor.blockingBusy !== undefined ? executor.blockingBusy : executor.busy));
         const migrationBusy = Boolean(setup.SaveMigration && setup.SaveMigration.isInFlight && setup.SaveMigration.isInFlight());
         return {
             busy: controllerBusy || waveBusy || executorBusy || migrationBusy,

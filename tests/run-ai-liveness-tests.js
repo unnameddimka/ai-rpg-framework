@@ -10,7 +10,7 @@ global.Engine = { play: function () {}, show: function () {} };
 function load(file) { vm.runInThisContext(fs.readFileSync(path.join(root, file), "utf8"), { filename: file }); }
 function assert(value, message) { if (!value) throw new Error(message); }
 function ok(value, message) { assert(value && value.ok, `${message}: ${JSON.stringify(value)}`); return value.value === undefined ? value : value.value; }
-function fresh() { setup.Game.resetWorld(); setup.AITurnQueue.repair(); return setup.Game.getWorld(); }
+function fresh() { setup.Game.resetWorld(); setup.Game.acceptPlayerDisclaimer(); setup.Game.finalizePlayerSetup({ mode: "generic" }); setup.AITurnQueue.repair(); return setup.Game.getWorld(); }
 function response(status, body, headers) {
     const normalizedHeaders = Object.assign({}, headers || {});
     return {
@@ -31,8 +31,8 @@ function idleStatus() {
         setup.AIController.isInFlight() === false && setup.AITurnScheduler.isWaveInFlight() === false;
 }
 
-load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/08-mind-validators.js"); load("src/10-game-api.js");
-load("src/11-save-migration.js"); load("src/12-character-context.js"); load("src/13-character-memory.js"); load("src/14-event-perception.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/10-game-api.js");
+load("src/11-save-migration.js"); load("src/12-character-context.js"); load("src/13-character-memory.js"); load("src/13-verbatim-memory.js"); load("src/14-event-perception.js");
 load("src/21-ai-settings.js"); load("src/21-ai-request-profiles.js"); load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js");
 load("src/24-ai-request-executor.js"); load("src/24-item-model-effects.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js");
 load("src/26-presentation-narrator.js");

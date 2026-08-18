@@ -242,6 +242,12 @@ assert(uiSource.includes('renderMigrationOverlay("Migrating save..."') &&
 assert(stylesSource.includes(".framework-migration-overlay") && stylesSource.includes("z-index: 12000") &&
     stylesSource.includes(".framework-migration-panel"),
     "save migration should use a dedicated modal blocking overlay rather than ordinary turn status text");
+assert(uiSource.includes("AI Interaction Disclaimer") && uiSource.includes("Okay, fine") && uiSource.includes("If you decide to get kinky with the characters") &&
+    uiSource.includes("Choose your Traveler") && uiSource.includes("framework-startup-custom-name") && uiSource.includes("setup.Game.acceptPlayerDisclaimer") && uiSource.includes("setup.Game.finalizePlayerSetup") &&
+    uiSource.includes("renderStartupOverlayIfNeeded"),
+    "fresh worlds should use the disclaimer then Generic/Authored/Custom Traveler initialization flow before rendering gameplay");
+assert(stylesSource.includes(".framework-startup-overlay") && stylesSource.includes("z-index: 29000") && stylesSource.includes(".framework-startup-choice"),
+    "Traveler initialization should be a dedicated blocking startup surface");
 assert(uiSource.includes("What ${view.self.name} notices") && uiSource.includes("abilityResultsByActor[result.actorId]"),
     "grounded private human-action feedback should remain visible after unified Submit");
 

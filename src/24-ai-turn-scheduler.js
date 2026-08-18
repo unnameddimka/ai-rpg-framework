@@ -289,53 +289,32 @@
 
     function automaticMemoryCandidates() {
         if (!setup.MemoryConsolidator) return [];
-        const recentThreshold = setup.MemoryConsolidator.AUTO_THRESHOLD;
-        const beliefThreshold = setup.MemoryConsolidator.BELIEF_MAINTENANCE_THRESHOLD;
-        const longTermThreshold = setup.MemoryConsolidator.LONG_TERM_MAINTENANCE_THRESHOLD;
         const world = setup.Game.getWorld();
         return Object.values(world.entities).filter(function (entity) {
-            if (!entity || entity.type !== "character" || !entity.mind) return false;
-            const recentCount = Array.isArray(entity.mind.recentMemories) ? entity.mind.recentMemories.length : 0;
-            const beliefCount = Array.isArray(entity.mind.beliefs) ? entity.mind.beliefs.length : 0;
-            const longTermCount = Array.isArray(entity.mind.longTermMemories) ? entity.mind.longTermMemories.length : 0;
-            return recentCount >= recentThreshold || beliefCount >= beliefThreshold || longTermCount >= longTermThreshold;
+            return entity && entity.type === "character" && entity.mind && Array.isArray(entity.mind.verbatimObservations) &&
+                entity.mind.verbatimObservations.length > setup.MemoryConsolidator.STM_TRIGGER_COUNT;
         }).map(function (character) {
-            return { characterId: character.id, characterName: character.name };
+            return { characterId: character.id, characterName: character.name, verbatimCount: character.mind.verbatimObservations.length };
         });
     }
 
-    async function processAutomaticMemoryConsolidation(client) {
+    async function processAutomaticMemoryConsolidation() {
         const report = {
-            enabled: readAutoMemoryCompressionEnabled(),
-            paused: readAutoProcessingPaused(),
-            attemptedCharacterIds: [],
-            compressedCharacterIds: [],
-            results: [],
-            warnings: []
+            enabled: readAutoMemoryCompressionEnabled(), paused: readAutoProcessingPaused(), attemptedCharacterIds: [],
+            compressedCharacterIds: [], scheduledCharacterIds: [], results: [], warnings: []
         };
-        if (!report.enabled || report.paused || !setup.MemoryConsolidator) return report;
-
+        if (!report.enabled || report.paused || !setup.MindAuxExecutor) return report;
         const candidates = automaticMemoryCandidates();
-        for (const candidate of candidates) {
+        candidates.forEach(function (candidate) {
             report.attemptedCharacterIds.push(candidate.characterId);
-            const result = await setup.MemoryConsolidator.compress(
-                candidate.characterId,
-                client || setup.OpenRouterClient,
-                { automatic: true }
-            );
-            report.results.push(clone(result));
-            if (result.ok && !result.nothingToCompress) {
-                report.compressedCharacterIds.push(candidate.characterId);
-            } else if (!result.ok) {
-                report.warnings.push(
-                    `Mind maintenance failed for ${candidate.characterName}: ${result.error && result.error.message || "unknown error"}`
-                );
-            }
-        }
+            const scheduled = setup.MindAuxExecutor.schedule(candidate.characterId);
+            if (scheduled && scheduled.scheduled) report.scheduledCharacterIds.push(candidate.characterId);
+        });
         return report;
     }
 
     async function processNext(client) {
+        if (setup.Game.isPlayerSetupComplete && !setup.Game.isPlayerSetupComplete()) return { ok: false, error: { code: "PLAYER_SETUP_INCOMPLETE", message: "Complete Traveler setup before AI processing begins." } };
         const next = orderedQueueEntries()[0];
         if (!next) return { ok: false, error: { code: "AI_QUEUE_EMPTY", message: "No pending AI turns." } };
         return setup.AIController.takeQueuedTurn(next.entry.characterId, client || setup.OpenRouterClient);
@@ -349,6 +328,7 @@
 
     async function processWave(client, options) {
         options = options && typeof options === "object" ? options : {};
+        if (setup.Game.isPlayerSetupComplete && !setup.Game.isPlayerSetupComplete()) return { ok: false, error: { code: "PLAYER_SETUP_INCOMPLETE", message: "Complete Traveler setup before AI processing begins." } };
         if (waveInFlight || setup.AIController.isInFlight()) {
             return { ok: false, error: { code: "AI_WAVE_IN_FLIGHT", message: "An AI reaction wave is already in progress." } };
         }
@@ -455,6 +435,7 @@
             };
         } finally {
             waveInFlight = false;
+            if (setup.MindAuxExecutor && setup.MindAuxExecutor.canonicalWorkFinished) setup.MindAuxExecutor.canonicalWorkFinished();
         }
     }
 

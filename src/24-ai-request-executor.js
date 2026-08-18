@@ -31,6 +31,12 @@
         return !client || client === setup.OpenRouterClient || client.enforceRequestTiming === true;
     }
 
+    function isNonBlockingPurpose(purpose) {
+        return purpose === "presentation-location" || purpose === "presentation-tick" ||
+            purpose === "daytime-hunting-narration" || purpose === "weather-narration" ||
+            purpose === "mind-background";
+    }
+
     function isOptionalPresentationPurpose(purpose) {
         return purpose === "presentation-location" || purpose === "presentation-tick" ||
             purpose === "daytime-hunting-narration" || purpose === "weather-narration";
@@ -161,7 +167,7 @@
             recordExchange(spec || {}, skipped, now, now);
             return skipped;
         }
-        const blocking = !isOptionalPresentationPurpose(spec && spec.purpose);
+        const blocking = !isNonBlockingPurpose(spec && spec.purpose);
         activeExecutions++;
         if (blocking) blockingActiveExecutions++;
         activePurpose = activeExecutions > 1 ? "parallel" : (spec.purpose || "unspecified");
@@ -230,7 +236,7 @@
 
     function enqueue(specification, operation) {
         const spec = specification || {};
-        const blocking = !isOptionalPresentationPurpose(spec.purpose);
+        const blocking = !isNonBlockingPurpose(spec.purpose);
         queuedExecutions++;
         if (blocking) blockingQueuedExecutions++;
         const work = chain.catch(function () {}).then(async function () {

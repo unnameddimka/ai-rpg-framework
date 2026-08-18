@@ -39,16 +39,34 @@ function perform(actorId, action, message) {
 }
 
 load("src/generated/world-data.js");
-load("src/08-mind-validators.js");
+load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
 load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
-load("src/13-character-memory.js");
+load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
 load("src/14-event-perception.js");
 load("src/20-controllers.js");
 
 assertOk(setup.Game.bootstrap(), "bootstrap should produce a valid world");
 let world = setup.Game.getWorld();
+
+assert(world.playerSetup.disclaimerAccepted === false && world.playerSetup.completed === false && !setup.Game.isPlayerSetupComplete(),
+    "fresh worlds should stop at the adult AI-interaction disclaimer before gameplay");
+assertFails(setup.Game.finalizePlayerSetup({ mode: "generic" }), "PLAYER_DISCLAIMER_REQUIRED",
+    "Traveler choice must not finalize before disclaimer acknowledgement");
+const freshPlayerShell = { id: world.entities.player.id, locationId: world.entities.player.locationId, sublocationId: world.entities.player.sublocationId, inventoryId: world.entities.player.inventoryId, wallet: world.entities.player.wallet, aura: world.entities.player.engineFacts.aura, abilities: JSON.stringify(world.entities.player.abilityIds), items: JSON.stringify(world.inventories.inventory_player.itemIds) };
+assertOk(setup.Game.acceptPlayerDisclaimer(), "disclaimer acknowledgement should succeed");
+assertOk(setup.Game.finalizePlayerSetup({ mode: "custom", customAuthoring: { name: "Test Traveler", playerDescription: "A custom visible identity.", aiDescription: "A custom private identity." } }), "Custom Traveler setup should succeed");
+world = setup.Game.getWorld();
+assert(world.entities.player.id === freshPlayerShell.id && world.entities.player.name === "Test Traveler" && world.entities.player.playerDescription === "A custom visible identity." && world.entities.player.aiDescription === "A custom private identity." &&
+    world.entities.player.locationId === freshPlayerShell.locationId && world.entities.player.sublocationId === freshPlayerShell.sublocationId && world.entities.player.inventoryId === freshPlayerShell.inventoryId && world.entities.player.wallet === freshPlayerShell.wallet &&
+    world.entities.player.engineFacts.aura === freshPlayerShell.aura && JSON.stringify(world.entities.player.abilityIds) === freshPlayerShell.abilities && JSON.stringify(world.inventories.inventory_player.itemIds) === freshPlayerShell.items && world.inventories.inventory_player.name === "Test Traveler",
+    "Custom Traveler must overlay identity only while preserving the canonical mechanical player shell and shared aura");
+assert(world.playerSetup.mode === "custom" && setup.Game.isPlayerSetupComplete(), "Custom Traveler should complete startup state");
+setup.Game.resetWorld();
+assertOk(setup.Game.acceptPlayerDisclaimer(), "generic fixture disclaimer");
+assertOk(setup.Game.finalizePlayerSetup({ mode: "generic" }), "generic Traveler setup should succeed");
+world = setup.Game.getWorld();
 
 assert(world.entities.player.name === "Traveler", "player display name should be Traveler without changing the player ID");
 assert(world.entities.player.sublocationId === "tavernEntranceFloor", "player should start on entrance floor");
@@ -148,23 +166,26 @@ assert(world.entities.upstairsCorridor && ["innkeeperRoom", "guestRoom1", "guest
 }), "the upstairs corridor and five rooms should exist as authored locations");
 
 // Portable character mind should carry only model-authored persistent identity.
-world.entities.hoodedWoman.mind.beliefs = [{ id: "portable_belief", text: "The Traveler keeps unusual promises.", confidence: "high" }];
+world.entities.hoodedWoman.mind.beliefs = [{ id: "portable_belief", text: "The Traveler keeps unusual promises.", confidence: 0.85, activation: 0.6 }];
 world.entities.hoodedWoman.mind.relationships = [{ targetCharacterId: "player", summary: "I trust the Traveler enough to continue our strange collaboration." }];
-world.entities.hoodedWoman.mind.recentMemories = [{ id: "memory_ai_118", summary: "The Traveler promised to warn me before changing worlds.", importance: 0.8, protected: false }];
-world.entities.hoodedWoman.mind.longTermMemories = [{ id: "memory_ai_119", summary: "My conversations with the Traveler changed how I understand this world.", importance: 0.9, protected: true }];
-world.entities.hoodedWoman.mind.maintenanceArchive = { memories: [{ archivedAt: "2026-08-15T00:00:00.000Z", sourcePartition: "recentMemories", record: { id: "memory_ai_150", summary: "Retired source that still owns its historical ID.", importance: 0.4, protected: false } }], beliefs: [] };
+world.entities.hoodedWoman.mind.shortTermMemories = [
+    { id: "memory_ai_118", topic: "Traveler promises", summary: "The Traveler promised to warn me before changing worlds.", importance: 0.8, protected: false },
+    { id: "memory_ai_150", topic: "Older collaboration", summary: "A retired-looking but still active v3 STM source owns this stable ID.", importance: 0.4, protected: false }
+];
+world.entities.hoodedWoman.mind.longTermMemories = [{ id: "memory_ai_119", topic: "Understanding the world", summary: "My conversations with the Traveler changed how I understand this world.", importance: 0.9, protected: true }];
+world.entities.hoodedWoman.mind.verbatimObservations = [{ id: "verbatim_hoodedWoman_test_1", turn: 1, kind: "observation", actorId: "player", text: "The Traveler said the current world reset is coming." }];
 world.ai.continuations.hoodedWoman = "Finish an old-world task that must not survive transfer.";
 world.entities.hoodedWoman.mind.pendingObservations.push({ id: 991, kind: "test", text: "Current-world observation." });
 const exportedMaraMind = setup.CharacterMindTransfer.exportMind("hoodedWoman");
 assertOk(exportedMaraMind, "Mara mind export should succeed");
-assert(exportedMaraMind.document.version === 2 && Object.keys(exportedMaraMind.document.mind).sort().join(",") === "beliefs,longTermMemories,maintenanceArchive,recentMemories,relationships" &&
+assert(exportedMaraMind.document.version === 3 && Object.keys(exportedMaraMind.document.mind).sort().join(",") === "beliefs,longTermMemories,relationships,schemaVersion,shortTermMemories,verbatimObservations" &&
     !exportedMaraMind.text.includes("knownFacts") && !exportedMaraMind.text.includes("pendingObservations") &&
     !exportedMaraMind.text.includes("continuation") && !exportedMaraMind.text.includes("abstractStudyProgress") &&
     !exportedMaraMind.text.includes("aiDescription"),
-    "mind export v2 should contain persistent model-authored partitions plus maintenance archive and no transient/world state");
+    "mind export v3 should contain durable psychological state plus bounded verbatim continuity and no transient/world state");
 const beforeMismatch = JSON.stringify(setup.Game.getWorld());
 const mismatchImport = setup.CharacterMindTransfer.importMind("innkeeper", exportedMaraMind.document);
-assertFails(mismatchImport, "CHARACTER_MIND_ID_MISMATCH", "mind import should refuse a different stable character ID");
+assertFails(mismatchImport, "CHARACTER_MIND_CHARACTER_MISMATCH", "mind import should refuse a different stable character ID");
 assert(JSON.stringify(setup.Game.getWorld()) === beforeMismatch, "failed mismatched mind import must be atomic");
 
 setup.Game.resetWorld();
@@ -173,7 +194,7 @@ const freshMaraFacts = JSON.stringify(world.entities.hoodedWoman.mind.knownFacts
 const freshMaraDescription = world.entities.hoodedWoman.aiDescription;
 const freshMaraLocation = world.entities.hoodedWoman.locationId;
 const freshMaraInventory = world.entities.hoodedWoman.inventoryId;
-world.entities.hoodedWoman.mind.beliefs = [{ id: "fresh_belief", text: "This should be replaced.", confidence: "low" }];
+world.entities.hoodedWoman.mind.beliefs = [{ id: "fresh_belief", text: "This should be replaced.", confidence: 0.3, activation: 0.4 }];
 world.ai.continuations.hoodedWoman = "Fresh target continuation that must be cleared by replace import.";
 const beforeMindImportEventCount = world.events.length;
 const beforeMindImportQueue = JSON.stringify(world.ai.turnQueue);
@@ -182,9 +203,9 @@ assertOk(importedMaraMind, "matching Mara mind import should succeed");
 world = setup.Game.getWorld();
 assert(world.entities.hoodedWoman.mind.beliefs.length === 1 && world.entities.hoodedWoman.mind.beliefs[0].id === "portable_belief" &&
     world.entities.hoodedWoman.mind.relationships[0].targetCharacterId === "player" &&
-    world.entities.hoodedWoman.mind.recentMemories[0].id === "memory_ai_118" &&
+    world.entities.hoodedWoman.mind.shortTermMemories.some(function (memory) { return memory.id === "memory_ai_118"; }) &&
     world.entities.hoodedWoman.mind.longTermMemories[0].id === "memory_ai_119" &&
-    world.entities.hoodedWoman.mind.maintenanceArchive.memories[0].record.id === "memory_ai_150",
+    world.entities.hoodedWoman.mind.verbatimObservations[0].id === "verbatim_hoodedWoman_test_1",
     "matching import should replace all portable target partitions");
 assert(JSON.stringify(world.entities.hoodedWoman.mind.knownFacts) === freshMaraFacts &&
     world.entities.hoodedWoman.aiDescription === freshMaraDescription && world.entities.hoodedWoman.locationId === freshMaraLocation &&
@@ -366,12 +387,12 @@ assert(memoryStoneActions && memoryStoneActions.options.item_ids.includes("memor
     }), "an owned Memory Stone should grant the generic use_item action through the canonical view");
 assertFails(setup.CharacterAPI.perform("innkeeper", { type: "use_item", item_id: "memoryStone_01" }),
     "ACTION_NOT_AVAILABLE", "a character who does not own the Memory Stone must not be able to use it");
-world.entities.player.mind.recentMemories = [
-    { id: "stone_recent_1", summary: "First recent memory.", importance: 0.4, protected: false },
-    { id: "stone_recent_2", summary: "Second recent memory.", importance: 0.5, protected: false }
+world.entities.player.mind.shortTermMemories = [
+    { id: "stone_recent_1", topic: "Recent one", summary: "First recent memory.", importance: 0.4, protected: false },
+    { id: "stone_recent_2", topic: "Recent two", summary: "Second recent memory.", importance: 0.5, protected: false }
 ];
 world.entities.player.mind.longTermMemories = [
-    { id: "stone_long_1", summary: "One long-term memory.", importance: 0.8, protected: true }
+    { id: "stone_long_1", topic: "Long one", summary: "One long-term memory.", importance: 0.8, protected: true }
 ];
 perform("hoodedWoman", { type: "move", destination_id: "tavernEntrance" }, "Mara leaves the common room for the Memory Stone visibility fixture");
 perform("hoodedWoman", { type: "move", destination_id: "street" }, "Mara walks to the village street for the Memory Stone visibility fixture");
@@ -390,8 +411,8 @@ assert(memoryReport.feedback.length === 1 && memoryReport.feedback[0].recipientI
     !Object.prototype.hasOwnProperty.call(memoryReport.feedback[0].data, "shortTermCount") &&
     !Object.prototype.hasOwnProperty.call(memoryReport.feedback[0].data, "longTermCount"),
     "memory counts should be natural private prose without redundant debug-style count fields");
-assert(world.entities.player.mind.recentMemories.length === 2 && world.entities.player.mind.longTermMemories.length === 1,
-    "report_memory_counts must not mutate the actor's existing recent or long-term memories");
+assert(world.entities.player.mind.shortTermMemories.length === 2 && world.entities.player.mind.longTermMemories.length === 1,
+    "report_memory_counts must not mutate the actor's existing short-term or long-term memories");
 assert(world.entities.player.mind.pendingObservations.length === playerPendingBeforeStone + 1 &&
     world.entities.player.mind.pendingObservations.some(function (item) {
         return item.kind === "action_feedback" && item.code === "MEMORY_COUNTS_REPORTED" &&
@@ -405,13 +426,13 @@ assert(maraStoneObservations.some(function (item) {
 }), "a nearby bystander should perceive the physical squeeze but never receive the private memory counts");
 perform("player", { type: "give_item", target_id: "hoodedWoman", item_id: "memoryStone_01" },
     "player should hand the Memory Stone to the AI-controlled Mara");
-world.entities.hoodedWoman.mind.recentMemories = [
-    { id: "mara_stone_recent", summary: "A recent memory.", importance: 0.5, protected: false }
+world.entities.hoodedWoman.mind.shortTermMemories = [
+    { id: "mara_stone_recent", topic: "Recent", summary: "A recent memory.", importance: 0.5, protected: false }
 ];
 world.entities.hoodedWoman.mind.longTermMemories = [
-    { id: "mara_stone_long_1", summary: "Long memory one.", importance: 0.7, protected: false },
-    { id: "mara_stone_long_2", summary: "Long memory two.", importance: 0.7, protected: false },
-    { id: "mara_stone_long_3", summary: "Long memory three.", importance: 0.7, protected: false }
+    { id: "mara_stone_long_1", topic: "Long 1", summary: "Long memory one.", importance: 0.7, protected: false },
+    { id: "mara_stone_long_2", topic: "Long 2", summary: "Long memory two.", importance: 0.7, protected: false },
+    { id: "mara_stone_long_3", topic: "Long 3", summary: "Long memory three.", importance: 0.7, protected: false }
 ];
 const maraMemoryReport = perform("hoodedWoman", { type: "use_item", item_id: "memoryStone_01" },
     "AIController actor should use the same Memory Stone action contract");
@@ -652,11 +673,11 @@ assert(world.entities.player.name === "Edited Traveler" && world.entities.player
 const generatedBeforeSaveReconciliation = setup.GeneratedWorldData;
 const savedForAuthoringReconciliation = JSON.parse(JSON.stringify(world));
 savedForAuthoringReconciliation.entities.hoodedWoman.aiDescription = "Old saved Mara prompt.";
-savedForAuthoringReconciliation.entities.hoodedWoman.mind.recentMemories.push({
-    id: "memory_save_reconcile", summary: "A saved relationship-building moment.", importance: 0.8, protected: false
+savedForAuthoringReconciliation.entities.hoodedWoman.mind.shortTermMemories.push({
+    id: "memory_save_reconcile", topic: "Relationship-building", summary: "A saved relationship-building moment.", importance: 0.8, protected: false
 });
 savedForAuthoringReconciliation.entities.hoodedWoman.mind.beliefs.push({
-    id: "saved_belief", text: "The traveler is interesting.", confidence: "medium"
+    id: "saved_belief", text: "The traveler is interesting.", confidence: 0.6, activation: 0.5
 });
 savedForAuthoringReconciliation.entities.hoodedWoman.mind.relationships.push({
     targetCharacterId: "player", summary: "A relationship preserved from the save."
@@ -676,7 +697,7 @@ assert(world.entities.hoodedWoman.aiDescription === "New editor-authored Mara pr
 assert(world.entities.player.name === generatedWithEditedMara.characters.player.name &&
     world.entities.player.playerDescription === generatedWithEditedMara.characters.player.playerDescription,
     "authoring reconciliation should rebuild authored public profile fields from the current world");
-assert(world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.id === "memory_save_reconcile"; }) &&
+assert(world.entities.hoodedWoman.mind.shortTermMemories.some(function (memory) { return memory.id === "memory_save_reconcile"; }) &&
     world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "saved_belief"; }) &&
     world.entities.hoodedWoman.mind.relationships.some(function (relationship) { return relationship.summary === "A relationship preserved from the save."; }),
     "save reconciliation should preserve runtime memories, beliefs, and relationships");

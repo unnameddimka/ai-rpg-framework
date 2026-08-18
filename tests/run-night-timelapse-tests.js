@@ -28,15 +28,17 @@ function clone(value) { return value === undefined ? undefined : JSON.parse(JSON
 function assert(value, message) { if (!value) throw new Error(message); }
 function ok(result, message) { assert(result && result.ok, `${message}: ${JSON.stringify(result)}`); return result; }
 function known(character, factId) { return character.mind.knownFacts.some(function (fact) { return fact.id === factId; }); }
-function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] }; }
+function emptyUpdates() { return { relationshipsToUpsert: [], activatedBeliefIds: [] }; }
+function emptyStmResult(overrides) { return Object.assign({ shortTermMemoriesToUpsert: [], shortTermMemoriesToAdd: [], beliefEffects: [], beliefsToAdd: [], activatedBeliefIds: [] }, overrides || {}); }
+function emptyLtmResult(overrides) { return Object.assign({ longTermMemoriesToUpsert: [], longTermMemoriesToAdd: [], retirementGroups: [], higherOrderBeliefEffects: [], beliefsToAdd: [], activatedBeliefIds: [] }, overrides || {}); }
 
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
-load("src/08-mind-validators.js");
+load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
 load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
-load("src/13-character-memory.js");
+load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
 load("src/14-event-perception.js");
 load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
@@ -45,7 +47,7 @@ load("src/23-ai-protocol.js");
 load("src/24-ai-request-executor.js");
 load("src/24-ai-turn-scheduler.js");
 load("src/20-controllers.js");
-load("src/24-memory-consolidator.js");
+load("src/24-memory-consolidator.js"); load("src/24-mind-aux-executor.js");
 load("src/24-timelapse-core.js");
 load("src/24-night-timelapse.js");
 load("src/25-turn-flow.js");
@@ -54,7 +56,7 @@ assert(!timelapseCoreSource.includes("The current mode is overnight") && !timela
     "generic timelapse core must not hard-code overnight-only prompt semantics");
 
 function fresh() {
-    setup.Game.resetWorld();
+    setup.Game.resetWorld(); setup.Game.acceptPlayerDisclaimer(); setup.Game.finalizePlayerSetup({ mode: "generic" });
     // These tests exercise the original overnight cast explicitly; keep the newly authored blacksmith out of unrelated fixtures.
     setup.Game.assignNonHumanController("blacksmith", "dummy");
     setup.AITurnQueue.repair();
@@ -407,6 +409,15 @@ async function main() {
             maxActiveByStage[payload.stage] = Math.max(maxActiveByStage[payload.stage] || 0, activeByStage[payload.stage]);
             await new Promise(function (resolve) { setTimeout(resolve, 5); });
             activeByStage[payload.stage]--;
+            if (payload.stage === "mind-v3-stm") {
+                return response(emptyStmResult({ shortTermMemoriesToAdd: [{ topic: "Going to sleep", summary: "Traveler committed to sleeping through the night.", importance: 0.4 }] }));
+            }
+            if (payload.stage === "mind-v3-ltm") {
+                return response(emptyLtmResult({
+                    longTermMemoriesToAdd: [{ topic: "Night routine", summary: "Traveler went to sleep for the night.", importance: 0.35, sourceStmIds: payload.shortTermMemories.map(function (memory) { return memory.id; }), sourceLtmIds: [] }],
+                    retirementGroups: payload.shortTermMemories.length ? [{ stmIds: payload.shortTermMemories.map(function (memory) { return memory.id; }), disposition: "safe_to_forget", representedByLtmRefs: [], reason: "routine" }] : []
+                }));
+            }
             if (payload.stage === "timelapse-plan") {
                 const actorId = payload.context.view.self.id;
                 assert(actorId !== "hoodedWoman", "already sleeping AI should skip initial activity planning");
@@ -431,7 +442,7 @@ async function main() {
                 assert(payload.context.location && payload.context.location.id === "commonRoom" && Array.isArray(payload.context.location.sublocations),
                     "group resolver should receive the canonical public room projection, not participant private context");
                 const serialized = JSON.stringify(payload.context);
-                assert(!serialized.includes("recentMemories") && !serialized.includes("longTermMemories") &&
+                assert(!serialized.includes("verbatimObservations") && !serialized.includes("shortTermMemories") && !serialized.includes("longTermMemories") &&
                     !serialized.includes("beliefs") && !serialized.includes("relationships") && !serialized.includes("continuation"),
                     "shared encounter resolver must not receive participant private mind context");
                 return response({ interactionOccurred: true, interactionResume: "Garrick, Price, and Nell exchanged a brief greeting in the common room and verbally ended the conversation." });
@@ -465,6 +476,7 @@ async function main() {
         "Human sleep should consume the turn and process exactly five coarse timelapse rounds");
     world = setup.Game.getWorld();
     assert(world.entities.player.sleeping === false, "HumanController should wake after the complete overnight transaction");
+    assert(world.environment.timePhase === "morning" && State.variables.time === "Morning", "successful overnight wrapper must synchronize canonical Morning and legacy $time mirror");
     assert(world.entities.innkeeper.sleeping === true && world.entities.innkeeper.sublocationId === "innkeeperRoomBed" &&
         world.entities.captainPrice.sleeping === true && world.entities.captainPrice.sublocationId === "guestRoom1Bed" &&
         world.entities.nell.sleeping === true && world.entities.nell.sublocationId === "underStairsBed" &&
@@ -477,8 +489,8 @@ async function main() {
     }, {});
     assert(stageCounts["timelapse-plan"] === 3 && stageCounts["timelapse-interaction-intent"] === 3 &&
         stageCounts["timelapse-interaction-resolver"] === 1 && stageCounts["timelapse-replan"] === 3 &&
-        stageCounts["timelapse-reflection"] === 4,
-        `night call shape should be 3 plans + 3 intents + 1 group resolver + 3 replans + 4 reflections: ${JSON.stringify(stageCounts)}`);
+        stageCounts["timelapse-reflection"] === 4 && stageCounts["mind-v3-stm"] === 1 && stageCounts["mind-v3-ltm"] === 1,
+        `night call shape should include 3 plans + 3 intents + 1 group resolver + 3 replans + 4 reflections plus the forced player STM boundary and resulting LTM pass: ${JSON.stringify(stageCounts)}`);
     assert(maxActiveByStage["timelapse-plan"] >= 2 && maxActiveByStage["timelapse-interaction-intent"] >= 2 &&
         maxActiveByStage["timelapse-replan"] >= 2 && maxActiveByStage["timelapse-reflection"] >= 2,
         `causally independent timelapse waves should overlap model calls: ${JSON.stringify(maxActiveByStage)}`);
@@ -515,7 +527,7 @@ async function main() {
         "timelapse internal model work should remain visible in AI interaction diagnostics");
 
     // Live regression: only Harlan needs an active night plan, while all AI minds may reflect/maintain in one concurrent prepare batch.
-    setup.Game.resetWorld();
+    setup.Game.resetWorld(); setup.Game.acceptPlayerDisclaimer(); setup.Game.finalizePlayerSetup({ mode: "generic" });
     setup.Game.assignNonHumanController("blacksmith", "ai");
     setup.AITurnQueue.repair();
     world=setup.Game.getWorld();
@@ -525,8 +537,9 @@ async function main() {
     maintenanceIds.forEach(function(id,index){
         const actor=world.entities[id];
         actor.sleeping=id!=="blacksmith";
-        actor.mind.recentMemories=Array.from({length:11},function(_,i){return {id:`night_batch_${index}_${i}`,summary:`Night batch ${index} memory ${i}`,importance:0.5,protected:false};});
-        actor.mind.longTermMemories=[]; actor.mind.beliefs=[]; actor.mind.maintenanceArchive={memories:[],beliefs:[]};
+        actor.mind.verbatimObservations=[];
+        actor.mind.shortTermMemories=Array.from({length:11},function(_,i){return {id:`night_batch_${index}_${i}`,topic:`Night batch topic ${index}-${i}`,summary:`Night batch ${index} memory ${i}`,importance:0.5,protected:false};});
+        actor.mind.longTermMemories=[]; actor.mind.beliefs=[];
         actor.mind.pendingObservations=[];
     });
     world.entities.hoodedWoman.mind.pendingObservations.push({
@@ -547,8 +560,11 @@ async function main() {
                 return response({steps:Array.from({length:5},function(){return {locationId:"villageSmithy",action:{type:"narrate",text:"Harlan quietly winds down at the forge."}};})});
             }
             if(payload.stage==="timelapse-reflection") return response({memoryUpdates:emptyUpdates()});
-            if(payload.stage==="memory-consolidation-recent") {
-                return response({groups:[{sourceRecentMemoryIds:payload.context.sourceRecentMemories.map(function(memory){return memory.id;}),replacement:{summary:"An older night memory was consolidated into one durable episode.",importance:0.6}}],archiveOnlyRecentMemoryIds:[],keepActiveRecentMemoryIds:[]});
+            if(payload.stage==="mind-v3-ltm") {
+                return response(emptyLtmResult({
+                    longTermMemoriesToAdd:[{topic:"Durable night history",summary:"An older night memory was consolidated into one durable episode.",importance:0.6,sourceStmIds:payload.shortTermMemories.map(function(memory){return memory.id;}),sourceLtmIds:[]}],
+                    retirementGroups:payload.shortTermMemories.length?[{stmIds:payload.shortTermMemories.map(function(memory){return memory.id;}),disposition:"safe_to_forget",representedByLtmRefs:[],reason:"routine"}]:[]
+                }));
             }
             throw new Error(`Unexpected live regression stage ${payload.stage}`);
         }
@@ -556,14 +572,25 @@ async function main() {
     const liveNight=await setup.NightTimelapse.run(liveRegressionClient);
     ok(liveNight,"one-awake-planner night with multi-mind maintenance should complete");
     world=setup.Game.getWorld();
-    assert(world.environment.timePhase==="morning","successful live-regression night must finalize to Morning");
-    assert(liveRegressionStages.filter(function(stage){return stage==="timelapse-plan";}).length===1&&liveRegressionStages.filter(function(stage){return stage==="timelapse-reflection";}).length===5&&liveRegressionStages.filter(function(stage){return stage==="memory-consolidation-recent";}).length===5,
-        `regression should plan only Harlan but reflect/maintain all five AI minds: ${JSON.stringify(liveRegressionStages)}`);
+    assert(world.environment.timePhase==="morning"&&State.variables.time==="Morning","successful live-regression night must finalize canonical and legacy time to Morning");
+    assert(liveRegressionStages.filter(function(stage){return stage==="timelapse-plan";}).length===1&&liveRegressionStages.filter(function(stage){return stage==="timelapse-reflection";}).length===5&&liveRegressionStages.filter(function(stage){return stage==="mind-v3-ltm";}).length===5,
+        `regression should plan only Harlan but reflect/maintain all five AI minds through the v3 LTM stage: ${JSON.stringify(liveRegressionStages)}`);
     assert(!world.entities.hoodedWoman.mind.pendingObservations.some(function(observation){return observation.id===987654;}),
         "a pre-existing observation on an already-sleeping AI must be consumed at the committed timelapse boundary rather than survive into Morning");
     const generatedNightIds=maintenanceIds.map(function(id){return world.entities[id].mind.longTermMemories[0]&&world.entities[id].mind.longTermMemories[0].id;});
     assert(new Set(generatedNightIds).size===5&&generatedNightIds.every(function(id){return /^memory_ai_\d+$/.test(id||"");}),
         "parallel night maintenance prepares must commit five distinct canonical memory IDs without false stale failures");
+
+    // Wrapper rollback keeps the authoritative phase and legacy SugarCube mirror aligned.
+    world=fresh();
+    world.environment.timePhase="evening";
+    State.variables.time="Evening";
+    world.entities.player.sleeping=true;
+    const originalCoreRun=setup.TimelapseCore.run;
+    setup.TimelapseCore.run=async function(){ return {ok:false,mode:"overnight",humanId:"player",rounds:5,committedRounds:0,failedStage:"fixture-core-failure",hiddenNarrativeEntries:[],committedFacts:[],error:{code:"TEST_CORE_FAIL",message:"fixture failure"}}; };
+    const rolledBackNight=await setup.NightTimelapse.run({});
+    setup.TimelapseCore.run=originalCoreRun;
+    assert(!rolledBackNight.ok&&setup.Game.getWorld().environment.timePhase==="evening"&&State.variables.time==="Evening","failed overnight wrapper must restore both canonical Evening and legacy $time mirror");
 
     // Once all coarse rounds commit, reflection failure is diagnostic-only and must not leave the world in Evening.
     world=fresh();
@@ -585,7 +612,7 @@ async function main() {
     const nonFatalNight=await setup.NightTimelapse.run(nonFatalReflectionClient);
     ok(nonFatalNight,"night reflection failures after committed rounds should not fail coarse-time finalization");
     world=setup.Game.getWorld();
-    assert(nonFatalNight.committedRounds===5&&world.environment.timePhase==="morning"&&
+    assert(nonFatalNight.committedRounds===5&&world.environment.timePhase==="morning"&&State.variables.time==="Morning"&&
         nonFatalNight.mindProcessingErrors.length===4&&nonFatalNight.mindProcessingErrors.every(function(entry){return entry.stage==="reflection-prepare"&&entry.error.code==="TEST_NIGHT_REFLECTION_FAILURE";}),
         "completed Night must transition to Morning while retaining each post-timelapse reflection failure in diagnostics");
 

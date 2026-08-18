@@ -301,7 +301,9 @@
     }
 
     function compactPrivateContext(characterId, pendingObservations) {
-        return setup.CharacterContext.buildMaintenance(characterId, { pendingObservations: pendingObservations || [] });
+        const context = setup.CharacterContext.buildMaintenance(characterId, { pendingObservations: pendingObservations || [] });
+        if (context && context.ok !== false && setup.MindV3) context.beliefSemantics = setup.MindV3.BELIEF_SEMANTICS;
+        return context;
     }
 
     async function requestPlan(characterId, startRound, remainingRounds, facts, latestEncounter, latestFailure, client, mode) {
@@ -462,14 +464,14 @@
             return { ok: false, errors: ["response must contain exactly memoryUpdates."] };
         }
         const updates = value.memoryUpdates;
-        if (!exactKeys(updates, ["recentMemoriesToAdd", "beliefsToUpsert", "beliefIdsToRemove", "relationshipsToUpsert"])) {
-            return { ok: false, errors: ["memoryUpdates must contain exactly recentMemoriesToAdd, beliefsToUpsert, beliefIdsToRemove, and relationshipsToUpsert."] };
+        if (!exactKeys(updates, ["relationshipsToUpsert", "activatedBeliefIds"])) {
+            return { ok: false, errors: ["memoryUpdates must contain exactly relationshipsToUpsert and activatedBeliefIds."] };
         }
-        if (![updates.recentMemoriesToAdd, updates.beliefsToUpsert, updates.beliefIdsToRemove, updates.relationshipsToUpsert].every(Array.isArray)) {
+        if (!Array.isArray(updates.relationshipsToUpsert) || !Array.isArray(updates.activatedBeliefIds)) {
             return { ok: false, errors: ["all memoryUpdates fields must be arrays."] };
         }
-        if (updates.recentMemoriesToAdd.length > 5 || updates.beliefsToUpsert.length > 5 || updates.beliefIdsToRemove.length > 5 || updates.relationshipsToUpsert.length > 5) {
-            return { ok: false, errors: ["each memoryUpdates array may contain at most 5 records."] };
+        if (updates.relationshipsToUpsert.length > 5 || updates.activatedBeliefIds.length > 10) {
+            return { ok: false, errors: ["reflection update arrays exceed their bounded limits."] };
         }
         const standardValidation = setup.AIProtocol.validateResult({
             publicNarrative: null,
@@ -535,7 +537,7 @@
     }
 
     function reflectionContract() {
-        return JSON.stringify({ memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] } });
+        return JSON.stringify({ memoryUpdates: { relationshipsToUpsert: [], activatedBeliefIds: [] } });
     }
 
     async function requestReflection(characterId, facts, client, mode) {
@@ -544,12 +546,12 @@
         context.completedTimelapse = { mode: mode || DEFAULT_MODE, committedFacts: compactFacts(facts) };
         const allowedRelationshipTargetIds = reflectionAllowedRelationshipTargets(characterId, context);
         const messages = [
-            { role: "system", content: `You are giving exactly one RPG character a private post-timelapse reflection after the supplied actual events have completed. You cannot act in the world. Update only durable private memory, beliefs, or relationships when something meaningfully changed. Ground character identity in context.view.location.characters, context.mind.relationships, and context.recentDialogue: relationship targetCharacterId must use a canonical supplied character ID, never an ID invented from a display name. Preserve epistemic provenance. A deliberate lie may be remembered as something the character said or did to deceive, but not converted into an objective memory that the lie was true. An inference, suspicion, misunderstanding, or uncertain belief must remain an inference, suspicion, misunderstanding, or belief rather than becoming an observed fact. Do not invent physical events, permissions, statements, intentions, or mechanical results merely to make the history flow smoothly. Routine detail need not be remembered. Return exactly one object with the single key memoryUpdates. memoryUpdates must contain exactly recentMemoriesToAdd, beliefsToUpsert, beliefIdsToRemove, and relationshipsToUpsert. A recent memory record is {"summary":"...","importance":0.0}, with importance from 0 to 1. A belief record is {"id":"letter_started_id","text":"...","confidence":"low|medium|high"}. beliefIdsToRemove may explicitly remove an existing belief that became obsolete or contradicted. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. Each array may contain at most 5 records and may be empty. Example empty response: ${reflectionContract()}. No markdown, commentary, hidden reasoning, or extra fields.` },
+            { role: "system", content: `You are giving exactly one RPG character a private post-timelapse reflection after supplied actual events have completed. You cannot act in the world and you do not directly write autobiographical memory or belief text/confidence. Mind v3 derives those separately from committed experience. You may update only relationship summaries that meaningfully changed and report which existing beliefs were psychologically salient during this reflection. Ground relationship targetCharacterId in supplied canonical IDs, never an invented display-name ID. Preserve epistemic provenance and do not invent physical events, permissions, statements, intentions, or mechanical results. Return exactly one object with the single key memoryUpdates. memoryUpdates must contain exactly relationshipsToUpsert and activatedBeliefIds. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. activatedBeliefIds may contain only existing supplied belief IDs that were genuinely relevant. Example empty response: ${reflectionContract()}. ${setup.MindV3 ? setup.MindV3.BELIEF_SEMANTICS : ""} No markdown, commentary, hidden reasoning, or extra fields.` },
             { role: "user", content: JSON.stringify({
                 stage: "timelapse-reflection",
                 context: context,
                 canonicalRelationshipTargetIds: Array.from(allowedRelationshipTargetIds),
-                requiredResponseContract: { memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] } }
+                requiredResponseContract: { memoryUpdates: { relationshipsToUpsert: [], activatedBeliefIds: [] } }
             }) }
         ];
         const result = await requestStructured({
@@ -692,6 +694,46 @@
         };
     }
 
+    function appendCommittedTimelapseExperience(actorIds, sequenceId, text, kind, round) {
+        if (!setup.VerbatimMemory || typeof setup.VerbatimMemory.appendTimelapseExperience !== "function") return;
+        const world = setup.Game.getWorld();
+        (actorIds || []).forEach(function (characterId) {
+            const actor = world.entities[characterId];
+            if (!actor || actor.type !== "character") return;
+            setup.VerbatimMemory.appendTimelapseExperience(characterId, sequenceId, text, {
+                kind: kind || "timelapse_experience",
+                actorId: characterId,
+                turn: Number.isInteger(round) && round > 0 ? round : Math.max(1, (world.nextEventId || 2) - 1)
+            }, world);
+        });
+    }
+
+    async function consolidatePreTimelapseBoundary(characterIds, client, errors) {
+        if (setup.MindAuxExecutor && typeof setup.MindAuxExecutor.invalidateForTimelapse === "function") {
+            setup.MindAuxExecutor.invalidateForTimelapse();
+        }
+        if (!setup.MemoryConsolidator || typeof setup.MemoryConsolidator.consolidateSTM !== "function") return;
+        const results = await Promise.all((characterIds || []).map(async function (characterId) {
+            const actor = setup.Game.getWorld().entities[characterId];
+            const count = actor && actor.mind && Array.isArray(actor.mind.verbatimObservations) ? actor.mind.verbatimObservations.length : 0;
+            if (count < 1) return { characterId: characterId, result: { ok: true, nothingToConsolidate: true } };
+            const result = await setup.MemoryConsolidator.consolidateSTM(characterId, client || setup.OpenRouterClient, {
+                forceAll: true,
+                purpose: "memory-consolidation",
+                trigger: "timelapse-boundary",
+                concurrent: true
+            });
+            return { characterId: characterId, result: result };
+        }));
+        results.forEach(function (record) {
+            if (!record.result || !record.result.ok) errors.push({
+                stage: "pre-timelapse-stm",
+                characterId: record.characterId,
+                error: clone(record.result && record.result.error || { code: "MIND_V3_BOUNDARY_FAILED", message: "Pre-timelapse STM consolidation failed; verbatim source memory was preserved." })
+            });
+        });
+    }
+
     function recordTimelapseResult(result) {
         if (setup.EmergencyDiagnostics && typeof setup.EmergencyDiagnostics.recordTimelapseResult === "function") {
             try { setup.EmergencyDiagnostics.recordTimelapseResult(result); } catch (error) { /* diagnostics never affect gameplay */ }
@@ -706,6 +748,7 @@
         const humanId = setup.Game.getHumanCharacterId();
         const world = setup.Game.getWorld();
         const aiIds = aiCharacterIds();
+        const allCharacterIds = Object.values(world.entities).filter(function (entity) { return entity && entity.type === "character"; }).map(function (entity) { return entity.id; });
         const fixedPlans = options.fixedPlans && typeof options.fixedPlans === "object" ? clone(options.fixedPlans) : {};
         const fixedActorIds = new Set(Object.keys(fixedPlans));
         aiIds.forEach(function (characterId) {
@@ -728,6 +771,10 @@
         });
 
         try {
+            currentStage = "pre-timelapse-stm";
+            await consolidatePreTimelapseBoundary(allCharacterIds, client, mindProcessingErrors);
+            lastCommittedWorld = clone(setup.Game.getWorld());
+            currentStage = "planning";
             const initialPlanResults = await Promise.all(aiIds.map(async function (characterId) {
                 const actor = setup.Game.getWorld().entities[characterId];
                 if (!actor || actor.sleeping === true) return { characterId: characterId, skipped: true, result: null };
@@ -775,6 +822,7 @@
                             addFact(publicRecords, factsByActor, `${characterName(characterId)} could not complete the planned travel: ${moveResult.error.message}`, [characterId], setup.Game.getWorld().entities[characterId].locationId, "timelapse_failure", round);
                         } else if (moveResult.text) {
                             addFact(publicRecords, factsByActor, moveResult.text, [characterId], step.locationId, "timelapse_move", round);
+                            appendCommittedTimelapseExperience([characterId], `r${round}-move-${characterId}`, moveResult.text, "timelapse_move", round);
                         }
                     }
 
@@ -797,6 +845,7 @@
                         } else {
                             activities[characterId] = actionResult.text;
                             addFact(publicRecords, factsByActor, actionResult.text, [characterId], actionResult.locationId, `timelapse_${actionResult.type}`, round, actionResult.visibleToHuman === true);
+                            appendCommittedTimelapseExperience([characterId], `r${round}-action-${characterId}`, actionResult.text, `timelapse_${actionResult.type}`, round);
                         }
                     }
 
@@ -806,8 +855,9 @@
                             activities: clone(activities), committedFacts: publicRecords.map(function (record) { return record.text; })
                         });
                         if (!extra || extra.ok === false) throw extra && extra.error || structuralError("TIMELAPSE_ROUND_EXTENSION_FAILED", "Timelapse round extension failed.");
-                        (extra.records || []).forEach(function (record) {
+                        (extra.records || []).forEach(function (record, recordIndex) {
                             addFact(publicRecords, factsByActor, record.text, record.actorIds || [], record.locationId || null, record.kind || "timelapse", round, record.visibleToHuman === true);
+                            appendCommittedTimelapseExperience(record.actorIds || [], `r${round}-extension-${recordIndex}`, record.text, record.kind || "timelapse", round);
                         });
                     }
 
@@ -825,6 +875,7 @@
                     encounterResults.forEach(function (encounter) {
                         if (!encounter.interactionOccurred) return;
                         addFact(publicRecords, factsByActor, encounter.resume, encounter.participants, encounter.locationId, "timelapse_interaction", round, encounter.visibleToHuman === true);
+                        appendCommittedTimelapseExperience(encounter.participants, `r${round}-interaction-${encounter.locationId || "group"}`, encounter.resume, "timelapse_interaction", round);
                         encounter.participants.forEach(function (characterId) { replanReasons[characterId] = true; });
                     });
 
@@ -892,8 +943,9 @@
                     factsByActor: clone(factsByActor)
                 });
                 if (!hookResult || hookResult.ok === false) throw hookResult && hookResult.error || structuralError("TIMELAPSE_FINALIZATION_FAILED", "Timelapse pre-reflection finalization failed.");
-                (hookResult.records || []).forEach(function (record) {
+                (hookResult.records || []).forEach(function (record, recordIndex) {
                     addFact(publicRecords, factsByActor, record.text, record.actorIds || [], record.locationId || null, record.kind || "timelapse_settlement", null, record.visibleToHuman === true);
+                    appendCommittedTimelapseExperience(record.actorIds || [], `settlement-${recordIndex}`, record.text, record.kind || "timelapse_settlement", Math.max(1, roundCount));
                 });
                 lastCommittedWorld = clone(setup.Game.getWorld());
             }
@@ -914,7 +966,7 @@
                     });
                     return;
                 }
-                const commit = setup.AIMemory.applyUpdates(record.characterId, record.result.value.memoryUpdates);
+                const commit = setup.AIMemory.applyTurnUpdates(record.characterId, record.result.value.memoryUpdates);
                 if (!commit.ok) {
                     mindProcessingErrors.push({ stage: "reflection-commit", characterId: record.characterId, error: clone(commit.error) });
                     return;
@@ -928,27 +980,20 @@
             });
 
             const consolidations = [];
-            if (setup.MemoryConsolidator) {
+            if (setup.MemoryConsolidator && typeof setup.MemoryConsolidator.maintainTimelapse === "function") {
                 currentStage = "maintenance-prepare";
-                const batch = setup.MemoryConsolidator.compressBatch
-                    ? await setup.MemoryConsolidator.compressBatch(aiIds, client || setup.OpenRouterClient, { automatic: true })
-                    : null;
-                if (!batch) {
-                    mindProcessingErrors.push({ stage: "maintenance-prepare", characterId: null, error: structuralError("MEMORY_CONSOLIDATION_BATCH_UNAVAILABLE", "Parallel maintenance batch support is unavailable.") });
-                } else if (!batch.ok) {
-                    const stage = batch.failedStage === "commit" ? "maintenance-commit" : "maintenance-prepare";
-                    const batchError = clone(batch.error || { code: "MEMORY_CONSOLIDATION_FAILED", message: "Mind maintenance failed." });
-                    batchError.details = Object.assign({}, batchError.details || {}, { characterId: batch.characterId || null, maintenanceStage: batch.failedStage || null });
-                    mindProcessingErrors.push({ stage: stage, characterId: batch.characterId || null, error: batchError });
-                    (batch.results || []).forEach(function (record) {
-                        if (record && record.result && record.result.ok) consolidations.push({ characterId: record.characterId, result: clone(record.result) });
+                const maintenanceResults = await Promise.all(allCharacterIds.map(async function (characterId) {
+                    const maintenance = await setup.MemoryConsolidator.maintainTimelapse(characterId, client || setup.OpenRouterClient, { elapsedMaintenanceUnits: 1, concurrent: true });
+                    return { characterId: characterId, result: maintenance };
+                }));
+                maintenanceResults.forEach(function (record) {
+                    consolidations.push({ characterId: record.characterId, result: clone(record.result) });
+                    if (!record.result.ok) mindProcessingErrors.push({
+                        stage: "maintenance",
+                        characterId: record.characterId,
+                        error: clone(record.result.error || { code: "MIND_V3_TIMELAPSE_MAINTENANCE_PARTIAL", message: "Timelapse mind maintenance was only partially completed; source memory was preserved." })
                     });
-                } else {
-                    currentStage = "maintenance-commit";
-                    batch.results.forEach(function (record) {
-                        consolidations.push({ characterId: record.characterId, result: clone(record.result) });
-                    });
-                }
+                });
             }
 
             currentStage = "final-validation";

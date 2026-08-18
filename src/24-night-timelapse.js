@@ -15,6 +15,20 @@
         return { ok: false, error: error };
     }
 
+
+    function setTimePhase(phase) {
+        if (setup.WorldEnvironment && typeof setup.WorldEnvironment.setTimePhase === "function") {
+            const result = setup.WorldEnvironment.setTimePhase(phase);
+            if (result && result.ok) return result;
+        }
+        const world = setup.Game.getWorld();
+        if (!world.environment) world.environment = {};
+        world.environment.timePhase = phase;
+        const labels = { evening: "Evening", nighttime_timelapse: "Night", morning: "Morning", daytime_timelapse: "Day" };
+        if (typeof State !== "undefined" && State.variables) State.variables.time = labels[phase] || phase;
+        return { ok: true, value: { timePhase: phase, timeLabel: labels[phase] || phase } };
+    }
+
     function recordFinalTimelapseResult(result, finalStage) {
         if (setup.EmergencyDiagnostics && typeof setup.EmergencyDiagnostics.recordTimelapseResult === "function") {
             try {
@@ -47,19 +61,19 @@
             return failure("AI_KEY_MISSING", "Enter an OpenRouter API key before sleeping until morning.");
         }
 
-        world.environment.timePhase = "nighttime_timelapse";
+        setTimePhase("nighttime_timelapse");
         inFlight = true;
         try {
             const result = await setup.TimelapseCore.run(client, Object.assign({}, options, { mode: MODE, roundCount: ROUND_COUNT }));
             const currentWorld = setup.Game.getWorld();
             if (currentWorld.entities && currentWorld.entities[humanId]) currentWorld.entities[humanId].sleeping = false;
             if (!result.ok) {
-                currentWorld.environment.timePhase = "evening";
+                setTimePhase("evening");
             } else {
                 if (setup.WorldEnvironment && typeof setup.WorldEnvironment.refreshWeather === "function") {
                     try { await setup.WorldEnvironment.refreshWeather(client || setup.OpenRouterClient); } catch (error) { /* optional weather never blocks */ }
                 }
-                setup.Game.getWorld().environment.timePhase = "morning";
+                setTimePhase("morning");
             }
             const validation = setup.Game.validateWorld();
             if (!validation.ok) {

@@ -15,6 +15,20 @@
         return { ok: false, error: error };
     }
 
+
+    function setTimePhase(phase) {
+        if (setup.WorldEnvironment && typeof setup.WorldEnvironment.setTimePhase === "function") {
+            const result = setup.WorldEnvironment.setTimePhase(phase);
+            if (result && result.ok) return result;
+        }
+        const world = setup.Game.getWorld();
+        if (!world.environment) world.environment = {};
+        world.environment.timePhase = phase;
+        const labels = { evening: "Evening", nighttime_timelapse: "Night", morning: "Morning", daytime_timelapse: "Day" };
+        if (typeof State !== "undefined" && State.variables) State.variables.time = labels[phase] || phase;
+        return { ok: true, value: { timePhase: phase, timeLabel: labels[phase] || phase } };
+    }
+
     function recordFinalTimelapseResult(result, finalStage) {
         if (setup.EmergencyDiagnostics && typeof setup.EmergencyDiagnostics.recordTimelapseResult === "function") {
             try {
@@ -451,7 +465,7 @@
         Object.values(currentWorld().entities).forEach(function (entity) {
             if (entity && entity.type === "character") entity.sleeping = false;
         });
-        currentWorld().environment.timePhase = "daytime_timelapse";
+        setTimePhase("daytime_timelapse");
         const fixedPlans = {};
         const passiveParticipants = [];
         if (record.definition.kind === "sponsored_job") {
@@ -499,7 +513,7 @@
             });
             current.daytime.activeActivity = null;
             if (!result.ok) {
-                current.environment.timePhase = "morning";
+                setTimePhase("morning");
                 const validationFailed = setup.Game.validateWorld();
                 if (!validationFailed.ok) return recordFinalTimelapseResult(Object.assign({}, result, { failedStage: "wrapper-validation", error: clone(validationFailed.error) }), "wrapper-validation");
                 return recordFinalTimelapseResult(result, result.failedStage || "core-failed");
@@ -507,7 +521,7 @@
             if (setup.WorldEnvironment && typeof setup.WorldEnvironment.refreshWeather === "function") {
                 try { await setup.WorldEnvironment.refreshWeather(client || setup.OpenRouterClient); } catch (error) { /* optional weather never blocks */ }
             }
-            currentWorld().environment.timePhase = "evening";
+            setTimePhase("evening");
             Object.values(currentWorld().entities).forEach(function (entity) {
                 if (entity && entity.type === "character") entity.sleeping = false;
             });

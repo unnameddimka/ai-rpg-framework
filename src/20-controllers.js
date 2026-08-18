@@ -191,6 +191,7 @@
     }
 
     async function takeQueuedTurn(expectedActorId, client) {
+        if (setup.Game.isPlayerSetupComplete && !setup.Game.isPlayerSetupComplete()) return recordFailure({ code: "PLAYER_SETUP_INCOMPLETE", message: "Complete Traveler setup before AI processing begins." });
         if (inFlight) return recordFailure({ code: "AI_TURN_IN_FLIGHT", message: "An AI turn is already in progress." });
         const status = setup.AITurnQueue.getStatus();
         if (!status.head) return recordFailure({ code: "AI_QUEUE_EMPTY", message: "No pending AI turns." });
@@ -256,7 +257,8 @@
             return takeQueuedTurn(characterId, client || setup.OpenRouterClient);
         },
         isInFlight: function () {
-            return inFlight || Boolean(setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus().busy);
+            const status = setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus ? setup.AIRequestExecutor.getStatus() : null;
+            return inFlight || Boolean(status && (status.blockingBusy !== undefined ? status.blockingBusy : status.busy));
         },
         clearDebug: function () {
             setup.AITransientDebug.lastContext = null;

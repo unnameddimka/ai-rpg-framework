@@ -900,3 +900,36 @@ details[open] > summary .framework-disclosure-arrow {
 
 #framework-global-emergency-dump:hover,
 #framework-global-emergency-dump:focus { opacity: 1; background: #a52626; }
+
+.framework-startup-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 29000;
+    display: grid;
+    place-items: center;
+    padding: 1.25rem;
+    background: #171512;
+    color: #eee8df;
+    overflow: auto;
+}
+.framework-startup-panel {
+    width: min(46rem, 100%);
+    padding: 1.5rem;
+    border: 1px solid #554f48;
+    border-radius: 0.65rem;
+    background: #24211d;
+    box-shadow: 0 1.2rem 4rem rgba(0,0,0,.65);
+}
+.framework-startup-panel h2 { margin-top: 0; }
+.framework-startup-note { color: #c9c0b5; }
+.framework-startup-choices { display: grid; gap: .65rem; margin: 1rem 0; }
+.framework-startup-choice { display: grid; grid-template-columns: auto 1fr; gap: .2rem .65rem; align-items: start; padding: .8rem; border: 1px solid #554f48; border-radius: .45rem; cursor: pointer; }
+.framework-startup-choice input { grid-row: 1 / span 2; margin-top: .25rem; }
+.framework-startup-choice span { color: #c9c0b5; }
+.framework-startup-custom { display: grid; gap: .75rem; margin: 1rem 0; }
+.framework-startup-custom.is-hidden { display: none; }
+.framework-startup-custom label { display: grid; gap: .3rem; }
+.framework-startup-custom input,.framework-startup-custom textarea { width: 100%; box-sizing: border-box; }
+.framework-startup-custom textarea { min-height: 6rem; resize: vertical; }
+.framework-startup-primary { padding: .7rem 1rem; font-weight: 700; }
+.framework-startup-status { min-height: 1.25rem; color: #ffb4a8; }

@@ -1456,6 +1456,37 @@
         return button;
     }
 
+    function mindV3DebugHtml(character) {
+        if (!character || character.type !== "character" || !character.mind) return "Mind unavailable.";
+        const mind = character.mind;
+        const aux = setup.MindAuxExecutor && typeof setup.MindAuxExecutor.getStatus === "function" ? setup.MindAuxExecutor.getStatus() : { jobs: [], lastErrorByCharacterId: {} };
+        const job = (aux.jobs || []).find(function (record) { return record.characterId === character.id; });
+        const lastError = aux.lastErrorByCharacterId && aux.lastErrorByCharacterId[character.id];
+        const diagnostics = character.mindDiagnostics && character.mindDiagnostics.beliefHistoryById || {};
+        const beliefs = (mind.beliefs || []).map(function (belief) {
+            const history = diagnostics[belief.id] || [];
+            const recent = history.length ? history[history.length - 1] : null;
+            const delta = recent ? ` — ${escapeHtml(recent.source || "change")}${typeof recent.deltaConfidence === "number" ? ` Δc=${escapeHtml(recent.deltaConfidence.toFixed(3))}` : ""}${typeof recent.deltaActivation === "number" ? ` Δa=${escapeHtml(recent.deltaActivation.toFixed(3))}` : ""}` : "";
+            return `<li><code>${escapeHtml(belief.id)}</code> ${escapeHtml(belief.text)} <small>(c=${escapeHtml(Number(belief.confidence).toFixed(3))}, a=${escapeHtml(Number(belief.activation).toFixed(3))})${delta}</small></li>`;
+        }).join("") || "<li>none</li>";
+        const stm = (mind.shortTermMemories || []).map(function (memory) { return `<li><code>${escapeHtml(memory.id)}</code> ${escapeHtml(memory.topic)}</li>`; }).join("") || "<li>none</li>";
+        const ltm = (mind.longTermMemories || []).map(function (memory) { return `<li><code>${escapeHtml(memory.id)}</code> ${escapeHtml(memory.topic)}</li>`; }).join("") || "<li>none</li>";
+        return `
+            <div><strong>Mind v3 debug — ${escapeHtml(character.name)}</strong></div>
+            <div>Verbatim: ${escapeHtml((mind.verbatimObservations || []).length)} · Pending: ${escapeHtml((mind.pendingObservations || []).length)} · Revision: ${escapeHtml(character.mindRevision || 0)}</div>
+            <div>Aux job: ${escapeHtml(job ? job.state : "idle")}${lastError ? ` · last error: ${escapeHtml(lastError.code || lastError.message || "error")}` : ""}</div>
+            <details><summary>Beliefs (${escapeHtml((mind.beliefs || []).length)})</summary><ul>${beliefs}</ul></details>
+            <details><summary>STM topics (${escapeHtml((mind.shortTermMemories || []).length)})</summary><ul>${stm}</ul></details>
+            <details><summary>LTM topics (${escapeHtml((mind.longTermMemories || []).length)})</summary><ul>${ltm}</ul></details>`;
+    }
+
+    function refreshMindV3Debug(characterId) {
+        const panel = document.getElementById("framework-mind-v3-debug");
+        if (!panel) return;
+        const world = setup.Game.getWorld();
+        panel.innerHTML = mindV3DebugHtml(world.entities[characterId]);
+    }
+
     function renderSidebar() {
         ensureGlobalEmergencyDumpControl();
         const root = document.getElementById("framework-sidebar");
@@ -1479,7 +1510,8 @@
         }
         const aiQueue = setup.AITurnScheduler.getQueueView();
         const aiSettings = setup.AIRuntimeSettings.getStatus();
-        const aiBusy = setup.AIController.isInFlight() || setup.AIRequestExecutor.getStatus().busy || setup.AITurnScheduler.isWaveInFlight();
+        const sidebarExecutorStatus = setup.AIRequestExecutor.getStatus();
+        const aiBusy = setup.AIController.isInFlight() || Boolean(sidebarExecutorStatus && (sidebarExecutorStatus.blockingBusy !== undefined ? sidebarExecutorStatus.blockingBusy : sidebarExecutorStatus.busy)) || setup.AITurnScheduler.isWaveInFlight();
         const autoProcessingPaused = setup.AITurnScheduler.isAutoProcessingPaused();
         const autoMemoryCompressionEnabled = setup.AITurnScheduler.isAutoMemoryCompressionEnabled();
         const usage = setup.AITransientDebug.lastUsage;
@@ -1524,6 +1556,7 @@
                     <button id="export-character-mind" type="button"${aiBusy ? " disabled" : ""}>Export mind</button>
                     <button id="import-character-mind" type="button"${aiBusy ? " disabled" : ""}>Import mind</button>
                     <input id="import-character-mind-file" type="file" accept="application/json,.json" hidden>
+                    <div id="framework-mind-v3-debug" class="framework-sidebar-note">${mindV3DebugHtml(actor)}</div>
                 </details>
                 <details class="framework-ai-admin-tools">
                     <summary>AI activity tools</summary>
@@ -1599,6 +1632,10 @@
                 : { ok: false, error: { message: "Emergency diagnostics are unavailable." } };
             const status = document.getElementById("sidebar-status");
             if (status) status.textContent = result.ok ? `Emergency dump downloaded: ${result.filename}` : (result.error && result.error.message || "Emergency dump failed.");
+        });
+
+        $("#human-character-select").on("change", function () {
+            refreshMindV3Debug(String($(this).val() || ""));
         });
 
         $("#take-control-button").on("click", function () {
@@ -1756,7 +1793,7 @@
                 renderSidebar();
                 $("#human-character-select").val(targetId);
                 $("#sidebar-status").text(
-                    `Imported ${document.characterName}'s mind: ${result.recentMemories} recent and ${result.longTermMemories} long-term memories.`
+                    `Imported ${document.characterName}'s Mind v3: ${result.shortTermMemories} STM, ${result.longTermMemories} LTM, ${result.beliefs} beliefs, ${result.verbatimObservations} verbatim.`
                 );
             } catch (error) {
                 $("#sidebar-status").text("The selected character mind file could not be read.");
@@ -1773,12 +1810,14 @@
                 $("#sidebar-status").text("Memory consolidation is unavailable.");
                 return;
             }
-            if (setup.AIRequestExecutor.getStatus().busy || setup.AITurnScheduler.isWaveInFlight()) {
-                $("#sidebar-status").text("Another AI request is already in progress.");
+            const executorStatus = setup.AIRequestExecutor.getStatus();
+            if (Boolean(executorStatus && (executorStatus.blockingBusy !== undefined ? executorStatus.blockingBusy : executorStatus.busy)) || setup.AITurnScheduler.isWaveInFlight()) {
+                $("#sidebar-status").text("Another canonical AI request is already in progress.");
                 return;
             }
+            if (setup.MindAuxExecutor && typeof setup.MindAuxExecutor.invalidateForTimelapse === "function") setup.MindAuxExecutor.invalidateForTimelapse();
 
-            $("#sidebar-status").text(`Compressing ${targetName}'s memory...`);
+            $("#sidebar-status").text(`Consolidating ${targetName}'s Mind v3 memory...`);
             root.querySelectorAll("button, select, input").forEach(function (control) {
                 control.disabled = true;
             });
@@ -2295,6 +2334,134 @@
         });
     }
 
+    function closeStartupOverlay() {
+        const existing = document.getElementById("framework-startup-overlay");
+        if (existing) existing.remove();
+    }
+
+    function clearGameplayForStartup() {
+        const sidebar = document.getElementById("framework-sidebar");
+        if (sidebar) sidebar.replaceChildren();
+        const location = document.getElementById("location-view");
+        if (location) location.replaceChildren();
+        const actions = document.getElementById("framework-action-panel");
+        if (actions) actions.remove();
+    }
+
+    function startGameplayAfterSetup() {
+        closeStartupOverlay();
+        if (!checkPhysicalPassageConsistency()) return;
+        renderSidebar();
+        renderLocationView();
+        renderActionPanel();
+        if (setup.WorldEnvironment) {
+            void setup.WorldEnvironment.ensureWeatherInitialized().then(function (result) {
+                if (result && !result.skipped) {
+                    renderSidebar();
+                    renderLocationView();
+                    renderActionPanel();
+                }
+            });
+        }
+    }
+
+    function renderStartupOverlayIfNeeded() {
+        if (!setup.Game || !setup.Game.getPlayerSetup || setup.Game.isPlayerSetupComplete()) {
+            closeStartupOverlay();
+            return false;
+        }
+        clearGameplayForStartup();
+        closeStartupOverlay();
+        const world = setup.Game.getWorld();
+        const playerSetup = setup.Game.getPlayerSetup();
+        const player = world.entities && world.entities.player;
+        const overlay = document.createElement("div");
+        overlay.id = "framework-startup-overlay";
+        overlay.className = "framework-startup-overlay";
+        const panel = document.createElement("section");
+        panel.className = "framework-startup-panel";
+        overlay.appendChild(panel);
+
+        if (!playerSetup.disclaimerAccepted) {
+            appendTextElement(panel, "h2", "AI Interaction Disclaimer");
+            appendTextElement(panel, "p", "This game does not contain explicit 18+ content by default. However, AI-generated interactions may be unfiltered depending on the model you use.");
+            appendTextElement(panel, "p", "If you decide to get kinky with the characters — or otherwise take things into adult territory — you should be 18 or older.");
+            const button = document.createElement("button");
+            button.id = "framework-startup-disclaimer-ok";
+            button.className = "framework-startup-primary";
+            button.textContent = "Okay, fine";
+            button.addEventListener("click", function () {
+                const result = setup.Game.acceptPlayerDisclaimer();
+                if (result.ok) renderStartupOverlayIfNeeded();
+            });
+            panel.appendChild(button);
+        } else {
+            appendTextElement(panel, "h2", "Choose your Traveler");
+            appendTextElement(panel, "p", "Choose who will take the Traveler's place in this world. Every Traveler shares the same subtle otherworldly nature.", "framework-startup-note");
+            const choices = document.createElement("div");
+            choices.className = "framework-startup-choices";
+            const generic = document.createElement("label");
+            generic.className = "framework-startup-choice";
+            generic.innerHTML = `<input type="radio" name="framework-traveler-choice" value="generic" checked><strong>${escapeHtml(player && player.name || "Traveler")}</strong><span>${escapeHtml(player && player.playerDescription || "The generic Traveler.")}</span>`;
+            choices.appendChild(generic);
+            Object.values(world.travelerProfiles || {}).sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (profile) {
+                const label = document.createElement("label");
+                label.className = "framework-startup-choice";
+                label.innerHTML = `<input type="radio" name="framework-traveler-choice" value="authored:${escapeHtml(profile.id)}"><strong>${escapeHtml(profile.name)}</strong><span>${escapeHtml(profile.playerDescription)}</span>`;
+                choices.appendChild(label);
+            });
+            const custom = document.createElement("label");
+            custom.className = "framework-startup-choice";
+            custom.innerHTML = '<input type="radio" name="framework-traveler-choice" value="custom"><strong>Custom</strong><span>Author this Traveler before entering the world.</span>';
+            choices.appendChild(custom);
+            panel.appendChild(choices);
+
+            const form = document.createElement("div");
+            form.id = "framework-startup-custom-form";
+            form.className = "framework-startup-custom is-hidden";
+            form.innerHTML = `
+                <label>Name<input id="framework-startup-custom-name" maxlength="120" value="${escapeHtml(player && player.name || "Traveler")}"></label>
+                <label>Visible description<textarea id="framework-startup-custom-visible" maxlength="2000">${escapeHtml(player && player.playerDescription || "")}</textarea></label>
+                <label>Character authoring<textarea id="framework-startup-custom-ai" maxlength="4000">${escapeHtml(player && player.aiDescription || "")}</textarea></label>`;
+            panel.appendChild(form);
+            choices.addEventListener("change", function () {
+                const selected = panel.querySelector('input[name="framework-traveler-choice"]:checked');
+                form.classList.toggle("is-hidden", !selected || selected.value !== "custom");
+            });
+
+            const status = document.createElement("p");
+            status.id = "framework-startup-status";
+            status.className = "framework-startup-status";
+            panel.appendChild(status);
+            const start = document.createElement("button");
+            start.id = "framework-startup-enter";
+            start.className = "framework-startup-primary";
+            start.textContent = "Enter world";
+            start.addEventListener("click", function () {
+                const selected = panel.querySelector('input[name="framework-traveler-choice"]:checked');
+                let input = { mode: "generic" };
+                if (selected && selected.value.indexOf("authored:") === 0) input = { mode: "authored", profileId: selected.value.slice("authored:".length) };
+                if (selected && selected.value === "custom") input = {
+                    mode: "custom",
+                    customAuthoring: {
+                        name: document.getElementById("framework-startup-custom-name").value,
+                        playerDescription: document.getElementById("framework-startup-custom-visible").value,
+                        aiDescription: document.getElementById("framework-startup-custom-ai").value
+                    }
+                };
+                const result = setup.Game.finalizePlayerSetup(input);
+                if (!result.ok) {
+                    status.textContent = result.error && result.error.message || "Traveler setup failed.";
+                    return;
+                }
+                startGameplayAfterSetup();
+            });
+            panel.appendChild(start);
+        }
+        document.body.appendChild(overlay);
+        return true;
+    }
+
     function closeMigrationOverlay() {
         const existing = document.getElementById("framework-migration-overlay");
         if (existing) existing.remove();
@@ -2381,6 +2548,7 @@
             renderMigrationOverlay("Save migration failed.", "The migrated world did not enter a playable current state.", true);
             return;
         }
+        if (renderStartupOverlayIfNeeded()) return;
         if (!checkPhysicalPassageConsistency()) return;
         renderSidebar();
         renderLocationView();
@@ -2496,6 +2664,7 @@
         },
 
         render: function () {
+            if (renderStartupOverlayIfNeeded()) return;
             renderSidebar();
             renderLocationView();
             renderActionPanel();
@@ -2513,6 +2682,7 @@
             void migrateBeforeRender(bootstrap);
             return;
         }
+        if (renderStartupOverlayIfNeeded()) return;
 
         if (!checkPhysicalPassageConsistency()) {
             return;

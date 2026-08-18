@@ -19,6 +19,7 @@ function validDocument() {
     return {
         schemaVersion: 2, startLocationId: "room", futureTopLevel: { retained: true },
         protectedLocationIds: [], protectedSublocationIds: [], protectedCharacterIds: [], protectedAbilityIds: [],
+        travelerProfiles: {},
         locations: { room: { id: "room", type: "location", name: "Room", passage: "Room", description: ["A room."],
             defaultSublocationId: "roomFloor", inventoryId: "inventory_room", exits: {}, futureLocationField: "keep",
             sublocations: { roomFloor: { id: "roomFloor", type: "sublocation", locationId: "room", name: "Floor",
@@ -50,7 +51,7 @@ function validDocument() {
 
 assert((html.match(/<!doctype html>/gi) || []).length === 1 && !/<script[^>]+src=|<link[^>]+href=/i.test(html),
     "editor should remain one self-contained offline HTML file");
-assert(html.includes("Characters") && html.includes("Abilities") && html.includes("Item types") &&
+assert(html.includes("Characters") && html.includes("Traveler profiles") && html.includes("Abilities") && html.includes("Item types") &&
     html.includes("Items") && html.includes("Consumable") && html.includes("Fillable") &&
     html.includes("Location inventory") && html.includes("Items in this container") && html.includes("renderEmbeddedInventory") &&
     html.includes("Generic blocked transition") && html.includes("Lock ID") && html.includes("Key lock ID") &&
@@ -62,6 +63,11 @@ assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura") && 
     core.KNOWN_ITEM_EFFECTS.includes("report_memory_counts") && core.KNOWN_ITEM_EFFECTS.includes("abstract_study") && core.KNOWN_ITEM_EFFECTS.includes("utility_query"),
     "editor should embed schema 2, known actions, and the allowlisted generic item effects");
 assert(core.validateWorldDocument(validDocument()).length === 0, "valid schema 2 document should validate");
+const travelerProfileDocument = validDocument();
+travelerProfileDocument.travelerProfiles.scholar = { id: "scholar", name: "Scholar", playerDescription: "A thoughtful traveler.", aiDescription: "Curious, patient, and observant." };
+assert(core.validateWorldDocument(travelerProfileDocument).length === 0, "editor should validate authored Traveler profiles");
+const badTravelerProfile = clone(travelerProfileDocument); badTravelerProfile.travelerProfiles.scholar.aura = "Forbidden override";
+assert(hasError(badTravelerProfile, "may contain only"), "Traveler profiles must not expose mechanical or aura fields");
 const blockedExitDocument = validDocument();
 blockedExitDocument.locations.other = clone(blockedExitDocument.locations.room);
 blockedExitDocument.locations.other.id = "other";
@@ -140,7 +146,7 @@ const missingContainerKey = clone(keyedContainerDocument); delete missingContain
 assert(hasError(missingContainerKey, "invalid required key item ID"), "editor should reject a keyed container whose required key item instance does not exist");
 const keyedWithoutInventory = clone(keyedContainerDocument); delete keyedWithoutInventory.locations.room.sublocations.roomFloor.inventoryId;
 assert(hasError(keyedWithoutInventory, "cannot require a key without an inventory"), "editor should reject requiredKeyItemId when the position has no inventory");
-assert(core.createEmptyWorld().characters && core.createEmptyWorld().abilities &&
+assert(core.createEmptyWorld().characters && core.createEmptyWorld().travelerProfiles && core.createEmptyWorld().abilities &&
     core.createEmptyWorld().itemDefinitions && core.createEmptyWorld().items,
     "new document should include character, ability, item-definition, and item catalogs");
 const inventoryHelpers = validDocument();

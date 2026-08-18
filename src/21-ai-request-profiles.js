@@ -1,6 +1,10 @@
 (function () {
     "use strict";
 
+    const mindV3LtmMaxTokens = setup.MindV3 && setup.MindV3.CONFIG && Number.isFinite(setup.MindV3.CONFIG.LTM_CONSOLIDATION_MAX_COMPLETION_TOKENS)
+        ? setup.MindV3.CONFIG.LTM_CONSOLIDATION_MAX_COMPLETION_TOKENS
+        : 12000;
+
     const profiles = Object.freeze({
         "game-decision": Object.freeze({ modelRole: "character", maxTokens: 6000, reasoningMaxTokens: 1500, temperature: 0.4 }),
         "timelapse-plan": Object.freeze({ modelRole: "utility", maxTokens: 1200, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.2 }),
@@ -9,6 +13,8 @@
         "timelapse-resolver": Object.freeze({ modelRole: "utility", maxTokens: 1000, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.3 }),
         "reflection": Object.freeze({ modelRole: "utility", maxTokens: 1800, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.4 }),
         "memory-consolidation": Object.freeze({ modelRole: "utility", maxTokens: 2400, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.25 }),
+        "mind-v3-stm": Object.freeze({ modelRole: "utility", maxTokens: 6000, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.2 }),
+        "mind-v3-ltm": Object.freeze({ modelRole: "utility", maxTokens: mindV3LtmMaxTokens, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.2 }),
         "item-utility-query": Object.freeze({ modelRole: "utility", maxTokens: 1800, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.55 }),
         "daytime-job-narration": Object.freeze({ modelRole: "character", maxTokens: 900, reasoningMaxTokens: 200, temperature: 0.45 }),
         "daytime-job-settlement": Object.freeze({ modelRole: "character", maxTokens: 500, reasoningMaxTokens: 200, temperature: 0.25 }),

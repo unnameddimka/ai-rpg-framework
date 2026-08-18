@@ -21,11 +21,11 @@ function ok(result, message) { assert(result && result.ok, `${message}: ${JSON.s
 
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
-load("src/08-mind-validators.js");
+load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
 load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
-load("src/13-character-memory.js");
+load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
 load("src/14-event-perception.js");
 load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
@@ -38,7 +38,7 @@ load("src/20-controllers.js");
 load("src/15-ai-admin.js");
 load("src/16-emergency-diagnostics.js");
 load("src/17-runtime-diagnostics.js");
-load("src/24-memory-consolidator.js");
+load("src/24-memory-consolidator.js"); load("src/24-mind-aux-executor.js");
 load("src/24-prompt-lab.js");
 
 function fresh() {
@@ -179,7 +179,7 @@ async function main() {
     const nell = world.entities.nell;
     nell.sleeping = true;
     const durableBefore = clone({
-        beliefs: nell.mind.beliefs, relationships: nell.mind.relationships, recentMemories: nell.mind.recentMemories,
+        beliefs: nell.mind.beliefs, relationships: nell.mind.relationships, shortTermMemories: nell.mind.shortTermMemories,
         longTermMemories: nell.mind.longTermMemories, knownFacts: nell.mind.knownFacts, wallet: nell.wallet,
         inventory: world.inventories[nell.inventoryId], locationId: nell.locationId, sleeping: nell.sleeping
     });
@@ -197,7 +197,7 @@ async function main() {
     ok(setup.AIAdmin.clearAIActivity("nell"), "clear selected AI activity");
     world = setup.Game.getWorld();
     const durableAfter = clone({
-        beliefs: world.entities.nell.mind.beliefs, relationships: world.entities.nell.mind.relationships, recentMemories: world.entities.nell.mind.recentMemories,
+        beliefs: world.entities.nell.mind.beliefs, relationships: world.entities.nell.mind.relationships, shortTermMemories: world.entities.nell.mind.shortTermMemories,
         longTermMemories: world.entities.nell.mind.longTermMemories, knownFacts: world.entities.nell.mind.knownFacts, wallet: world.entities.nell.wallet,
         inventory: world.inventories[world.entities.nell.inventoryId], locationId: world.entities.nell.locationId, sleeping: world.entities.nell.sleeping
     });
@@ -237,38 +237,49 @@ async function main() {
     releaseBusy({ ok: true, value: null, error: null });
     await busyPromise;
 
-    // Safe maintenance archive is persistent state but is excluded from ordinary dialogue/context and rollback snapshots stay world-local.
+    // Portable Mind v3 carries durable state + bounded verbatim; v2 imports migrate deterministically without preserving the obsolete archive as active cognition.
     world = fresh();
     const mara = world.entities.hoodedWoman;
-    mara.mind.maintenanceArchive = {
-        memories: [{ archivedAt: "2026-08-15T00:00:00.000Z", sourcePartition: "recentMemories", record: { id: "archived_memory", summary: "Archived durable source.", importance: 0.5, protected: false } }],
-        beliefs: [{ archivedAt: "2026-08-15T00:00:00.000Z", record: { id: "archived_belief", text: "Old understanding.", confidence: "low" } }]
+    mara.mind.beliefs = [{ id: "portable_v3_belief", text: "The Traveler is unusual.", confidence: 0.7, activation: 0.55 }];
+    mara.mind.shortTermMemories = [{ id: "memory_ai_501", topic: "Traveler", summary: "The Traveler made an unusual promise.", importance: 0.7, protected: false }];
+    mara.mind.longTermMemories = [{ id: "memory_ai_502", topic: "World changes", summary: "World changes can preserve personal continuity.", importance: 0.9, protected: true }];
+    mara.mind.verbatimObservations = [{ id: "verbatim_hoodedWoman_portable_1", turn: 10, kind: "observation", actorId: "player", text: "The Traveler promised to warn me before the next reset." }];
+    const v3Export = ok(setup.CharacterMindTransfer.exportMind("hoodedWoman"), "export Mind v3");
+    assert(v3Export.document.version === 3 && v3Export.document.mind.schemaVersion === 3 &&
+        v3Export.document.mind.shortTermMemories[0].id === "memory_ai_501" &&
+        v3Export.document.mind.verbatimObservations[0].id === "verbatim_hoodedWoman_portable_1" &&
+        !Object.prototype.hasOwnProperty.call(v3Export.document.mind, "maintenanceArchive"),
+        "portable Mind v3 should carry STM/LTM/beliefs/relationships/verbatim but not the obsolete v2 archive");
+    const legacyV2 = {
+        schema: "ai-rpg.character-mind", version: 2, exportedAt: "2026-08-15T00:00:00.000Z", characterId: "hoodedWoman", characterName: "Mara the Hedge Witch",
+        mind: {
+            beliefs: [{ id: "legacy_belief", text: "Old understanding.", confidence: "low" }],
+            relationships: [{ targetCharacterId: "player", summary: "A remembered acquaintance." }],
+            recentMemories: [{ id: "memory_ai_601", summary: "Legacy recent memory.", importance: 0.5, protected: false }],
+            longTermMemories: [{ id: "memory_ai_602", summary: "Legacy durable memory.", importance: 0.8, protected: true }],
+            maintenanceArchive: { memories: [{ record: { id: "ignored_archive_memory" } }], beliefs: [] }
+        }
     };
-    const archiveContext = setup.ContextBuilder.build("hoodedWoman");
-    assert(!JSON.stringify(archiveContext).includes("archived_memory") && !JSON.stringify(archiveContext).includes("archived_belief"),
-        "maintenance archive must stay outside ordinary model context");
-    const archiveExport = ok(setup.CharacterMindTransfer.exportMind("hoodedWoman"), "export mind with archive");
-    assert(archiveExport.document.version === 2 && archiveExport.document.mind.maintenanceArchive.memories[0].record.id === "archived_memory",
-        "portable mind v2 must preserve maintenance archive");
-    const v1 = clone(archiveExport.document);
-    v1.version = 1;
-    delete v1.mind.maintenanceArchive;
-    assert(setup.CharacterMindTransfer.validateDocument(v1, "hoodedWoman").ok, "portable mind v1 must remain importable");
+    assert(setup.CharacterMindTransfer.validateDocument(legacyV2, "hoodedWoman").ok, "portable mind v2 must remain importable");
     setup.Game.resetWorld();
-    ok(setup.CharacterMindTransfer.importMind("hoodedWoman", v1), "import v1 mind");
-    assert(setup.Game.getWorld().entities.hoodedWoman.mind.maintenanceArchive.memories.length === 0 && setup.Game.getWorld().entities.hoodedWoman.mind.maintenanceArchive.beliefs.length === 0,
-        "v1 import must initialize an empty maintenance archive");
+    ok(setup.CharacterMindTransfer.importMind("hoodedWoman", legacyV2), "import v2 mind into v3");
+    const migratedPortable = setup.Game.getWorld().entities.hoodedWoman.mind;
+    assert(migratedPortable.schemaVersion === 3 && migratedPortable.shortTermMemories[0].id === "memory_ai_601" &&
+        migratedPortable.shortTermMemories[0].summary === "Legacy recent memory." && migratedPortable.longTermMemories[0].id === "memory_ai_602" &&
+        migratedPortable.beliefs[0].id === "legacy_belief" && migratedPortable.beliefs[0].confidence === 0.3 && migratedPortable.beliefs[0].activation === setup.MindV3.CONFIG.MIGRATED_BELIEF_ACTIVATION &&
+        migratedPortable.verbatimObservations.length === 0 && !Object.prototype.hasOwnProperty.call(migratedPortable, "maintenanceArchive"),
+        "v2 portable import must preserve active identity/history deterministically, initialize neutral activation, and never fabricate verbatim from summaries");
 
     // Shared validators govern stored state and preserve historical portable relationships.
     world = fresh();
     let invalidWorld = clone(world);
-    invalidWorld.entities.hoodedWoman.mind.beliefs.push({ id: "bad id", text: "bad", confidence: "high" });
+    invalidWorld.entities.hoodedWoman.mind.beliefs.push({ id: "bad id", text: "bad", confidence: 0.8, activation: 0.5 });
     assert(!setup.GameInternals.validateWorld(invalidWorld).ok, "validateWorld must reject malformed stored beliefs");
     invalidWorld = clone(world);
-    invalidWorld.entities.hoodedWoman.mind.recentMemories.push({ id: "broken", summary: "", importance: 2, protected: false });
+    invalidWorld.entities.hoodedWoman.mind.shortTermMemories.push({ id: "broken", topic: "", summary: "", importance: 2, protected: false });
     assert(!setup.GameInternals.validateWorld(invalidWorld).ok, "validateWorld must reject malformed stored memories");
-    const badRelationship = setup.AIMemory.applyUpdates("hoodedWoman", {
-        recentMemoriesToAdd: [], beliefsToUpsert: [], relationshipsToUpsert: [{ targetCharacterId: "historical_missing_person", summary: "Old acquaintance." }]
+    const badRelationship = setup.AIMemory.applyTurnUpdates("hoodedWoman", {
+        relationshipsToUpsert: [{ targetCharacterId: "historical_missing_person", summary: "Old acquaintance." }], activatedBeliefIds: []
     });
     assert(!badRelationship.ok, "live relationship update must require a current character target");
     const historicalDoc = ok(setup.CharacterMindTransfer.exportMind("hoodedWoman"), "historical relationship fixture").document;
@@ -292,8 +303,8 @@ async function main() {
     const emergency = setup.EmergencyDiagnostics.capture();
     const emergencyJson = JSON.stringify(emergency);
     assert(emergency.schema === "ai-rpg.emergency-dump" && emergency.version === 3 && emergency.sections["game-state.json"].world &&
-        emergency.sections["ui-runtime.json"].transientDebug.nested.useful === "keep-me" && emergency.sections["minds.json"].characters.hoodedWoman.mind.maintenanceArchive &&
-        emergency.sections["ai-exchange-log.json"].schema === "ai-rpg.ai-exchange-log" && emergency.sections["ai-exchange-log.json"].exchangeHistory.count > 0 &&
+        emergency.sections["ui-runtime.json"].transientDebug.nested.useful === "keep-me" && emergency.sections["minds.json"].characters.hoodedWoman.mind.schemaVersion === 3 &&
+        emergency.sections["scheduler-state.json"].mindAuxExecutor && emergency.sections["ai-exchange-log.json"].schema === "ai-rpg.ai-exchange-log" && emergency.sections["ai-exchange-log.json"].exchangeHistory.count > 0 &&
         emergency.sections["ai-transport-log.json"].count === 1 && emergency.sections["ai-transport-log.json"].entries[0].error.code === "PROVIDER_UNAVAILABLE" &&
         emergency.sections["network-log.json"] && emergency.sections["weather-runtime.json"].failedStage === "ip-geolocation" &&
         emergency.sections["timelapse-runtime.json"].lastResult.failedStage === "maintenance-commit" && emergency.sections["timelapse-runtime.json"].lastResult.error.code === "SYNTHETIC_TIMELAPSE_FAILURE",

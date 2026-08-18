@@ -43,7 +43,11 @@
             return { ok: false, error: { code: "TIME_PHASE_INVALID", message: `Unknown time phase '${String(phase)}'.` } };
         }
         ensureShape().timePhase = phase;
-        return { ok: true, value: { timePhase: phase, timeLabel: timeLabel(phase) } };
+        const label = timeLabel(phase);
+        // world.environment.timePhase is authoritative. Keep the legacy SugarCube $time mirror synchronized
+        // for old saves/debug dumps and any compatibility UI that still inspects State.variables.time.
+        if (typeof State !== "undefined" && State.variables) State.variables.time = label;
+        return { ok: true, value: { timePhase: phase, timeLabel: label } };
     }
 
     function weatherCodeText(code) {
@@ -259,6 +263,7 @@
 
     async function ensureWeatherInitialized(client, options) {
         const env = ensureShape();
+        if (setup.Game && setup.Game.isPlayerSetupComplete && !setup.Game.isPlayerSetupComplete()) return { ok: false, skipped: true, value: { weatherNarrative: env.weatherNarrative }, error: { code: "PLAYER_SETUP_INCOMPLETE", message: "Weather narration waits until Traveler setup is complete." } };
         if (env.weatherInitialized === true) return { ok: true, skipped: true, value: { weatherNarrative: env.weatherNarrative } };
         if (setup.AIRuntimeSettings && setup.AIRuntimeSettings.getStatus && !setup.AIRuntimeSettings.getStatus().hasKey) {
             return { ok: false, skipped: true, value: { weatherNarrative: env.weatherNarrative }, error: { code: "AI_KEY_MISSING", message: "Weather narration will initialize after an AI key is available." } };

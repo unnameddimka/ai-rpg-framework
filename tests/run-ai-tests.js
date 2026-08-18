@@ -11,7 +11,7 @@ function load(file) { vm.runInThisContext(fs.readFileSync(path.join(root, file),
 function assert(value, message) { if (!value) throw new Error(message); }
 function ok(value, message) { assert(value && value.ok, `${message}: ${JSON.stringify(value)}`); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
-function emptyUpdates() { return { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] }; }
+function emptyUpdates() { return { relationshipsToUpsert: [], activatedBeliefIds: [] }; }
 function normalizeDecisionFixture(value) {
     if (value && typeof value === "object" && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, "action")) {
         const normalized = Object.assign({}, value);
@@ -24,7 +24,7 @@ function normalizeDecisionFixture(value) {
 }
 function response(value, usage) { return { ok: true, content: JSON.stringify(normalizeDecisionFixture(value)), usage: usage || null }; }
 function decisionFixture(value) { return normalizeDecisionFixture(value); }
-function fresh() { setup.Game.resetWorld(); setup.AITurnQueue.repair(); return setup.Game.getWorld(); }
+function fresh() { setup.Game.resetWorld(); setup.Game.acceptPlayerDisclaimer(); setup.Game.finalizePlayerSetup({ mode: "generic" }); setup.AITurnQueue.repair(); return setup.Game.getWorld(); }
 function queueHooded() {
     const world = fresh();
     ok(setup.Game.assignNonHumanController("captainPrice", "dummy"), "isolated queue fixture disables Price AI");
@@ -35,15 +35,20 @@ function queueHooded() {
     return world;
 }
 
-load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/08-mind-validators.js"); load("src/10-game-api.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
-load("src/13-character-memory.js");
+load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
 load("src/14-event-perception.js"); load("src/17-runtime-diagnostics.js"); load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
 load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-item-model-effects.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
 
 async function main() {
+    setup.Game.resetWorld();
+    const blockedTurn = await setup.TurnFlow.submitHumanIntent({ text: "This must not enter the world yet." });
+    const blockedWave = await setup.AITurnScheduler.processWave({ chat: async function () { throw new Error("model must not be called before setup"); } });
+    assert(!blockedTurn.ok && blockedTurn.error.code === "PLAYER_SETUP_INCOMPLETE" && blockedTurn.turnConsumed === false && !blockedWave.ok && blockedWave.error.code === "PLAYER_SETUP_INCOMPLETE",
+        "fresh-world startup must hard-block Human turns and AI waves before disclaimer + Traveler choice complete");
     let world = fresh();
     Object.values(setup.GeneratedWorldData.characters).forEach(function (authored) {
         assert(world.entities[authored.id].defaultControllerId === authored.defaultControllerId &&
@@ -510,11 +515,11 @@ async function main() {
     assert(decisionPrompt.includes("Character IDs are persistent identities") &&
         decisionPrompt.includes("same character id is the same person after leaving and returning") &&
         decisionPrompt.includes("location changes do not reset familiarity") &&
-        decisionPrompt.includes("memoryUpdates should normally remain empty") &&
-        decisionPrompt.includes("not copies of obvious current view state") &&
-        decisionPrompt.includes("relationships describe durable or developing social state") &&
-        decisionPrompt.includes("do not use them to store momentary presence"),
-        "decision prompt should preserve social identity across room transitions and avoid transient mind pollution");
+        decisionPrompt.includes("Autobiographical memory and belief confidence are maintained by Mind v3 consolidation") &&
+        decisionPrompt.includes("Do not fabricate persistent memory updates inside an ordinary decision") &&
+        decisionPrompt.includes("Relationship updates may summarize genuinely changed social understanding") &&
+        decisionPrompt.includes("activatedBeliefIds may mark beliefs that were actually salient"),
+        "decision prompt should preserve social identity while routing autobiography/belief confidence through Mind v3 rather than ordinary-turn mutation");
     assert(decisionPrompt.includes("spokenLoudness is per utterance, not persistent state") &&
         decisionPrompt.includes('must be "noticeable" or "hidden"') &&
         decisionPrompt.includes("Choose spokenLoudness structurally for this utterance") &&
@@ -633,8 +638,8 @@ async function main() {
     assert(!setup.AIProtocol.validateDecision(decisionFixture({ action: [{ type: "move" }], publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates() }), available).ok,
         "multiple actions should be rejected");
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
-        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I decided to leave.", importance: .5 }], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] } }), available).ok,
-        "one response may combine narrative, one formal action, and memory updates");
+        memoryUpdates: { relationshipsToUpsert: [{ targetCharacterId: "player", summary: "The Traveler is accompanying me." }], activatedBeliefIds: [] } }), available).ok,
+        "one response may combine narrative, one formal action, and bounded relationship/salience updates");
     assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Mara?", spokenTargetId: "hoodedWoman", spokenLoudness: "noticeable", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
         !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Who are you?", spokenTargetId: "missing", spokenLoudness: "noticeable", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
         !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, spokenTargetId: "hoodedWoman", spokenLoudness: null, continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok,
@@ -651,25 +656,29 @@ async function main() {
         action: null,
         publicNarrative: null,
         spokenText: null,
-        memoryUpdates: { recentMemoriesToAdd: [{ text: "wrong field", importance: 3 }] }
+        memoryUpdates: { relationshipsToUpsert: [{ targetCharacterId: "", summary: "" }] }
     }), available);
     assert(!detailedValidation.ok &&
-        detailedValidation.errors.some(function (error) { return error.includes("beliefsToUpsert is required"); }) &&
-        detailedValidation.errors.some(function (error) { return error.includes("summary is required"); }) &&
-        detailedValidation.errors.some(function (error) { return error.includes("importance must be a finite number from 0 to 1"); }),
-        "protocol validation should expose concrete JSON paths and record errors");
-    const beliefRemovalDecision = decisionFixture({
+        detailedValidation.errors.some(function (error) { return error.includes("activatedBeliefIds is required"); }) &&
+        detailedValidation.errors.some(function (error) { return error.includes("targetCharacterId must be a non-empty string"); }) &&
+        detailedValidation.errors.some(function (error) { return error.includes("summary must be a non-empty string"); }),
+        "protocol validation should expose concrete Mind v3 JSON paths and record errors");
+    const beliefActivationDecision = decisionFixture({
         action: null, publicNarrative: null, spokenText: null,
-        memoryUpdates: { recentMemoriesToAdd: [], beliefsToUpsert: [], beliefIdsToRemove: ["obsolete_belief"], relationshipsToUpsert: [] }
+        memoryUpdates: { relationshipsToUpsert: [], activatedBeliefIds: ["salient_belief"] }
     });
-    assert(setup.AIProtocol.validateDecision(beliefRemovalDecision, available, [], ["obsolete_belief"]).ok &&
-        !setup.AIProtocol.validateDecision(beliefRemovalDecision, available, [], ["different_belief"]).ok,
-        "ordinary decision responses may explicitly remove only beliefs that currently exist in that character mind");
+    assert(setup.AIProtocol.validateDecision(beliefActivationDecision, available, [], ["salient_belief"]).ok &&
+        !setup.AIProtocol.validateDecision(beliefActivationDecision, available, [], ["different_belief"]).ok,
+        "ordinary decision responses may activate only beliefs that were supplied in current context");
     world = fresh();
-    world.entities.hoodedWoman.mind.beliefs.push({ id: "obsolete_belief", text: "An old understanding that was corrected.", confidence: "medium" });
-    ok(setup.AIMemory.applyUpdates("hoodedWoman", beliefRemovalDecision.memoryUpdates), "ordinary belief removal should apply");
-    assert(!world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "obsolete_belief"; }),
-        "ordinary decision belief deletion should remove the superseded active belief immediately");
+    world.entities.hoodedWoman.mind.beliefs.push({ id: "salient_belief", text: "The Traveler's power is frightening.", confidence: 0.65, activation: 0.2 });
+    const beforeActivation = world.entities.hoodedWoman.mind.beliefs[0].activation;
+    ok(setup.AIMemory.applyTurnUpdates("hoodedWoman", beliefActivationDecision.memoryUpdates), "ordinary belief activation should apply");
+    assert(world.entities.hoodedWoman.mind.beliefs[0].activation > beforeActivation && world.entities.hoodedWoman.mind.beliefs[0].confidence === 0.65,
+        "ordinary decision salience may raise activation but must not rewrite belief confidence");
+    const forbiddenDirectMutation = setup.AIMemory.applyUpdates("hoodedWoman", { recentMemoriesToAdd: [{ summary: "Forbidden", importance: 0.5 }], relationshipsToUpsert: [] });
+    assert(!forbiddenDirectMutation.ok && forbiddenDirectMutation.error.code === "MIND_V3_DIRECT_MUTATION_FORBIDDEN",
+        "ordinary runtime updates must reject direct autobiographical memory/belief writes under Mind v3");
 
     assert(!setup.AIProtocol.validateDecision(decisionFixture({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates(), chainOfThought: "secret" }), available).ok,
         "chain-of-thought or arbitrary protocol fields should be rejected");
@@ -968,12 +977,14 @@ async function main() {
 
     world = queueHooded();
     const oneStage = { chat: async function () { return response({ action: null, publicNarrative: "She nods.", spokenText: "Greetings.", continuation: "Learn why the traveller approached me.", memoryUpdates: {
-        recentMemoriesToAdd: [{ summary: "The traveller greeted me.", importance: .5 }], beliefsToUpsert: [{ id: "belief_greeting", text: "The traveller is civil.", confidence: "medium" }], beliefIdsToRemove: [], relationshipsToUpsert: [{ targetCharacterId: "player", summary: "A civil new acquaintance." }]
+        relationshipsToUpsert: [{ targetCharacterId: "player", summary: "A civil new acquaintance." }], activatedBeliefIds: []
     } }, { total_tokens: 10 }); } };
     const oneResult = await setup.AIController.takeNextTurn(oneStage);
-    assert(oneResult.ok && oneResult.stages === 1 && setup.AITurnQueue.peek() === null && world.entities.hoodedWoman.mind.recentMemories.some(function (m) { return m.summary.includes("greeted"); }) &&
+    assert(oneResult.ok && oneResult.stages === 1 && setup.AITurnQueue.peek() === null &&
+        world.entities.hoodedWoman.mind.relationships.some(function (relationship) { return relationship.targetCharacterId === "player" && relationship.summary === "A civil new acquaintance."; }) &&
+        world.entities.hoodedWoman.mind.verbatimObservations.some(function (record) { return record.text.includes("Greetings."); }) &&
         setup.AIWorkingState.getContinuation("hoodedWoman") === "Learn why the traveller approached me.",
-        "one-stage turn should commit narrative/memory/continuation, consume observations, and remove queue head");
+        "one-stage turn should commit narrative/relationship/continuation, capture committed self-speech in verbatim, consume observations, and remove queue head");
 
     world = queueHooded();
     ok(setup.Game.assignNonHumanController("innkeeper", "ai"), "make innkeeper an AI recipient");
@@ -990,7 +1001,7 @@ async function main() {
         action: { type: "read_aura" },
         publicNarrative: "She concentrates.",
         spokenText: "Curious.",
-        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I chose to read the traveller's aura.", importance: .7 }], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] }
+        memoryUpdates: emptyUpdates()
     }); } };
     const actionResult = await setup.AIController.takeNextTurn(singleAction);
     assert(actionResult.ok && actionResult.stages === 1 && actionResult.actionResult.feedback[0].code === "AURA_SCAN_RESULT" && stage === 1 &&
@@ -1033,15 +1044,15 @@ async function main() {
         publicNarrative: "She starts to rise and tests her footing.",
         spokenText: "One moment.",
         continuation: "Get across the room despite the obstacle.",
-        memoryUpdates: { recentMemoriesToAdd: [{ summary: "I successfully crossed the room.", importance: .5 }], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: [] }
+        memoryUpdates: emptyUpdates()
     }); } });
     setup.Game.ActionRegistry.move_within_location.validate = originalMoveWithinValidate;
     assert(attemptedFailureTurn.ok && attemptedFailureTurn.actionResult.error.code === "TEST_GROUNDED_FAILURE" &&
         attemptedFailureTurn.narrativeText.includes("tests her footing") && attemptedFailureTurn.intentResult.narrativeResult &&
-        attemptedFailureTurn.memorySuppressed && !world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.summary === "I successfully crossed the room."; }) &&
+        attemptedFailureTurn.memorySuppressed && !world.entities.hoodedWoman.mind.verbatimObservations.some(function (record) { return record.text.includes("successfully crossed"); }) &&
         setup.AIWorkingState.getContinuation("hoodedWoman") === "Get across the room despite the obstacle." &&
         world.entities.hoodedWoman.mind.pendingObservations.some(function (item) { return item.code === "TEST_GROUNDED_FAILURE"; }),
-        "a valid in-world failed action should keep attempt-phase speech/narrative and continuation while suppressing success-dependent memory and preserving grounded failure feedback");
+        "a valid in-world failed action should keep attempt-phase speech/narrative and continuation while never fabricating successful verbatim experience and preserving grounded failure feedback");
 
     world = queueHooded();
     const beforeRollback = JSON.stringify(world);
@@ -1053,14 +1064,14 @@ async function main() {
 
     world = queueHooded();
     const badMemoryClient = { chat: async function () { return response({ action: null, publicNarrative: "Uncommitted.", spokenText: null, memoryUpdates: {
-        recentMemoriesToAdd: [{ summary: "Bad", importance: 9 }], beliefsToUpsert: [], beliefIdsToRemove: [], relationshipsToUpsert: []
+        recentMemoriesToAdd: [{ summary: "Forbidden ordinary-turn autobiography", importance: 0.5 }], relationshipsToUpsert: [], activatedBeliefIds: []
     } }); } };
     const beforeBadMemory = JSON.stringify(world);
     assert(!(await setup.AIController.takeNextTurn(badMemoryClient)).ok && JSON.stringify(setup.Game.getWorld()) === beforeBadMemory,
-        "memory-validation failure should roll back the whole turn");
+        "forbidden direct Mind v3 autobiography in an ordinary model response should roll back the whole turn");
     assert(setup.AITransientDebug.lastTrace && setup.AITransientDebug.lastTrace.attempts.length === 2 &&
-        setup.AITransientDebug.lastTrace.attempts[1].validationErrors.some(function (error) { return error.includes("importance"); }),
-        "failed game requests should retain a transient detailed protocol trace");
+        setup.AITransientDebug.lastTrace.attempts[1].validationErrors.some(function (error) { return error.includes("recentMemoriesToAdd") && error.includes("not allowed"); }),
+        "failed game requests should retain a transient detailed protocol trace showing the forbidden v2 field");
 
     world = queueHooded();
     const promptLabBefore = JSON.stringify(world);

@@ -107,16 +107,20 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 
 ## 9. Memory
 
-- Authored `knownFacts` come from current world authoring.
-- Runtime beliefs, relationships, recent memories, long-term memories, continuation, and pending observations live in the save/runtime.
-- Engine-owned memory updates support bounded recent-memory append, belief upsert, and relationship upsert.
-- Mind maintenance/consolidation is one transactional bounded pipeline. Per-character prepare/model work may run concurrently, but prepared maintenance must not mutate canonical shared state; batch execution uses a full await barrier followed by sequential commits. Final `memory_ai_*` IDs are allocated from the current global `nextMemoryId` only during commit, and another character advancing that allocator is never by itself a stale-mind condition. It may retire active records only through source-explicit bounded operations; every replaced/retired source is preserved verbatim in `mind.maintenanceArchive`. Protected memories are never rewritten/merged/retired, relationships and authored `knownFacts` are read-only, and failed/no-op maintenance does not consume rollback snapshots.
-- Cognitive-dissonance reconciliation is per character and incremental: a persistent world-local cursor deterministically scans up to five active beliefs against active long-term memories per maintenance run; candidates are ranked `direct > strong > possible`, and at most two selected belief/LT pairs may be resolved. Beliefs and memories are both fallible; neither automatically overrides the other. Resolution may revise either/both or keep the conflict when evidence is insufficient.
-- Reconciliation cursor state survives save/load/migration and appears in diagnostics, but it is operational state outside autobiographical `mind`, ordinary model context, and portable mind transfer. Cursor-only successful progress creates no personality snapshot. Identical proposed belief/memory revisions are engine-level no-ops and must not grow the archive.
-- Shared canonical validators govern stored belief, relationship, memory, and recent-dialogue records across live updates, migration, portable import, and world validation.
-- Portable character-mind transfer v2 carries beliefs, relationships, recent memories, long-term memories, and `maintenanceArchive`; v1 files remain importable with an empty archive. Transfer is replace-only, exact-character-ID guarded, clears continuation, excludes world-local maintenance snapshots/recentDialogue, and never transfers authored facts or physical/world state.
-- Engine-owned `recentDialogue` is bounded ephemeral conversational working context outside `mind`. It records the character's own validated speech plus only speech actually delivered through perception, survives ordinary save/load, is excluded from portable mind transfer, and is not cleared merely by changing location.
-- Retrieval-based old-memory selection/embeddings are future work; do not add them incidentally.
+- `mind.pendingObservations` is the unprocessed scheduler/reaction inbox. It is not autobiographical memory.
+- `mind.verbatimObservations` is persistent compact experienced history: committed delivered observations plus the character's own committed actions/speech and committed timelapse experiences. It must not contain uncommitted intentions, hidden information, provider/scheduler metadata, or fabricated summary events.
+- `mind.shortTermMemories` and `mind.longTermMemories` are thematic autobiographical memory. STM is relatively detailed; LTM is intentionally more lossy and durable. Stable engine-owned IDs, protected-memory semantics, candidate-clone validation, and atomic commit remain mandatory.
+- Beliefs are inductive interpretations, not event history. Every belief has numeric `confidence` and `activation` strictly inside `(0,1)`. Model output reports semantic evidence direction/strength; engine-owned log-odds math updates existing confidence. Activation is separate salience, rises from relevant use/evidence, and decays during timelapse; confidence does not generically decay with time.
+- Ordinary AI/reflection output may update relationships and explicitly activate supplied beliefs, but may not directly author autobiographical memories, belief text/confidence, or belief deletion. Experience flows through verbatim -> STM -> LTM.
+- Ordinary STM consolidation is eligible strictly above 40 verbatim observations. It snapshots the whole buffer, retains the newest 20, and treats every older record as the exact eviction set. Only eviction records count as newly consumed direct belief evidence; retained overlap is interpretive context and is not double-counted next pass. Source records are removed only after validated successful commit.
+- Timelapse is a cognitive synchronization boundary. Before planning, force-consolidate the entire current verbatim snapshot as the eviction set. During timelapse, only actually committed/delivered experiences create verbatim records. Afterward, run eligible STM/LTM consolidation, higher-order belief reappraisal/reconciliation, and activation decay; failed mind work is diagnostic-only after lived coarse-time commits and never silently drops source memory.
+- Belief reconciliation is evidence-backed reflective interpretation, not compulsory consistency repair. It may revise, merge, weaken, reinforce, contextualize, supersede, remove, or intentionally leave conflicting beliefs unresolved. It may not mutate autobiographical memory.
+- Background STM work runs through the Utility model lane and is non-blocking for gameplay UI. At most one queued/active job exists per character. Every job is snapshot -> async prepare -> validate -> stale check -> atomic commit; new observations arriving after snapshot are never removed by an older job. Canonical decisions/reaction waves have priority. In-flight auxiliary jobs are transient and are not saved/resurrected.
+- Multi-character timelapse mind work may prepare concurrently. No auxiliary model computation mutates shared canonical state before commit; IDs are allocated from the then-current global allocator at commit, so unrelated allocator advancement is not itself a stale condition.
+- v2->v3 migration is deterministic and model-free: preserve belief IDs/text/confidence semantics and add neutral activation, map old `recentMemories` one-for-one into legacy STM, preserve old LTM/relationships, and start v3 verbatim empty. Do not re-induce the character's established personality from old memory.
+- Portable mind v3 carries beliefs (confidence + activation), relationships, STM, LTM, and bounded verbatim observations. It excludes pending observations, scheduler/controller/world physical state, active auxiliary work, continuation, and recentDialogue. Older portable minds migrate through the same deterministic v2->v3 semantics.
+- Shared canonical validators govern beliefs, relationships, STM/LTM, verbatim observations, and recentDialogue across live runtime, migration, portable import, and world validation. `knownFacts` remain authored/current-world knowledge and are never overwritten by belief/memory maintenance.
+- Engine-owned `recentDialogue` remains bounded conversational working context outside `mind`: own validated speech plus only speech actually delivered through perception, saved normally but excluded from portable mind.
 
 ## 10. Movement, perception, sleeping
 
@@ -157,13 +161,17 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Keep the public `setup.GameAPI`/`CharacterAPI` facade stable where practical.
 - Prefer extraction over broad rewrites.
 - Current internal split:
+  - `07-mind-v3.js`: centralized Mind v3 constants, belief semantics, confidence/activation math;
   - `08-mind-validators.js`: shared mind/dialogue record validation;
   - `10-game-api.js`: deterministic facade/actions/world helpers;
-  - `11-save-migration.js`: save reconciliation;
-  - `12-character-context.js`: restricted views/context;
-  - `13-character-memory.js`: mind/continuation/maintenance state helpers;
+  - `11-save-migration.js`: save reconciliation and deterministic v2->v3 migration;
+  - `12-character-context.js`: restricted views and bounded Mind v3 selection;
+  - `13-character-memory.js`: mind/continuation/portable-mind helpers;
+  - `13-verbatim-memory.js`: compact committed-experience capture;
   - `14-event-perception.js`: event routing, perception, observations, dialogue projection;
-  - `15-ai-admin.js`: safe AI-activity cleanup.
+  - `15-ai-admin.js`: safe AI-activity cleanup;
+  - `24-memory-consolidator.js`: STM/LTM/belief reconciliation candidate validation + atomic commit;
+  - `24-mind-aux-executor.js`: transient per-character background mind jobs and stale/preemption gating.
 - Preserve stable IDs, JSON field names, save compatibility, event order, and available-action shapes during structural refactors.
 
 ## 14. Validation before completion

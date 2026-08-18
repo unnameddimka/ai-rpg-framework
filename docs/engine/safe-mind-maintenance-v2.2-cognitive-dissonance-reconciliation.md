@@ -1,5 +1,8 @@
 # Safe Mind Maintenance v2.2 — Cognitive Dissonance Reconciliation + Formal Action Precedence
 
+> **Historical / superseded:** Mind v3 (`ai-rpg-mind-v3.md`) is now canonical for autobiographical memory, beliefs, maintenance, migration, and portable mind. Keep this document only for implementation history or non-mind features that Mind v3 explicitly leaves intact.
+
+
 ## 1. Scope
 
 This is an incremental extension of Safe Mind Maintenance v2/v2.1.

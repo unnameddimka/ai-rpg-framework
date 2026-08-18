@@ -27,11 +27,11 @@ function place(world, itemId, inventoryId) {
 }
 
 load("src/generated/world-data.js");
-load("src/08-mind-validators.js");
+load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
 load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
-load("src/13-character-memory.js");
+load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
 load("src/14-event-perception.js");
 
 assert(typeof setup.GeneratedWorldData.authoringRevision === "string" && setup.GeneratedWorldData.authoringRevision.length === 64,
@@ -148,8 +148,8 @@ assert(JSON.stringify(State.variables.world) === beforeBootstrap, "migration det
 const migrated = setup.SaveMigration.migrate();
 assert(migrated.ok && migrated.migrated, `legacy save should migrate: ${JSON.stringify(migrated)}`);
 assert(State.variables.world.entities.hoodedWoman.mindMaintenanceState &&
-    State.variables.world.entities.hoodedWoman.mindMaintenanceState.reconciliationCursor.afterBeliefId === null,
-    "a save predating reconciliation cursor state should initialize a clean per-character cursor");
+    Object.keys(State.variables.world.entities.hoodedWoman.mindMaintenanceState).length === 0,
+    "Mind v3 migration should discard the obsolete v2 contradiction-scan cursor state");
 const world = State.variables.world;
 assert(world.schemaVersion === setup.Game.WORLD_SCHEMA_VERSION && world.authoringRevision === setup.GeneratedWorldData.authoringRevision,
     "migration should commit the current schema and authoring revision");
@@ -172,12 +172,14 @@ assert(world.entities.memoryStone_01 && world.entities.memoryStone_01.definition
     world.entities.memoryStone_01.containerId === "inventory_villageTemple" &&
     world.inventories.inventory_villageTemple.itemIds.filter(function (id) { return id === "memoryStone_01"; }).length === 1,
     "a newly authored stable Memory Stone ID absent from the old save should remain in its fresh authored temple placement");
-assert(world.entities.hoodedWoman.mind.recentMemories.some(function (memory) { return memory.id === "memory_ai_41"; }) &&
-    world.entities.hoodedWoman.mind.longTermMemories.some(function (memory) { return memory.id === "mara_old_memory"; }),
-    "Mara's saved recent and long-term memories should survive");
-assert(world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "traveler_keeps_word"; }) &&
+assert(world.entities.hoodedWoman.mind.schemaVersion === 3 &&
+    world.entities.hoodedWoman.mind.shortTermMemories.some(function (memory) { return memory.id === "memory_ai_41" && memory.summary === "Traveler offered me a secluded cottage and left to build it."; }) &&
+    world.entities.hoodedWoman.mind.longTermMemories.some(function (memory) { return memory.id === "mara_old_memory"; }) &&
+    world.entities.hoodedWoman.mind.verbatimObservations.length === 0,
+    "legacy recent memories should survive one-for-one as STM, old LTM should survive, and migration must not fabricate verbatim history");
+assert(world.entities.hoodedWoman.mind.beliefs.some(function (belief) { return belief.id === "traveler_keeps_word" && belief.text === "Traveler seems likely to keep promises." && belief.confidence === 0.6 && belief.activation === setup.MindV3.CONFIG.MIGRATED_BELIEF_ACTIVATION; }) &&
     world.entities.hoodedWoman.mind.relationships.some(function (relationship) { return relationship.targetCharacterId === "player"; }),
-    "Mara's saved beliefs and relationships should survive");
+    "Mara's saved beliefs/relationships should survive deterministically with neutral migrated activation and no re-induction");
 assert(!Object.prototype.hasOwnProperty.call(world.entities.hoodedWoman.mind, "abstractStudyProgress") &&
     world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.hoodedWoman &&
     world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.hoodedWoman.lastInput === "magical energy in alchemy" &&
@@ -203,7 +205,7 @@ assert(!world.ai.turnQueue.some(function (entry) { return entry.characterId === 
 assert(world.nextObservationId >= 778 && world.nextEventId >= 100,
     "migration should preserve/reconstruct runtime observation and event counters beyond injected IDs");
 assert(world.entities.captainPrice.mind.knownFacts.some(function (fact) { return fact.id === "price_lodging"; }) &&
-    world.entities.captainPrice.mind.recentMemories.some(function (memory) { return memory.id === "price_memory"; }),
+    world.entities.captainPrice.mind.shortTermMemories.some(function (memory) { return memory.id === "price_memory"; }),
     "Price should receive the current authored lodging fact while keeping what he actually remembered");
 assert(world.entities.captainPrice.aiDescription.includes("Do not assume that you are currently drinking") &&
     !world.entities.captainPrice.playerDescription.includes("holding a mug") &&
@@ -341,6 +343,24 @@ assert(State.variables.world.entities.hoodedWoman.locationId === "maraCottageGar
     State.variables.world.entities.hoodedWoman.sublocationId === "maraCottageGarden",
     "a character saved in the stable garden sublocation should follow that sublocation to its new authored parent location");
 
+// Stale item.containerId must not block save migration. Inventory/equipment membership is canonical
+// and validation repairs the derived compatibility field deterministically.
+const staleContainerWorld = clone(current);
+staleContainerWorld.authoringRevision = "4343434343434343434343434343434343434343434343434343434343434343";
+removeFromAllInventories(staleContainerWorld, "maraClothing_01");
+staleContainerWorld.entities.hoodedWoman.equippedItems = staleContainerWorld.entities.hoodedWoman.equippedItems.filter(function (record) {
+    return record.itemId !== "maraClothing_01";
+});
+staleContainerWorld.inventories.inventory_hoodedWoman.itemIds.push("maraClothing_01");
+staleContainerWorld.entities.maraClothing_01.containerId = "hoodedWoman"; // stale legacy/cache value
+State.variables.world = staleContainerWorld;
+const migratedStaleContainer = setup.SaveMigration.migrate();
+assert(migratedStaleContainer.ok && migratedStaleContainer.migrated,
+    "stale item containerId should not make an otherwise canonical saved placement fail migration");
+assert(State.variables.world.entities.maraClothing_01.containerId === "inventory_hoodedWoman" &&
+    State.variables.world.inventories.inventory_hoodedWoman.itemIds.includes("maraClothing_01"),
+    "migration/validation should derive containerId from canonical inventory membership");
+
 // Saved equipment placement must override fresh authored starting equipment.
 const movedEquipmentWorld = clone(current);
 movedEquipmentWorld.authoringRevision = "4444444444444444444444444444444444444444444444444444444444444444";
@@ -435,17 +455,17 @@ assert(State.variables.world.entities.innkeeper.mind.relationships.some(function
 // Full pre-maintenance rollback snapshots are persistent world-local state and survive ordinary migration.
 const snapshotMigrationWorld = clone(current);
 snapshotMigrationWorld.authoringRevision = "8888888888888888888888888888888888888888888888888888888888888888";
-snapshotMigrationWorld.entities.hoodedWoman.mindMaintenanceState = { reconciliationCursor: { afterBeliefId: "traveler_keeps_word" } };
+snapshotMigrationWorld.entities.hoodedWoman.mindMaintenanceState = { reconciliationCursor: { afterBeliefId: "obsolete_v2_cursor" } };
+snapshotMigrationWorld.entities.hoodedWoman.mind.shortTermMemories.push({ id: "memory_ai_777", topic: "Migration sentinel", summary: "A current v3 STM sentinel.", importance: 0.5, protected: false });
 snapshotMigrationWorld.entities.hoodedWoman.mindMaintenanceSnapshots = [{
     createdAt: "2026-08-15T18:00:00.000Z",
     turn: 123,
     trigger: "manual",
     mind: clone(snapshotMigrationWorld.entities.hoodedWoman.mind)
 }];
-snapshotMigrationWorld.entities.hoodedWoman.mind.maintenanceArchive = {
-    memories: [{ archivedAt: "2026-08-15T18:01:00.000Z", sourcePartition: "longTermMemories", record: { id: "memory_ai_777", summary: "Archived migration sentinel.", importance: 0.5, protected: false } }],
-    beliefs: [{ archivedAt: "2026-08-15T18:02:00.000Z", record: { id: "archived_migration_belief", text: "Old migrated understanding.", confidence: "low" } }]
-};
+snapshotMigrationWorld.entities.hoodedWoman.mindRevision = 9;
+snapshotMigrationWorld.entities.hoodedWoman.mindDiagnostics = { beliefHistoryById: { sentinel_belief: [{ atTurn: 122, source: "test", effect: "supports", deltaConfidence: 0.1 }] } };
+snapshotMigrationWorld.entities.hoodedWoman.mind.maintenanceArchive = { obsoleteV2ArchiveSentinel: true };
 snapshotMigrationWorld.nextMemoryId = 10;
 State.variables.world = snapshotMigrationWorld;
 const migratedSnapshotWorld = setup.SaveMigration.migrate();
@@ -453,11 +473,63 @@ assert(migratedSnapshotWorld.ok && migratedSnapshotWorld.migrated &&
     State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots.length === 1 &&
     State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots[0].turn === 123 &&
     State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots[0].trigger === "manual" &&
-    State.variables.world.entities.hoodedWoman.mind.maintenanceArchive.memories[0].record.id === "memory_ai_777" &&
-    State.variables.world.entities.hoodedWoman.mind.maintenanceArchive.beliefs[0].record.id === "archived_migration_belief" &&
-    State.variables.world.entities.hoodedWoman.mindMaintenanceState.reconciliationCursor.afterBeliefId === "traveler_keeps_word" &&
+    State.variables.world.entities.hoodedWoman.mind.shortTermMemories.some(function (memory) { return memory.id === "memory_ai_777"; }) &&
+    !Object.prototype.hasOwnProperty.call(State.variables.world.entities.hoodedWoman.mind, "maintenanceArchive") &&
+    Object.keys(State.variables.world.entities.hoodedWoman.mindMaintenanceState).length === 0 &&
+    State.variables.world.entities.hoodedWoman.mindRevision === 9 &&
+    State.variables.world.entities.hoodedWoman.mindDiagnostics.beliefHistoryById.sentinel_belief.length === 1 &&
     State.variables.world.nextMemoryId >= 778,
-    "maintenance snapshots/archive/cursor should survive compatible save migration and archived IDs must advance nextMemoryId");
+    "v3 maintenance snapshots/diagnostics/revision should survive compatible migration, v2 archive/cursor state should not, and active v3 IDs must advance nextMemoryId");
+
+// Pre-feature saves without playerSetup are already-running games and must migrate straight to legacy-complete setup.
+const prePlayerSetupWorld = clone(current);
+delete prePlayerSetupWorld.playerSetup;
+prePlayerSetupWorld.authoringRevision = "9999999999999999999999999999999999999999999999999999999999999999";
+State.variables.world = prePlayerSetupWorld;
+const migratedPrePlayerSetup = setup.SaveMigration.migrate();
+assert(migratedPrePlayerSetup.ok && State.variables.world.playerSetup.disclaimerAccepted === true && State.variables.world.playerSetup.completed === true && State.variables.world.playerSetup.mode === "legacy",
+    "saves created before Traveler initialization must not be interrupted by the new startup screens");
+
+// Custom Traveler authoring belongs to the playthrough and survives authored-world migration while the shared aura stays canonical.
+const customTravelerWorld = clone(current);
+customTravelerWorld.authoringRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+customTravelerWorld.playerSetup = { disclaimerAccepted: true, completed: true, mode: "custom", profileId: null, customAuthoring: { name: "Saved Custom", playerDescription: "Saved visible identity.", aiDescription: "Saved private identity." } };
+customTravelerWorld.entities.player.name = "Saved Custom";
+customTravelerWorld.entities.player.playerDescription = "Saved visible identity.";
+customTravelerWorld.entities.player.aiDescription = "Saved private identity.";
+customTravelerWorld.entities.player.engineFacts.aura = "Stale saved aura that must not win.";
+State.variables.world = customTravelerWorld;
+const migratedCustomTraveler = setup.SaveMigration.migrate();
+assert(migratedCustomTraveler.ok && State.variables.world.playerSetup.mode === "custom" && State.variables.world.entities.player.name === "Saved Custom" &&
+    State.variables.world.entities.player.aiDescription === "Saved private identity." && State.variables.world.entities.player.engineFacts.aura === current.entities.player.engineFacts.aura,
+    "Custom Traveler identity should survive migration but canonical current Traveler engineFacts/aura must win");
+
+// Authored Traveler mode reapplies the current authored profile revision rather than stale saved identity text.
+setup.GeneratedWorldData.travelerProfiles.testScholar = { id: "testScholar", name: "Current Scholar", playerDescription: "Current visible scholar description.", aiDescription: "Current private scholar authoring." };
+const authoredTravelerWorld = clone(current);
+authoredTravelerWorld.authoringRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+authoredTravelerWorld.playerSetup = { disclaimerAccepted: true, completed: true, mode: "authored", profileId: "testScholar", customAuthoring: null };
+authoredTravelerWorld.entities.player.name = "Old Scholar";
+authoredTravelerWorld.entities.player.playerDescription = "Old visible profile.";
+authoredTravelerWorld.entities.player.aiDescription = "Old private profile.";
+State.variables.world = authoredTravelerWorld;
+const migratedAuthoredTraveler = setup.SaveMigration.migrate();
+assert(migratedAuthoredTraveler.ok && State.variables.world.playerSetup.profileId === "testScholar" && State.variables.world.entities.player.name === "Current Scholar" && State.variables.world.entities.player.playerDescription === "Current visible scholar description." && State.variables.world.entities.player.aiDescription === "Current private scholar authoring.",
+    "authored Traveler saves should reapply the current version of the selected authored profile");
+delete setup.GeneratedWorldData.travelerProfiles.testScholar;
+
+// If an authored profile was removed, preserve the saved runtime identity rather than silently replacing the protagonist.
+const removedProfileWorld = clone(current);
+removedProfileWorld.authoringRevision = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+removedProfileWorld.playerSetup = { disclaimerAccepted: true, completed: true, mode: "authored", profileId: "removedProfile", customAuthoring: null };
+removedProfileWorld.entities.player.name = "Removed Profile Traveler";
+removedProfileWorld.entities.player.playerDescription = "Saved fallback appearance.";
+removedProfileWorld.entities.player.aiDescription = "Saved fallback personality.";
+State.variables.world = removedProfileWorld;
+const migratedRemovedProfile = setup.SaveMigration.migrate();
+assert(migratedRemovedProfile.ok && State.variables.world.entities.player.name === "Removed Profile Traveler" && State.variables.world.playerSetup.mode === "authored" &&
+    migratedRemovedProfile.report.warnings.some(function (warning) { return warning.includes("removedProfile") && warning.includes("preserved"); }),
+    "removed authored Traveler profiles should preserve the saved runtime identity and emit a migration warning");
 
 // Migration must be transactional: corrupt persistent memory cannot partially replace the active restored save.
 const broken = clone(current);

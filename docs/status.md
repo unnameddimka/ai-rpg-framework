@@ -39,21 +39,22 @@
 - Grounding barrier between model attempt prose and deterministic engine result.
 - Epistemic grounding allows deliberate lying, misunderstanding and false inference while rejecting unmotivated connective fabrication; mind updates preserve the distinction between an observed fact, an inference/belief, and something the character knowingly lied about.
 - Opaque model-authored `continuation` for unfinished ordinary-tick purpose.
-- Structured recent-memory/belief/relationship updates, including explicit removal of obsolete active beliefs from ordinary decisions.
-- Transactional Safe Mind Maintenance v2.2 uses bounded recent consolidation, per-character rolling cognitive-dissonance reconciliation, and tiny optional long-term merges. Five deterministically selected beliefs are compared with active LT memories per run; at most the two strongest conflicts receive separate bounded resolutions, and belief/memory type never determines truth by itself. Every replaced/retired source is archived verbatim; protected memories remain immutable.
-- A successful maintenance run that actually changes autobiographical mind content stores one full pre-maintenance mind snapshot; the newest five per character persist through save/load/migration as rollback/diagnostic insurance. Failed runs, no-op revisions, and cursor-only reconciliation progress consume no snapshot slot. Snapshots and reconciliation cursor state stay outside portable mind transfer.
-- Shared belief/relationship/memory/dialogue validators are reused across runtime validation, migration, and portable mind import.
+- Mind v3 ordinary turns no longer author autobiographical memories or arbitrary belief replacements. They may update durable relationships and explicitly activate supplied beliefs; committed experience is captured separately into verbatim memory.
+- Persistent Mind v3 layers are pending observations (unprocessed scheduler inbox), verbatim experienced history, thematic STM, thematic lossy LTM, and beliefs with independent numeric confidence + activation. Ordinary STM consolidation uses the full buffer, triggers strictly above 40, retains newest 20, and evicts exact older IDs only after validated atomic commit.
+- Existing belief confidence is engine-owned log-odds math from semantic support/contradiction strength; activation is saturating salience that can rise even while confidence falls and decays during timelapse. Belief reconciliation can revise/merge/contextualize/supersede/remove or deliberately leave cognitive dissonance unresolved.
+- Background STM work runs non-blocking through the Utility lane with one job per character, snapshot/stale/atomic-commit safety and canonical-decision priority. Its stale check is operation-specific: new verbatim and activation-only gameplay changes are compatible and merge onto current state, while STM/LTM/relationship changes or belief ID/text/confidence changes reject the result. New observations arriving while a job is in flight are never removed by that older job. Live STM consolidation has a dedicated 6000-token Utility completion profile; prompts require thematic grouping and canonical 0..1 importance, while common accidental model output on a >1..10 importance scale is normalized deterministically at protocol ingress before strict validation. STM output is now explicitly delta-only: persisted/migrated STM is read-only by default, cleanup/beautification rewrites are forbidden, unchanged records are omitted, and one roll is bounded to 8 total STM writes, 12 belief effects, 4 new beliefs and 12 activation IDs. Oversized/no-op responses are rejected atomically rather than truncated.
+- Shared belief/relationship/STM/LTM/verbatim/dialogue validators are reused across runtime validation, migration, and portable mind import.
 
 ### Timelapse
 
 - Generic timelapse core separated from overnight wrapper.
 - Overnight mode: five coarse rounds, implicit reachable-room travel, sleep/narrate/authored macros.
 - Private encounter intents + shared resolver + affected-character replanning.
-- Safe parallelism for independent structural requests and per-character maintenance preparation; rounds remain sequential. Maintenance has an explicit await barrier followed by sequential canonical commits and final global memory-ID allocation.
+- Safe parallelism for independent structural requests and per-character Mind v3 maintenance preparation; rounds remain sequential. Auxiliary computations never mutate shared state before validated commit, and engine-generated memory/belief IDs allocate from the then-current global counter.
 - Structural timelapse requests use reasoning disabled and bounded outputs.
 - Tick-mode `continuation` is cut before timelapse planning.
 - AI that end the night sleeping remain sleeping in the morning; only Human control is returned/woken.
-- End-of-period reflection and transactional memory consolidation. Reflection reuses grounded canonical nearby-character identity rather than reconstructing IDs from prose; invalid relationship IDs receive one repair attempt and malformed relationship-only residue may be dropped. After all rounds/required settlement commit, reflection/maintenance failures are diagnostic-only and no longer prevent Night→Morning or Day→Evening.
+- Timelapse now has a forced pre-boundary verbatim->STM consolidation (entire pre-period buffer is the eviction set), committed-experience verbatim capture during coarse rounds, then STM/LTM consolidation, belief reconciliation and activation decay. Reflection updates only relationships/belief activation. After all rounds/required settlement commit, reflection/maintenance failures are diagnostic-only and never silently drop source memory. LTM maintenance is evidence-driven rather than count-limited: the Utility model sees the full STM set and may make as many material LTM/belief changes as justified, with a dedicated 12000-token completion profile. Every material LTM write carries `sourceStmIds`/`sourceLtmIds` provenance. Any number of unprotected STM records may retire only through explicit `represented` coverage or `safe_to_forget` groups using `routine`/`redundant`/`transient` reason codes. New LTM proposals use response-local refs for coverage links; refs/provenance/reason metadata never persist into character consciousness.
 - Timelapse routing preserves canonical passage lock state: unlocked passages are available to everyone; a locked passage is available to a matching direct key holder without synthetic unlock/relock or lock-state mutation.
 - Progressive committed output during long ticks/timelapse.
 
@@ -83,7 +84,7 @@
 - Every OpenRouter transport has a configurable hard timeout (180 seconds by default), including response-body reads.
 - HTTP 429 preserves `Retry-After`, starts shared provider cooldown, stops the current canonical reaction wave cleanly while leaving remaining observations queued, and suppresses optional static/tick narrator calls until cooldown ends.
 - Serialized `frameworkUI.turnBusy` is ignored/stripped; UI busy state is derived only from live runtime work, so interrupted saves cannot reopen permanently stuck on `Thinking...`.
-- Ordinary causal AI reactions are serialized. Timelapse maintenance model/prepare work may run concurrently, but shared canonical maintenance commits are serialized after all proposals finish.
+- Ordinary causal AI reactions are serialized. Background mind work is explicitly non-blocking, while independent timelapse mind model work may run concurrently and commits remain source/stale validated against current canonical state.
 - Latest 100 sanitized semantic AI exchanges remain available for diagnostics/export. A separate bounded low-level OpenRouter transport ring records every physical provider attempt, including early network/timeout/HTTP failures, while a bounded external-network ring records framework-owned weather/geolocation fetches.
 
 ### Save/load
@@ -104,13 +105,14 @@
 - Progressive committed scene rendering while input remains locked.
 - Optional current-turn invisible-event debug display.
 - Sidebar AI-activity admin controls can dismiss pending reactions, clear continuation, combine both, or globally clear non-kept AI characters on a safe idle boundary without emitting story events.
-- Character runtime profile modal plus collapsed **Mind tools** for bounded transactional maintenance and portable mind v2 export/import (`beliefs`, `relationships`, recent/long-term memories, `maintenanceArchive`). V1 import remains supported; snapshots/recentDialogue stay world-local.
+- Character runtime profile modal plus collapsed **Mind tools** showing verbatim/pending counts, STM/LTM topics, belief confidence+activation, diagnostic changes and auxiliary job state. Portable mind v3 carries beliefs/activation, relationships, STM/LTM and bounded verbatim; v1/v2 imports migrate deterministically. Snapshots/recentDialogue stay world-local.
 - Standalone offline world editor for `data/world.json`, including free-form item equipment slots, Inventory/Equipped starting placement, and minimal visibility/editing for authored `dayActivities`. The editor visibility invariant is that every authored entity type must be surfaced even when its editing UX is crude.
 - Crystal-sphere/prompt-lab diagnostics, dry runs and AI exchange import/export.
-- **Emergency dump** remains available from the sidebar and an always-on top-level fixed control above blocking overlays; it exports one best-effort ZIP containing independent JSON diagnostics (`manifest`, game/SugarCube state, minds/archive/snapshots, scheduler/observations, raw/portable semantic AI exchanges, low-level AI transport history, external network history, weather runtime, latest handled timelapse result/failure stage, UI/narrator state, recent runtime errors), redacting API/authentication secrets and tolerating partially broken state.
+- **Emergency dump** remains available from the sidebar and an always-on top-level fixed control above blocking overlays; it exports one best-effort ZIP containing independent JSON diagnostics (`manifest`, game/SugarCube state, Mind v3 state/snapshots/diagnostics, scheduler/observations/aux-job state, raw/portable semantic AI exchanges, low-level AI transport history, external network history, weather runtime, latest handled timelapse result/failure stage, UI/narrator state, recent runtime errors), redacting API/authentication secrets and tolerating partially broken state.
 - No normal gameplay button that manually processes pending AI work.
 
-- Safe Mind Maintenance v2.2 preserves v2/v2.1 bounded recent batches (12 × max 3), exact stage schemas, newest-10 read-only recent correction evidence, archive preservation, and at most two 2–3-source LT merges. It replaces general consistency cleanup with a persistent per-character reconciliation cursor: up to five beliefs are scanned against active LT, conflicts are ranked `direct > strong > possible`, and at most two selected pairs may resolve via `revise_belief`, `revise_memory`, `revise_both`, or `keep_conflict`. Cursor-only progress creates no personality snapshot; identical proposed revisions are no-ops.
+- Deterministic v2->v3 migration preserves developed character identity: old belief IDs/text/confidence semantics survive with neutral activation, old recent memories become one-for-one legacy STM, old LTM/relationships survive, and no historical summaries are fabricated into verbatim evidence. Portable mind uses the same migration semantics.
+- Fresh worlds now block gameplay behind a one-button AI-interaction 18+ disclaimer followed by Traveler identity selection. The canonical runtime entity remains `player`; Generic, authored `travelerProfiles`, or per-save Custom authoring may overlay only name/public description/AI description. Location, inventory, wallet, controllers, abilities, mind, equipment and canonical gender-neutral otherworldly aura remain shared Traveler-shell state. Existing saves migrate as already initialized.
 
 ### Code organization
 
@@ -118,8 +120,12 @@ The former monolithic GameAPI has been partially extracted while preserving its 
 
 - `10-game-api.js`: deterministic world/action/event facade;
 - `11-save-migration.js`: migration/reconciliation;
-- `12-character-context.js`: canonical restricted view + AI context primitives;
-- `13-character-memory.js`: mind/continuation helpers.
+- `07-mind-v3.js`: centralized Mind v3 semantics/config/math;
+- `12-character-context.js`: canonical restricted view + bounded Mind v3 context selection;
+- `13-character-memory.js`: mind/continuation/portable-mind helpers;
+- `13-verbatim-memory.js`: committed-experience capture;
+- `24-memory-consolidator.js`: STM/LTM/reconciliation protocols and atomic commits;
+- `24-mind-aux-executor.js`: non-blocking per-character background mind jobs.
 
 Timelapse is split into a generic core plus overnight and daytime wrappers/policies.
 

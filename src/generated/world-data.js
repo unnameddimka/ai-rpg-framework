@@ -24,6 +24,7 @@
   "protectedAbilityIds": [
     "readAura"
   ],
+  "travelerProfiles": {},
   "locations": {
     "tavernEntrance": {
       "id": "tavernEntrance",
@@ -1001,7 +1002,7 @@
       "defaultControllerId": "ai",
       "abilityIds": [],
       "engineFacts": {
-        "aura": "Beneath the aura of an ordinary human, there is a faint second presence — something impossible to place, as though part of him exists beyond the boundaries of this world. It does not feel corrupt or hostile, only profoundly out of place."
+        "aura": "Beneath the aura of an ordinary human, there is a faint second presence — something impossible to place, as though some part of this person exists beyond the boundaries of this world. It does not feel corrupt or hostile, only profoundly out of place."
       },
       "initialMind": {
         "knownFacts": [
@@ -1012,8 +1013,10 @@
         ],
         "beliefs": [],
         "relationships": [],
-        "recentMemories": [],
-        "longTermMemories": []
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
       }
     },
     "hoodedWoman": {
@@ -1084,8 +1087,10 @@
             "summary": "Harlan is a wary but practical repeat patient. He does not advertise coming to a hedge witch, but he has trusted my treatment for forge burns and injuries often enough that I know his caution is mixed with genuine respect for my skill."
           }
         ],
-        "recentMemories": [],
-        "longTermMemories": []
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
       }
     },
     "innkeeper": {
@@ -1170,8 +1175,10 @@
             "summary": "Harlan and I do not much like each other, but I respect his competence and know the village depends on his work. We mostly keep to our own spheres and have little reason to talk unless business requires it."
           }
         ],
-        "recentMemories": [],
-        "longTermMemories": []
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
       }
     },
     "captainPrice": {
@@ -1199,8 +1206,10 @@
         ],
         "beliefs": [],
         "relationships": [],
-        "recentMemories": [],
-        "longTermMemories": []
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
       }
     },
     "nell": {
@@ -1293,8 +1302,10 @@
             "summary": "Harlan is a familiar local and I find him serious but easier to talk with than his manner first suggests. We often chat when he drinks at the tavern, and I regard him as friendly company."
           }
         ],
-        "recentMemories": [],
-        "longTermMemories": []
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
       }
     },
     "blacksmith": {
@@ -1363,8 +1374,10 @@
             "summary": "I am cautious around Mara and would rather not advertise my dealings with a witch, but I respect her practical skill because she has successfully treated several burns and injuries from my work."
           }
         ],
-        "recentMemories": [],
-        "longTermMemories": []
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
       }
     }
   },
@@ -2032,6 +2045,6 @@
       }
     }
   },
-  "authoringRevision": "3612159fd680dd03a186918ea3554a417560beaffe1041ac8a43011a47de029e"
+  "authoringRevision": "002113e19845ecfe5249c5e332636620093a0095b16a605822fd54597f33ea20"
 };
 }());

@@ -18,19 +18,30 @@ global.Engine = { play: function () {}, show: function () {} };
 function load(file) { vm.runInThisContext(fs.readFileSync(path.join(root,file),"utf8"), { filename:file }); }
 function assert(value,message){ if(!value) throw new Error(message); }
 function ok(result,message){ assert(result&&result.ok, `${message}: ${JSON.stringify(result)}`); return result; }
-function emptyUpdates(){ return { recentMemoriesToAdd:[], beliefsToUpsert:[], beliefIdsToRemove:[], relationshipsToUpsert:[] }; }
+function emptyUpdates(){ return { relationshipsToUpsert:[], activatedBeliefIds:[] }; }
+function emptyStmResult(){ return { shortTermMemoriesToUpsert:[], shortTermMemoriesToAdd:[], beliefEffects:[], beliefsToAdd:[], activatedBeliefIds:[] }; }
+function emptyLtmResult(){ return { longTermMemoriesToUpsert:[], longTermMemoriesToAdd:[], retirementGroups:[], higherOrderBeliefEffects:[], beliefsToAdd:[], activatedBeliefIds:[] }; }
+function mindProtocolResponse(messages){
+    const user=String(messages&&messages[1]&&messages[1].content||"");
+    let payload=null; try{ payload=JSON.parse(user); }catch(error){}
+    if(!payload||!payload.stage) return null;
+    if(payload.stage==="mind-v3-stm") return {ok:true,content:JSON.stringify(emptyStmResult()),modelId:"test",usage:{}};
+    if(payload.stage==="mind-v3-ltm") return {ok:true,content:JSON.stringify(emptyLtmResult()),modelId:"test",usage:{}};
+    if(payload.stage==="mind-v3-reconciliation") return {ok:true,content:JSON.stringify({resolutions:[],activatedBeliefIds:[]}),modelId:"test",usage:{}};
+    return null;
+}
 
 [
-"src/00-model-list.js","src/generated/world-data.js","src/08-mind-validators.js","src/10-game-api.js","src/11-save-migration.js",
-"src/12-character-context.js","src/13-character-memory.js","src/14-event-perception.js","src/17-runtime-diagnostics.js","src/21-ai-settings.js","src/21-ai-request-profiles.js",
+"src/00-model-list.js","src/generated/world-data.js","src/07-mind-v3.js","src/08-mind-validators.js","src/10-game-api.js","src/11-save-migration.js",
+"src/12-character-context.js","src/13-character-memory.js","src/13-verbatim-memory.js","src/14-event-perception.js","src/17-runtime-diagnostics.js","src/21-ai-settings.js","src/21-ai-request-profiles.js",
 "src/22-openrouter-client.js","src/23-ai-protocol.js","src/23-world-environment.js","src/24-ai-request-executor.js","src/24-ai-turn-scheduler.js",
-"src/20-controllers.js","src/24-memory-consolidator.js","src/24-timelapse-core.js","src/24-daytime-timelapse.js","src/24-night-timelapse.js","src/25-turn-flow.js"
+"src/20-controllers.js","src/24-memory-consolidator.js","src/24-mind-aux-executor.js","src/24-timelapse-core.js","src/24-daytime-timelapse.js","src/24-night-timelapse.js","src/25-turn-flow.js"
 ].forEach(load);
 
 setup.AIRuntimeSettings.save("sk-or-v1-test-daytime-key-1234567890", false, storage, Date.now());
 
 function fresh(aiId) {
-    setup.Game.resetWorld();
+    setup.Game.resetWorld(); setup.Game.acceptPlayerDisclaimer(); setup.Game.finalizePlayerSetup({ mode: "generic" });
     const world = setup.Game.getWorld();
     Object.values(world.entities).filter(e=>e&&e.type==="character"&&e.id!=="player").forEach(c=>{
         setup.Game.assignNonHumanController(c.id, c.id===aiId ? "ai" : "dummy");
@@ -43,6 +54,7 @@ function fakeCharacterClient() {
     return {
         async chat(messages) { return this.chatWithOptions(messages); },
         async chatWithOptions(messages) {
+            const mindResponse=mindProtocolResponse(messages); if(mindResponse) return mindResponse;
             const system = String(messages && messages[0] && messages[0].content || "");
             if (system.includes("Generate public world narration for one already-committed")) {
                 assert(system.includes("strictly in third person") && system.includes("context.daytimeJob.sponsor.name") && !system.includes("You are the sponsoring character"),
@@ -103,6 +115,7 @@ async function main(){
     const dayPlannerClient={
         async chat(messages){ return this.chatWithOptions(messages); },
         async chatWithOptions(messages){
+            const mindResponse=mindProtocolResponse(messages); if(mindResponse) return mindResponse;
             const system=String(messages&&messages[0]&&messages[0].content||"");
             if(system.includes("planning coarse activity for exactly one RPG character")){
                 capturedDayPlanSystem=system;
@@ -154,7 +167,7 @@ async function main(){
     setup.WorldEnvironment.refreshWeather=oldRefresh;
     ok(dayResult,"forge daytime timelapse should complete");
     world=setup.Game.getWorld();
-    assert(dayResult.committedRounds===5&&world.environment.timePhase==="evening","successful day should commit five rounds and end Evening");
+    assert(dayResult.committedRounds===5&&world.environment.timePhase==="evening"&&State.variables.time==="Evening","successful day should commit five rounds and synchronize canonical/legacy Evening");
     assert(world.entities.player.wallet===beforeHumanGold+5,"Harlan settlement should mint exactly chosen salary to Traveler");
     assert(world.entities.blacksmith.wallet===beforeHarlanGold,"minted salary must not come from Harlan wallet");
     assert(world.entities.blacksmith.locationId==="villageSmithy"&&world.entities.player.locationId==="villageSmithy","accepted offsite job should move sponsor and Traveler to the authored worksite before work");
@@ -188,30 +201,35 @@ async function main(){
         "reflection context should reuse the canonical AI-visible character projection, including Mara's stable hoodedWoman ID and visible description");
     ok(setup.CharacterAPI.perform("hoodedWoman",{type:"offer_day_work",activity_id:"maraAssistance"}),"Mara should offer work for reflection repair fixture");
     ok(setup.DaytimeTimelapse.acceptPendingOffer(),"reflection repair fixture should accept Mara's job");
+    world.entities.hoodedWoman.mind.beliefs=[{id:"belief_deliberate_lie",text:"I sometimes hide what I mean when I feel exposed.",confidence:0.6,activation:0.2}];
+    const beforeReflectionActivation=world.entities.hoodedWoman.mind.beliefs[0].activation;
     let invalidReflectionCalls=0;
     const invalidReflectionClient={
         async chat(messages){ return this.chatWithOptions(messages); },
         async chatWithOptions(messages){
+            const mindResponse=mindProtocolResponse(messages); if(mindResponse) return mindResponse;
             const system=String(messages&&messages[0]&&messages[0].content||"");
             if(system.includes("Generate public world narration for one already-committed")) return {ok:true,content:"Mara sorts herbs and keeps the Traveler busy with simple work around the cottage.",modelId:"test",usage:{}};
             if(system.includes("sponsoring character choosing the reward")) return {ok:true,content:'{"items":[{"definitionId":"healingSalve","count":1}]}',modelId:"test",usage:{}};
             if(system.includes("private post-timelapse reflection")){
                 invalidReflectionCalls++;
                 return {ok:true,content:JSON.stringify({memoryUpdates:{
-                    recentMemoriesToAdd:[{summary:"I told a deliberate falsehood during the day and remember it as something I said, not as objective truth.",importance:0.5}],
-                    beliefsToUpsert:[], beliefIdsToRemove:[],
-                    relationshipsToUpsert:[{targetCharacterId:"mara",summary:"This deliberately invalid display-name-derived target should be repaired or dropped."}]
+                    relationshipsToUpsert:[{targetCharacterId:"mara",summary:"This deliberately invalid display-name-derived target should be repaired or dropped."}],
+                    activatedBeliefIds:["belief_deliberate_lie"]
                 }}),modelId:"test",usage:{}};
             }
             throw new Error("Unexpected reflection repair fixture request: "+system.slice(0,120));
         }
     };
-    const oldCompressBatch=setup.MemoryConsolidator.compressBatch;
+    const oldMaintainTimelapse=setup.MemoryConsolidator.maintainTimelapse;
     const oldReflectionWeather=setup.WorldEnvironment.refreshWeather;
-    setup.MemoryConsolidator.compressBatch=async()=>({ok:false,failedStage:"prepare",characterId:"hoodedWoman",results:[],error:{code:"TEST_MAINTENANCE_FAILURE",message:"fixture maintenance failure"}});
+    setup.MemoryConsolidator.maintainTimelapse=async function(characterId){
+        if(characterId==="hoodedWoman") return {ok:false,error:{code:"TEST_MAINTENANCE_FAILURE",message:"fixture maintenance failure"}};
+        return {ok:true,report:{stages:[],errors:[]}};
+    };
     setup.WorldEnvironment.refreshWeather=async()=>({ok:true});
     const partialMindDay=await setup.DaytimeTimelapse.run(invalidReflectionClient);
-    setup.MemoryConsolidator.compressBatch=oldCompressBatch;
+    setup.MemoryConsolidator.maintainTimelapse=oldMaintainTimelapse;
     setup.WorldEnvironment.refreshWeather=oldReflectionWeather;
     ok(partialMindDay,"invalid relationship target plus maintenance failure should not undo an already committed day");
     world=setup.Game.getWorld();
@@ -219,10 +237,10 @@ async function main(){
         "reflection should receive one bounded repair attempt and the completed day should still transition to Evening");
     const partialReflection=partialMindDay.reflections.find(r=>r.characterId==="hoodedWoman");
     assert(partialReflection&&partialReflection.partial===true&&partialReflection.droppedRelationshipTargetIds.includes("mara")&&
-        world.entities.hoodedWoman.mind.recentMemories.some(m=>m.summary.includes("remember it as something I said"))&&
+        world.entities.hoodedWoman.mind.beliefs.find(b=>b.id==="belief_deliberate_lie").activation>beforeReflectionActivation&&
         !world.entities.hoodedWoman.mind.relationships.some(r=>r.targetCharacterId==="mara"),
-        "failed relationship-ID repair should drop only the malformed relationship while preserving separable valid reflection updates");
-    assert(partialMindDay.mindProcessingErrors.some(e=>e.stage==="maintenance-prepare"&&e.error.code==="TEST_MAINTENANCE_FAILURE"),
+        "failed relationship-ID repair should drop only the malformed relationship while preserving the separable valid belief-activation reflection signal");
+    assert(partialMindDay.mindProcessingErrors.some(e=>e.stage==="maintenance"&&e.error.code==="TEST_MAINTENANCE_FAILURE"),
         "non-fatal maintenance failure should remain explicit in timelapse diagnostics");
 
     // A reflection request failure itself is also diagnostic-only after five committed rounds.
@@ -235,6 +253,7 @@ async function main(){
     const reflectionFailureClient={
         async chat(messages){ return this.chatWithOptions(messages); },
         async chatWithOptions(messages){
+            const mindResponse=mindProtocolResponse(messages); if(mindResponse) return mindResponse;
             const system=String(messages&&messages[0]&&messages[0].content||"");
             if(system.includes("Generate public world narration for one already-committed")) return {ok:true,content:"Harlan works the forge while the Traveler handles auxiliary tasks.",modelId:"test",usage:{}};
             if(system.includes("sponsoring character choosing the reward")) return {ok:true,content:'{"gold":3}',modelId:"test",usage:{}};

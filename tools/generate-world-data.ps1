@@ -10,7 +10,6 @@ $knownActions = @("move","move_within_location","take_item","drop_item","give_it
 $knownEnvironmentCapabilities = @("ale_source")
 $knownItemEffects = @("report_memory_counts")
 $controllers = @("human","dummy","ai")
-$confidences = @("low","medium","high")
 
 function Require([bool]$condition, [string]$message) { if (-not $condition) { throw $message } }
 function Register-Inventory([hashtable]$owners, [string]$id, [string]$owner) {
@@ -30,10 +29,11 @@ function Get-ExitTarget($value) {
 }
 function Validate-Mind($mind, [string]$characterId) {
     Require ($null -ne $mind) "Character $characterId must define initialMind."
-    foreach ($listName in @("knownFacts","beliefs","relationships","recentMemories","longTermMemories")) {
+    Require ($mind.schemaVersion -eq 3) "Character $characterId initialMind.schemaVersion must be 3."
+    foreach ($listName in @("knownFacts","beliefs","relationships","verbatimObservations","shortTermMemories","longTermMemories")) {
         Require ($null -ne $mind.$listName -and $mind.$listName -is [array]) "Character $characterId initialMind.$listName must be an array."
     }
-    foreach ($listName in @("knownFacts","beliefs","recentMemories","longTermMemories")) {
+    foreach ($listName in @("knownFacts","beliefs","shortTermMemories","longTermMemories")) {
         $seen = @{}
         foreach ($record in $mind.$listName) {
             Require (-not [string]::IsNullOrWhiteSpace([string]$record.id)) "Character $characterId $listName record needs an ID."
@@ -41,8 +41,12 @@ function Validate-Mind($mind, [string]$characterId) {
             $seen[[string]$record.id] = $true
         }
     }
-    foreach ($belief in $mind.beliefs) { Require ($confidences -contains [string]$belief.confidence) "Character $characterId belief '$($belief.id)' has invalid confidence." }
-    foreach ($listName in @("recentMemories","longTermMemories")) { foreach ($memory in $mind.$listName) {
+    foreach ($belief in $mind.beliefs) {
+        Require ($belief.confidence -is [ValueType] -and [double]$belief.confidence -gt 0 -and [double]$belief.confidence -lt 1) "Character $characterId belief '$($belief.id)' has invalid confidence."
+        Require ($belief.activation -is [ValueType] -and [double]$belief.activation -gt 0 -and [double]$belief.activation -lt 1) "Character $characterId belief '$($belief.id)' has invalid activation."
+    }
+    foreach ($listName in @("shortTermMemories","longTermMemories")) { foreach ($memory in $mind.$listName) {
+        Require (-not [string]::IsNullOrWhiteSpace([string]$memory.topic)) "Character $characterId memory '$($memory.id)' needs a topic."
         Require ($memory.importance -is [ValueType] -and [double]$memory.importance -ge 0 -and [double]$memory.importance -le 1) "Character $characterId memory '$($memory.id)' has invalid importance."
         Require ($memory.protected -is [bool]) "Character $characterId memory '$($memory.id)' protected must be Boolean."
     }}

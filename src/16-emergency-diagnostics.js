@@ -143,7 +143,9 @@
                     mind: entity.mind || null,
                     recentDialogue: entity.recentDialogue || [],
                     mindMaintenanceSnapshots: entity.mindMaintenanceSnapshots || [],
-                    mindMaintenanceState: entity.mindMaintenanceState || { reconciliationCursor: { afterBeliefId: null } }
+                    mindMaintenanceState: entity.mindMaintenanceState || {},
+                    mindRevision: entity.mindRevision || 0,
+                    mindDiagnostics: entity.mindDiagnostics || { beliefHistoryById: {} }
                 };
             });
             return { characters: characters };
@@ -162,6 +164,7 @@
                 pendingObservations: pendingObservations,
                 executor: setup.AIRequestExecutor && setup.AIRequestExecutor.getStatus ? setup.AIRequestExecutor.getStatus() : null,
                 scheduler: setup.AITurnScheduler && setup.AITurnScheduler.getStatus ? setup.AITurnScheduler.getStatus() : null,
+                mindAuxExecutor: setup.MindAuxExecutor && setup.MindAuxExecutor.getStatus ? setup.MindAuxExecutor.getStatus() : null,
                 controllerInFlight: setup.AIController && setup.AIController.isInFlight ? setup.AIController.isInFlight() : null
             };
         });
