@@ -22,7 +22,7 @@ function ok(result, message) { assert(result && result.ok, `${message}: ${JSON.s
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
 load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/10-game-api.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -30,7 +30,7 @@ load("src/14-event-perception.js");
 load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
 load("src/22-openrouter-client.js");
-load("src/23-ai-protocol.js");
+load("src/23-ai-protocol.js"); load("src/23-mind-consolidation-protocols.js"); load("src/23-structured-ai-request.js");
 load("src/24-ai-request-executor.js");
 load("src/24-item-model-effects.js");
 load("src/24-ai-turn-scheduler.js");
@@ -73,8 +73,10 @@ async function main() {
     assert(!failed.ok && failed.error.code === "PASSAGE_LOCKED", "locked traversal should fail as a grounded in-world attempt");
     assert(world.entities.player.locationId === "upstairsCorridor" && corridor.exits.guestRoom1.locked === sourceLock && room.exits.upstairsCorridor.locked === reciprocalLock,
         "locked attempt must not move the actor or mutate reciprocal lock state");
-    assert(world.entities.player.mind.pendingObservations.some(o => o.kind === "action_feedback" && o.code === "PASSAGE_LOCKED"),
-        "actor should receive grounded locked-door failure feedback");
+    assert(world.entities.player.mind.pendingObservations.length === 0,
+        "Human actor must not retain grounded feedback in the AI scheduler inbox");
+    assert(world.entities.player.mind.verbatimObservations.some(o => o.kind === "action_feedback" && o.text.includes("locked")),
+        "actor should retain grounded locked-door failure feedback as experienced verbatim history");
     const sourceObservation = world.entities.captainPrice.mind.pendingObservations.find(o => o.eventType === "passage_interaction_attempted");
     const farObservation = world.entities.nell.mind.pendingObservations.find(o => o.eventType === "passage_interaction_attempted");
     assert(sourceObservation && sourceObservation.actorId === "player" && sourceObservation.text.includes("Traveler"),
@@ -208,14 +210,14 @@ async function main() {
         setup.EventPerception.enqueueObservation(id, { kind: "event", text: `pending ${id}`, actorId: "player", targetId: id }, world);
         setup.AIWorkingState.setContinuation(id, `purpose ${id}`);
     });
-    world.entities.player.mind.pendingObservations.push({ id: world.nextObservationId++, kind: "event", text: "human pending" });
     const humanPending = world.entities.player.mind.pendingObservations.length;
+    assert(humanPending === 0, "HumanController scheduler inbox should remain empty before global AI cleanup");
     ok(setup.AIAdmin.clearAllAIActivity({ keepCharacterIds: ["hoodedWoman"] }), "global clear with keep list");
     world = setup.Game.getWorld();
     assert(world.entities.hoodedWoman.mind.pendingObservations.length > 0 && world.ai.continuations.hoodedWoman &&
         world.entities.captainPrice.mind.pendingObservations.length === 0 && world.entities.nell.mind.pendingObservations.length === 0 &&
-        !world.ai.continuations.captainPrice && !world.ai.continuations.nell && world.entities.player.mind.pendingObservations.length === humanPending,
-        "global clear should affect non-kept AI only and never clear HumanController state");
+        !world.ai.continuations.captainPrice && !world.ai.continuations.nell && world.entities.player.mind.pendingObservations.length === 0,
+        "global clear should affect non-kept AI only while HumanController scheduler state remains empty");
 
     setup.EventPerception.enqueueObservation("nell", { kind: "event", text: "queue-only fixture", actorId: "player", targetId: "nell" }, world);
     setup.AITurnQueue.repair();
@@ -302,9 +304,10 @@ async function main() {
     setup.WorldEnvironment={getWeatherDiagnostics:function(){return {ok:false,failedStage:"ip-geolocation",fallbackUsed:true,error:{code:"WEATHER_REFRESH_FAILED",message:"synthetic weather failure"}};}};
     const emergency = setup.EmergencyDiagnostics.capture();
     const emergencyJson = JSON.stringify(emergency);
-    assert(emergency.schema === "ai-rpg.emergency-dump" && emergency.version === 3 && emergency.sections["game-state.json"].world &&
+    assert(emergency.schema === "ai-rpg.emergency-dump" && emergency.version === 4 && emergency.sections["game-state.json"].world &&
         emergency.sections["ui-runtime.json"].transientDebug.nested.useful === "keep-me" && emergency.sections["minds.json"].characters.hoodedWoman.mind.schemaVersion === 3 &&
-        emergency.sections["scheduler-state.json"].mindAuxExecutor && emergency.sections["ai-exchange-log.json"].schema === "ai-rpg.ai-exchange-log" && emergency.sections["ai-exchange-log.json"].exchangeHistory.count > 0 &&
+        emergency.sections["scheduler-state.json"].mindAuxExecutor && emergency.sections["ai-exchanges.json"].count > 0 &&
+        emergency.sections["recovery-points.json"] && emergency.sections["mind-retrieval-runtime.json"] &&
         emergency.sections["ai-transport-log.json"].count === 1 && emergency.sections["ai-transport-log.json"].entries[0].error.code === "PROVIDER_UNAVAILABLE" &&
         emergency.sections["network-log.json"] && emergency.sections["weather-runtime.json"].failedStage === "ip-geolocation" &&
         emergency.sections["timelapse-runtime.json"].lastResult.failedStage === "maintenance-commit" && emergency.sections["timelapse-runtime.json"].lastResult.error.code === "SYNTHETIC_TIMELAPSE_FAILURE",

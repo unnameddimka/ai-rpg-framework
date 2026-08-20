@@ -36,111 +36,44 @@
     async function requestStructured(spec) {
         const baseMessages = clone(spec.messages || []);
         const execute = setup.AIRequestExecutor.executeCustomConcurrent || setup.AIRequestExecutor.executeCustom;
+        const requestOptions = clone(spec.requestOptions || setup.AIRequestProfiles.resolve(spec.profile || "timelapse-plan", { actorId: spec.actorId || null }));
         return execute({
             actorId: spec.actorId || null,
             purpose: spec.purpose,
             stage: spec.stage,
             messages: baseMessages,
-            requestOptions: clone(spec.requestOptions || setup.AIRequestProfiles.resolve(spec.profile || "timelapse-plan", { actorId: spec.actorId || null })),
+            requestOptions: requestOptions,
             client: spec.client || setup.OpenRouterClient,
-            run: async function (policyClient) {
-                let currentMessages = clone(baseMessages);
-                let requestOptions = clone(spec.requestOptions || setup.AIRequestProfiles.resolve(spec.profile || "timelapse-plan", { actorId: spec.actorId || null }));
-                let truncationRetried = false;
-                let repairAttempted = false;
-                const trace = { stage: spec.stage, originalMessages: clone(baseMessages), attempts: [], finalStatus: "pending" };
-
-                for (let attempt = 0; attempt < 3; attempt++) {
-                    const kind = attempt === 0 ? "initial" : (truncationRetried && !repairAttempted && currentMessages.length === baseMessages.length ? "truncation-retry" : "repair");
-                    const response = await policyClient.chat(currentMessages, requestOptions);
-                    const attemptTrace = {
-                        attempt: attempt + 1,
-                        kind: kind,
-                        messages: clone(currentMessages),
-                        requestOptions: clone(requestOptions),
-                        modelId: response && response.modelId || null,
-                        rawContent: response && typeof response.content === "string" ? response.content : "",
-                        usage: response && response.usage || null,
-                        providerResponse: response && response.providerResponse ? clone(response.providerResponse) : null,
-                        parsedValue: null,
-                        validationErrors: []
-                    };
-                    trace.attempts.push(attemptTrace);
-
-                    if (!response || !response.ok) {
-                        const error = clone(response && response.error || { code: "AI_REQUEST_FAILED", message: "AI request failed." });
-                        if (error.code === "MODEL_OUTPUT_TRUNCATED" && !truncationRetried) {
-                            truncationRetried = true;
-                            currentMessages = clone(baseMessages);
-                            requestOptions = Object.assign({}, requestOptions, {
-                                reasoningMaxTokens: 0,
-                                reasoningEffort: "none"
-                            });
-                            continue;
-                        }
-                        trace.finalStatus = error.code === "MODEL_OUTPUT_TRUNCATED" ? "truncated" : "request_failed";
-                        return {
-                            ok: false,
-                            error: error,
-                            modelId: response && response.modelId || null,
-                            usage: response && response.usage || null,
-                            rawContent: response && response.content || "",
-                            trace: trace
-                        };
+            run: function (policyClient) {
+                return setup.StructuredAIRequest.run(policyClient, {
+                    stage: spec.stage,
+                    messages: baseMessages,
+                    requestOptions: requestOptions,
+                    validate: spec.validate,
+                    contract: String(spec.contract || "Return the exact JSON contract from the original request."),
+                    maxRepairAttempts: 1,
+                    retryOnTruncation: true,
+                    maxTruncationRetries: 1,
+                    onTruncationRetryOptions: function (current) {
+                        return Object.assign({}, current || {}, { reasoningMaxTokens: 0, reasoningEffort: "none" });
+                    },
+                    parseErrorCode: "MODEL_JSON_PARSE_FAILED",
+                    parseErrorMessage: "The model returned malformed JSON for the timelapse protocol.",
+                    validationErrorCode: "MODEL_PROTOCOL_INVALID",
+                    validationErrorMessage: "The model returned JSON that failed timelapse protocol validation.",
+                    traceMessages: true,
+                    buildRepairMessages: function (messages, responseContent, errors) {
+                        const contract = String(spec.contract || "Return the exact JSON contract from the original request.");
+                        return clone(messages).concat([
+                            { role: "assistant", content: String(responseContent || "").slice(0, 12000) },
+                            { role: "user", content: `Your previous response failed validation:
+${errors.map(function (error) { return `- ${error}`; }).join("\n")}
+Canonical response contract:
+${contract}
+Return the complete corrected JSON object only. Use exactly the documented field names. No markdown or extra prose.` }
+                        ]);
                     }
-
-                    let value;
-                    let validation;
-                    let parseFailed = false;
-                    try {
-                        value = parseObject(response.content);
-                        attemptTrace.parsedValue = clone(value);
-                        validation = spec.validate(value);
-                    } catch (error) {
-                        parseFailed = true;
-                        validation = { ok: false, errors: [error && error.message || "The response was not valid JSON."] };
-                    }
-
-                    if (validation && validation.ok) {
-                        trace.finalStatus = "valid";
-                        trace.repaired = repairAttempted;
-                        return {
-                            ok: true,
-                            value: clone(validation.value),
-                            modelId: response.modelId || null,
-                            usage: response.usage || null,
-                            rawContent: response.content,
-                            repaired: repairAttempted,
-                            trace: trace
-                        };
-                    }
-
-                    const errors = validation && Array.isArray(validation.errors) && validation.errors.length
-                        ? validation.errors
-                        : ["The response did not match the required timelapse protocol."];
-                    attemptTrace.validationErrors = errors.slice();
-                    if (repairAttempted) {
-                        trace.finalStatus = parseFailed ? "parse_failed_after_repair" : "invalid_after_repair";
-                        return {
-                            ok: false,
-                            error: parseFailed
-                                ? structuralError("MODEL_JSON_PARSE_FAILED", "The model returned malformed JSON for the timelapse protocol.", errors)
-                                : structuralError("MODEL_PROTOCOL_INVALID", "The model returned JSON that failed timelapse protocol validation.", errors),
-                            modelId: response.modelId || null,
-                            usage: response.usage || null,
-                            rawContent: response.content,
-                            trace: trace
-                        };
-                    }
-
-                    repairAttempted = true;
-                    const contract = String(spec.contract || "Return the exact JSON contract from the original request.");
-                    currentMessages = baseMessages.concat([
-                        { role: "assistant", content: String(response.content || "").slice(0, 12000) },
-                        { role: "user", content: `Your previous response failed validation:\n${errors.map(function (error) { return `- ${error}`; }).join("\n")}\nCanonical response contract:\n${contract}\nReturn the complete corrected JSON object only. Use exactly the documented field names. No markdown or extra prose.` }
-                    ]);
-                }
-                return failure("MODEL_PROTOCOL_INVALID", "The model returned invalid timelapse protocol data.");
+                });
             }
         });
     }
@@ -459,7 +392,7 @@
         });
     }
 
-    function validateMemoryUpdates(value, allowedRelationshipTargetIds) {
+    function validateMemoryUpdates(value, allowedRelationshipTargetIds, existingRelationships, existingBeliefIds) {
         if (!exactKeys(value, ["memoryUpdates"]) || !isObject(value.memoryUpdates)) {
             return { ok: false, errors: ["response must contain exactly memoryUpdates."] };
         }
@@ -477,7 +410,7 @@
             publicNarrative: null,
             spokenText: null,
             memoryUpdates: updates
-        });
+        }, existingBeliefIds, existingRelationships);
         if (!standardValidation.ok) return { ok: false, errors: standardValidation.errors || [standardValidation.message] };
         if (allowedRelationshipTargetIds instanceof Set) {
             const invalidTargets = updates.relationshipsToUpsert.map(function (record) { return record && record.targetCharacterId; }).filter(function (id) {
@@ -510,11 +443,11 @@
         return ids;
     }
 
-    function salvageReflectionAfterFailedRepair(result, allowedRelationshipTargetIds) {
+    function salvageReflectionAfterFailedRepair(result, allowedRelationshipTargetIds, existingRelationships, existingBeliefIds) {
         const attempts = result && result.trace && Array.isArray(result.trace.attempts) ? result.trace.attempts : [];
         const parsed = attempts.slice().reverse().map(function (attempt) { return attempt && attempt.parsedValue; }).find(function (value) { return isObject(value); });
         if (!parsed) return null;
-        const relaxed = validateMemoryUpdates(parsed, null);
+        const relaxed = validateMemoryUpdates(parsed, null, existingRelationships, existingBeliefIds);
         if (!relaxed.ok) return null;
         const value = clone(relaxed.value);
         const relationships = value.memoryUpdates.relationshipsToUpsert;
@@ -545,8 +478,10 @@
         if (!context || context.ok === false) return context;
         context.completedTimelapse = { mode: mode || DEFAULT_MODE, committedFacts: compactFacts(facts) };
         const allowedRelationshipTargetIds = reflectionAllowedRelationshipTargets(characterId, context);
+        const existingRelationships = context && context.mind && Array.isArray(context.mind.relationships) ? clone(context.mind.relationships) : [];
+        const existingBeliefIds = context && context.mind && Array.isArray(context.mind.beliefs) ? context.mind.beliefs.map(function (belief) { return belief.id; }) : [];
         const messages = [
-            { role: "system", content: `You are giving exactly one RPG character a private post-timelapse reflection after supplied actual events have completed. You cannot act in the world and you do not directly write autobiographical memory or belief text/confidence. Mind v3 derives those separately from committed experience. You may update only relationship summaries that meaningfully changed and report which existing beliefs were psychologically salient during this reflection. Ground relationship targetCharacterId in supplied canonical IDs, never an invented display-name ID. Preserve epistemic provenance and do not invent physical events, permissions, statements, intentions, or mechanical results. Return exactly one object with the single key memoryUpdates. memoryUpdates must contain exactly relationshipsToUpsert and activatedBeliefIds. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. activatedBeliefIds may contain only existing supplied belief IDs that were genuinely relevant. Example empty response: ${reflectionContract()}. ${setup.MindV3 ? setup.MindV3.BELIEF_SEMANTICS : ""} No markdown, commentary, hidden reasoning, or extra fields.` },
+            { role: "system", content: `You are giving exactly one RPG character a private post-timelapse reflection after supplied actual events have completed. You cannot act in the world and you do not directly write autobiographical memory or belief text/confidence. Mind v3 derives those separately from committed experience. ${setup.MindV3 ? setup.MindV3.MODEL_OUTPUT_EFFECT_INVARIANT : ""} You may update only relationship summaries that meaningfully changed and report which existing beliefs became materially salient because of NEW events in this completed timelapse. FRESH-ACTIVATION CONTRACT: reading, recalling, or merely seeing an existing belief in the supplied belief table is NOT activation evidence. Compatibility between an existing belief and supplied context is NOT fresh salience. Do NOT iterate through the belief table looking for beliefs that fit the events. activatedBeliefIds must be sparse and event-driven: include only supplied belief IDs that the new timelapse events actually brought into focus or materially engaged during this reflection. It is valid and often preferable for activatedBeliefIds to be empty. relationshipsToUpsert is delta-only: if a supplied current relationship summary would remain materially unchanged after normalization, omit that relationship entirely. Do not echo a relationship merely because it remained important or relevant; unmentioned relationships remain unchanged automatically. Ground relationship targetCharacterId in supplied canonical IDs, never an invented display-name ID. Preserve epistemic provenance and do not invent physical events, permissions, statements, intentions, or mechanical results. Return exactly one object with the single key memoryUpdates. memoryUpdates must contain exactly relationshipsToUpsert and activatedBeliefIds. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. activatedBeliefIds may contain only existing supplied belief IDs. Example empty response: ${reflectionContract()}. ${setup.MindV3 ? setup.MindV3.BELIEF_SEMANTICS : ""} No markdown, commentary, hidden reasoning, or extra fields.` },
             { role: "user", content: JSON.stringify({
                 stage: "timelapse-reflection",
                 context: context,
@@ -563,10 +498,10 @@
             profile: "reflection",
             requestOptions: setup.AIRequestProfiles.resolve("reflection", { actorId: characterId }),
             client: client,
-            validate: function (value) { return validateMemoryUpdates(value, allowedRelationshipTargetIds); }
+            validate: function (value) { return validateMemoryUpdates(value, allowedRelationshipTargetIds, existingRelationships, existingBeliefIds); }
         });
         if (result && result.ok) return result;
-        return salvageReflectionAfterFailedRepair(result, allowedRelationshipTargetIds) || result;
+        return salvageReflectionAfterFailedRepair(result, allowedRelationshipTargetIds, existingRelationships, existingBeliefIds) || result;
     }
 
     function consumeCurrentObservations(characterId, observationIds) {

@@ -186,6 +186,7 @@
             }
         };
         installGeneratedData(world);
+        synchronizeDerivedItemPlacement(world);
         const validation = validateWorld(world);
         if (!validation.ok) {
             throw new Error(validation.error.message);
@@ -285,6 +286,32 @@
         return ok({ characterId: characterId });
     }
 
+    function clearSchedulerInbox(characterId, world) {
+        const character = getCharacter(characterId, world);
+        if (character && character.mind && Array.isArray(character.mind.pendingObservations)) character.mind.pendingObservations = [];
+        ensureAIState(world);
+        world.ai.turnQueue = world.ai.turnQueue.filter(function (entry) {
+            return (typeof entry === "string" ? entry : entry && entry.characterId) !== characterId;
+        });
+    }
+
+    function enqueueControllerTransition(characterId, reason, world) {
+        const character = getCharacter(characterId, world);
+        if (!character || world.control.assignments[characterId] !== "ai" || !character.mind) return;
+        if (!Array.isArray(character.mind.pendingObservations)) character.mind.pendingObservations = [];
+        const record = {
+            id: world.nextObservationId++,
+            kind: "controller_transition",
+            turn: Number.isInteger(world.nextEventId) ? world.nextEventId : 1,
+            actorId: characterId,
+            targetId: characterId,
+            text: "Human control was released. Reassess the current situation and resume acting autonomously.",
+            code: reason || "released_from_human"
+        };
+        character.mind.pendingObservations.push(record);
+        enqueueAITurn(characterId, reason || "released_from_human", world);
+    }
+
     function ensureAIState(world) {
         if (!world.ai || typeof world.ai !== "object" || Array.isArray(world.ai)) world.ai = {};
         if (!Array.isArray(world.ai.turnQueue)) world.ai.turnQueue = [];
@@ -346,137 +373,14 @@
         return entity && entity.type === "location" ? entity : null;
     }
 
-    function locationExitEntries(location) {
-        return Object.entries(location && location.exits || {}).map(function (entry) {
-            const key = entry[0];
-            const raw = entry[1];
-            if (typeof raw === "string") {
-                return {
-                    key: key,
-                    destinationId: raw,
-                    blocked: false,
-                    blockedReason: "",
-                    lockId: "",
-                    locked: false,
-                    lockedReason: ""
-                };
-            }
-            if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-                return {
-                    key: key,
-                    destinationId: typeof raw.destinationId === "string" ? raw.destinationId : "",
-                    blocked: raw.blocked === true,
-                    blockedReason: typeof raw.blockedReason === "string" ? raw.blockedReason : "",
-                    lockId: typeof raw.lockId === "string" ? raw.lockId : "",
-                    locked: raw.locked === true,
-                    lockedReason: typeof raw.lockedReason === "string" ? raw.lockedReason : ""
-                };
-            }
-            return {
-                key: key,
-                destinationId: "",
-                blocked: false,
-                blockedReason: "",
-                lockId: "",
-                locked: false,
-                lockedReason: ""
-            };
-        });
-    }
-
-    function findLocationExit(location, destinationId) {
-        return locationExitEntries(location).find(function (entry) {
-            return entry.destinationId === destinationId;
-        }) || null;
-    }
-
-    function matchingKeyItems(actor, lockId, world) {
-        const inventory = actor && world.inventories[actor.inventoryId];
-        if (!inventory || !lockId) return [];
-        return inventory.itemIds.map(function (itemId) {
-            return world.entities[itemId];
-        }).filter(function (item) {
-            const definition = getItemDefinition(item, world);
-            return Boolean(definition && definition.keyLockId === lockId);
-        });
-    }
-
-    function reciprocalTransition(sourceLocationId, transition, world) {
-        const destination = transition && getLocation(transition.destinationId, world);
-        return destination ? findLocationExit(destination, sourceLocationId) : null;
-    }
-
-    function lockActionOptions(actor, world, expectedLockedState) {
-        const location = getLocation(actor.locationId, world);
-        const passages = locationExitEntries(location).map(function (transition) {
-            if (!transition.lockId || transition.locked !== expectedLockedState) return null;
-            const keys = matchingKeyItems(actor, transition.lockId, world);
-            if (keys.length === 0) return null;
-            const destination = getLocation(transition.destinationId, world);
-            return {
-                id: transition.destinationId,
-                name: destination ? destination.name : transition.destinationId,
-                lock_id: transition.lockId,
-                key_item_ids: keys.map(function (item) { return item.id; })
-            };
-        }).filter(Boolean);
-        return {
-            destination_ids: passages.map(function (passage) { return passage.id; }),
-            passages: passages
-        };
-    }
-
-    function validateLockAction(actor, action, world, expectedLockedState) {
-        const location = getLocation(actor.locationId, world);
-        const destination = getLocation(action.destination_id, world);
-        if (!destination) return fail("DESTINATION_NOT_FOUND", "Destination does not exist.");
-        const transition = findLocationExit(location, destination.id);
-        if (!transition) return fail("DESTINATION_NOT_REACHABLE", "Destination is not connected to the current location.");
-        if (!transition.lockId) return fail("PASSAGE_NOT_LOCKABLE", "This passage has no lock.");
-        if (transition.locked !== expectedLockedState) {
-            return fail(
-                expectedLockedState ? "PASSAGE_ALREADY_UNLOCKED" : "PASSAGE_ALREADY_LOCKED",
-                expectedLockedState ? "This passage is already unlocked." : "This passage is already locked."
-            );
-        }
-        if (matchingKeyItems(actor, transition.lockId, world).length === 0) {
-            return fail("MATCHING_KEY_REQUIRED", "Actor does not possess a key for this lock.");
-        }
-        const reciprocal = reciprocalTransition(location.id, transition, world);
-        if (!reciprocal || reciprocal.lockId !== transition.lockId || reciprocal.locked !== transition.locked) {
-            return fail("PASSAGE_LOCK_STATE_INVALID", "The reciprocal side of this lock is inconsistent.");
-        }
-        return ok({ transition: transition });
-    }
-
-    function setPassageLocked(sourceLocationId, destinationId, locked, world) {
-        const source = getLocation(sourceLocationId, world);
-        const transition = findLocationExit(source, destinationId);
-        const destination = transition && getLocation(transition.destinationId, world);
-        const reciprocal = transition && reciprocalTransition(sourceLocationId, transition, world);
-        if (!source || !transition || !destination || !reciprocal || !transition.lockId ||
-                reciprocal.lockId !== transition.lockId) {
-            throw new Error("Cannot update an inconsistent passage lock.");
-        }
-
-        function update(location, entry) {
-            const raw = location.exits[entry.key];
-            const record = raw && typeof raw === "object" && !Array.isArray(raw)
-                ? raw
-                : { destinationId: entry.destinationId };
-            record.destinationId = entry.destinationId;
-            record.lockId = entry.lockId;
-            record.locked = Boolean(locked);
-            if (!Object.prototype.hasOwnProperty.call(record, "lockedReason")) {
-                record.lockedReason = entry.lockedReason || "The door is locked.";
-            }
-            location.exits[entry.key] = record;
-        }
-
-        update(source, transition);
-        update(destination, reciprocal);
-        return transition;
-    }
+    function passageDeps() { return { getLocation:getLocation, getItemDefinition:getItemDefinition, fail:fail, ok:ok }; }
+    function locationExitEntries(location) { return setup.PassageRules.locationExitEntries(location); }
+    function findLocationExit(location, destinationId) { return setup.PassageRules.findLocationExit(location, destinationId); }
+    function matchingKeyItems(actor, lockId, world) { return setup.PassageRules.matchingKeyItems(actor, lockId, world, getItemDefinition); }
+    function reciprocalTransition(sourceLocationId, transition, world) { return setup.PassageRules.reciprocalTransition(sourceLocationId, transition, world, getLocation); }
+    function lockActionOptions(actor, world, expectedLockedState) { return setup.PassageRules.lockActionOptions(actor, world, expectedLockedState, passageDeps()); }
+    function validateLockAction(actor, action, world, expectedLockedState) { return setup.PassageRules.validateLockAction(actor, action, world, expectedLockedState, passageDeps()); }
+    function setPassageLocked(sourceLocationId, destinationId, locked, world) { return setup.PassageRules.setPassageLocked(sourceLocationId, destinationId, locked, world, passageDeps()); }
 
     function getSublocation(sublocationId, world) {
         const entity = world.entities[sublocationId];
@@ -693,6 +597,10 @@
         return validateControlAssignments(assignments, world);
     }
 
+    function synchronizeDerivedItemPlacement(world) {
+        return setup.WorldDerivedState.synchronizeItemPlacement(world);
+    }
+
     function validateItemInvariants(world) {
         const itemMembership = {};
         const equipmentMembership = {};
@@ -792,9 +700,7 @@
             if (!getItemDefinition(entity, world)) return fail("ITEM_DEFINITION_MISSING", `Item ${entity.id} references missing definition ${entity.definitionId}.`);
             const placedIn = itemMembership[entity.id] || equipmentMembership[entity.id];
             if (!placedIn) return fail("ITEM_CONTAINER_MISSING", `Item ${entity.id} does not have a canonical physical placement.`);
-            // Inventory/equipment membership is canonical. containerId is a derived compatibility/cache field
-            // and must never make an otherwise valid saved placement unloadable.
-            entity.containerId = placedIn;
+            // Inventory/equipment membership is canonical. containerId is derived and synchronized separately.
             if (entity.abstractStudyProgressByCharacterId !== undefined) {
                 const progressByReader = entity.abstractStudyProgressByCharacterId;
                 if (!progressByReader || typeof progressByReader !== "object" || Array.isArray(progressByReader)) return fail("ITEM_STUDY_PROGRESS_INVALID", `Item ${entity.id} has invalid abstract-study reader progress.`);
@@ -987,7 +893,11 @@
             const memoryIds = new Set();
             for (const partition of ["shortTermMemories", "longTermMemories"]) {
                 for (const memory of character.mind[partition]) {
-                    const recordValidation = setup.MindValidators.validateMemoryRecord(memory);
+                    const recordValidation = setup.MindValidators.validateMemoryRecord(memory, {
+                        maxSummaryLength: partition === "shortTermMemories"
+                            ? setup.MindV3.CONFIG.STM_SUMMARY_MAX_CHARS
+                            : setup.MindV3.CONFIG.LTM_SUMMARY_MAX_CHARS
+                    });
                     if (!recordValidation.ok || memoryIds.has(memory.id)) return fail("CHARACTER_MIND_INVALID", `Character ${character.id} contains an invalid or duplicate memory.`);
                     memoryIds.add(memory.id);
                 }
@@ -1189,6 +1099,14 @@
         });
         getCharacters(world).forEach(function (character) {
             character.recentDialogue = setup.MindValidators.sanitizeRecentDialogue(character.recentDialogue, world);
+            ["shortTermMemories", "longTermMemories"].forEach(function (partition) {
+                (character.mind && character.mind[partition] || []).forEach(function (memory) {
+                    if (memory.retrievalBrief === undefined || memory.retrievalBrief === null) memory.retrievalBrief = "";
+                });
+            });
+            if (world.control.assignments[character.id] !== "ai" && character.mind && Array.isArray(character.mind.pendingObservations) && character.mind.pendingObservations.length) {
+                character.mind.pendingObservations = [];
+            }
             if (setup.AIMemory && typeof setup.AIMemory.ensureRuntimeMindFields === "function") setup.AIMemory.ensureRuntimeMindFields(character);
             if (setup.AIMemory && typeof setup.AIMemory.sanitizeMaintenanceSnapshots === "function") {
                 character.mindMaintenanceSnapshots = setup.AIMemory.sanitizeMaintenanceSnapshots(character.mindMaintenanceSnapshots);
@@ -1203,6 +1121,7 @@
         if (typeof world.ai.inferenceSessionId !== "string" || !world.ai.inferenceSessionId.trim()) {
             world.ai.inferenceSessionId = createInferenceSessionId();
         }
+        synchronizeDerivedItemPlacement(world);
         repairAIQueue(world);
         return world;
     }
@@ -1264,9 +1183,12 @@
         }
 
         world.control.assignments = candidate;
-        if (previousHumanId !== target.id && candidate[previousHumanId] === "ai") {
-            enqueueAITurn(previousHumanId, "released_from_human", world);
+        clearSchedulerInbox(target.id, world);
+        if (previousHumanId !== target.id) {
+            clearSchedulerInbox(previousHumanId, world);
+            if (candidate[previousHumanId] === "ai") enqueueControllerTransition(previousHumanId, "released_from_human", world);
         }
+        repairAIQueue(world);
         pushDebugLog(world, {
             controllerId: "human",
             actorId: target.id,
@@ -1314,6 +1236,8 @@
         }
 
         world.control.assignments = candidate;
+        if (controllerId !== "ai") clearSchedulerInbox(characterId, world);
+        repairAIQueue(world);
         return ok({ characterId: characterId, controllerId: controllerId });
     }
 
@@ -3270,6 +3194,7 @@
         canAccessInventory: canAccessInventory,
         actorDirectlyCarriesItem: actorDirectlyCarriesItem,
         positionText: positionText,
+        synchronizeDerivedItemPlacement: synchronizeDerivedItemPlacement,
         validateWorld: validateWorld,
         validateControlAssignments: validateControlAssignments,
         repairControlInvariant: repairControlInvariant,

@@ -78,13 +78,13 @@ Mind v3 does not attempt to:
 
 ## 3.1 Pending observations
 
-`mind.pendingObservations` remains the authoritative inbox of stimuli that have not yet been processed through the normal AI reaction flow.
+`mind.pendingObservations` is the authoritative **AI-scheduler inbox** of stimuli that have not yet been processed through the normal AI reaction flow.
 
-Pending observations are **not autobiographical memory**.
+Pending observations are **not autobiographical memory**. They are runtime/scheduler state and must not be used as a substitute for verbatim remembered experience.
 
-They are runtime/scheduler state and must not be used as a substitute for verbatim remembered experience.
+Only AI-controlled characters retain delivered observations in this inbox. Human- and Dummy-controlled characters still receive committed experience through the normal perception/verbatim path, but do not retain scheduler pending observations. Switching a character away from AI clears its scheduler inbox; switching a former Human character back to AI starts from a clean inbox plus any new controller-transition observation rather than replaying historical Human experience. Save migration normalizes stale non-AI pending backlogs away.
 
-A pending observation becomes eligible for verbatim memory only after the corresponding event/experience has actually been committed and delivered to the character as an experienced observation.
+Verbatim eligibility is based on actual committed/delivered experience, not on whether a scheduler pending record exists.
 
 ---
 
@@ -243,13 +243,15 @@ Where:
 - `summary` is the autobiographical memory content;
 - `importance` is optional/configurable metadata used primarily for later LTM selection.
 
+STM and LTM now share the same canonical **4000-character per-record summary boundary**. The Utility model may still prefer concise STM summaries at or below **2000 characters** when practical, but that is a preferred STM target rather than a hard boundary. Record capacity no longer defines the difference between STM and LTM: STM optimizes for high-fidelity preservation, while LTM is a subtractive transformation that intentionally removes low-value detail while preserving durable significance. Do not truncate an accepted memory automatically merely because it moved to LTM.
+
 Do not use the topic string as identity.
 
-## 5.3 Upsert behavior
+## 5.3 Upsert and semantic repartition
 
-STM consolidation must prefer updating an existing topic over creating duplicates.
+STM consolidation should prefer updating an existing matching topic **only while the old and new evidence still form one coherent bounded memory record**. It must not force all evidence about a broad or continuing scene into one giant thematic STM.
 
-Example:
+Example of an ordinary bounded upsert:
 
 ```text
 Existing STM:
@@ -259,18 +261,52 @@ New observations:
 more foam-technique jokes and message-fee jokes
 
 Desired result:
-update existing STM topic
-
-Undesired result:
-create foam_jokes_2, foam_jokes_3, etc.
+update the same coherent STM
 ```
+
+If one STM becomes too broad, contains separable subthemes, or cannot absorb relevant new evidence while preserving useful detail within 4000 characters, the model may explicitly **semantically repartition** one or more existing unprotected STM records into multiple replacement records.
+
+Conceptually:
+
+```text
+existing STM A + new evidence
+→ STM B + STM C + STM D
+```
+
+The operation is model-owned semantically but engine-owned structurally:
+
+- `sourceStmIds` names the existing STM record(s) being reorganized;
+- `replacementRecords` collectively represent the source material after reorganization;
+- meaningful information from the source STM and newly consumed eviction evidence should be preserved across the replacement set;
+- topical/subtopical boundaries are chosen by the model, not by character count, midpoint, event count, or arbitrary `part 1 / part 2` chunking;
+- do not split a coherent bounded memory merely to create smaller records;
+- normal STM creation remains appropriate for a genuinely new topic that does not reorganize an existing STM.
+
+A replacement record normally omits `id`, and the engine allocates a new canonical memory ID at serialized commit time from the then-current global allocator. At most one replacement record within one repartition may retain one of that operation's source STM IDs when it is a clear continuation of that source topic. The model never invents canonical memory IDs.
+
+Repartition is atomic. The validator requires existing unique source IDs, a non-empty valid replacement set, no protected source, no overlap between repartitions, and no source that is simultaneously a normal STM upsert target. Every replacement summary independently obeys the 4000-character hard limit and every retrieval brief independently obeys its 600-character limit. If validation, stale checking, candidate validation, or commit fails, source STM and verbatim eviction evidence remain intact.
+
+The existing STM write-set budget remains authoritative: every normal upsert, normal add, and every resulting repartition replacement record counts as one memory write toward `STM_WRITE_SET_LIMIT`. Repartition introduces no separate low global STM-count cap.
 
 The model is explicitly given existing STM and instructed to:
 
-- update a matching thematic memory when possible;
-- add a new STM only for genuinely distinct material;
-- preserve important nuance from the eviction set;
+- update a matching thematic memory when it remains coherent and bounded;
+- add a new STM for genuinely distinct material;
+- repartition an oversized or semantically over-broad STM instead of deleting useful detail to make one record fit;
+- preserve important nuance from the eviction set and source STM across the resulting records;
 - use retained verbatim observations as interpretive context.
+
+## 5.4 Retrieval metadata
+
+STM and LTM records persist a compact derived index field:
+
+```js
+retrievalBrief
+```
+
+`topic` plus `retrievalBrief` are used by ordinary-turn semantic preflight retrieval. `summary` remains the canonical autobiographical content and is never replaced by the brief. Retrieval metadata is not evidence, belief, relationship state, or character consciousness.
+
+New or materially updated STM/LTM should update the brief together with the memory. STM, LTM, and ambient brief backfill use one shared retrieval-brief contract and validator. `retrievalBrief` has a hard limit of **600 characters** and should normally be substantially shorter. It is compact retrieval metadata, not a second summary: describe the memory's main subject and when/why it may matter for retrieval; do not retell the event sequence or duplicate the full summary. Older compatible records normalize missing briefs to the empty string. Empty briefs are valid in canonical memory: semantic retrieval can still use the topic alone. During normal maintenance opportunities an independent Utility-model recovery job backfills **all currently empty** STM/LTM briefs using the same shared guidance. That job may write only the brief field, is stale-checked against unchanged topic/summary, creates no full mind recovery snapshot, and never blocks or invalidates autobiographical maintenance or gameplay. Briefs persist through saves and portable-mind transfer.
 
 ---
 
@@ -611,11 +647,11 @@ Instead:
 
 Long-term memory answers:
 
-> **What from my remembered experience remains durably important?**
+> **What from my remembered experience remains important enough that I should still know it after the source STM is gone?**
 
-LTM is thematic and intentionally lossy.
+LTM is thematic, durable, and intentionally **subtractive**. STM preserves recent experience with high fidelity; STM→LTM deliberately removes low-value information while retaining the most significant durable facts.
 
-It should preserve:
+It should preserve, when significant:
 
 - durable relationship history;
 - major discoveries;
@@ -624,61 +660,106 @@ It should preserve:
 - important changes in understanding;
 - emotionally significant episodes;
 - recurring patterns;
-- information likely to affect future decisions or identity.
+- identity-relevant biography;
+- information likely to affect future decisions.
 
-It may discard:
+It may intentionally discard:
 
-- exact chronology;
 - routine detail;
-- repeated wording;
-- low-value action-by-action sequences;
-- details that no longer matter to the character.
+- repetitive wording or banter;
+- transient logistics;
+- low-value action-by-action sequencing;
+- details whose later loss would not materially damage autobiographical understanding.
+
+There is **no fixed compression ratio**. The appropriate degree of subtraction is model-owned: a highly significant STM may retain most of its semantic content, while a routine/repetitive STM may retain little.
+
+LTM and STM share the same **4000-character summary hard boundary**. This is a per-record capacity limit, not a target length or cognitive compression policy. If several distinct durable themes deserve preservation, prefer several coherent LTM records over discarding significant facts merely to keep one record small or minimize record count. Semantic fan-out may be `one STM -> many LTM`, `many STM -> one LTM`, or `many STM -> many LTM`. Do not mechanically split by size or arbitrary `part 1 / part 2` chronology.
 
 ## 12.2 STM → LTM consolidation
 
-This occurs during timelapse mind maintenance or explicit manual maintenance.
+This occurs during timelapse mind maintenance or explicit manual maintenance. The model may see the complete current STM and existing LTM needed to recognize autobiographical context. Its primary retention question is: **if the source STM were deleted forever after this successful commit, which facts would be important for the character to still remember?**
 
-Input includes:
+There is no arbitrary per-pass count limit on justified LTM writes or STM retirement, and the model must not optimize for the minimum number of LTM records. Additional semantically precise records are acceptable because ordinary gameplay uses semantic preflight over `topic + retrievalBrief` before fetching full summaries. Higher-order belief output is not count-targeted: it remains governed by the fresh-evidence contract below and should be sparse, usually empty. Transport uses a dedicated large Utility completion allowance; output size is not itself a cognitive policy.
 
-- relevant/current STM;
-- existing LTM;
-- beliefs with confidence/activation;
-- relationships;
-- character identity;
-- shared belief semantics block.
+Every material LTM write carries machine-readable provenance:
 
-The model may:
+```js
+{
+  id?,
+  ref?,
+  topic,
+  summary,
+  retrievalBrief,
+  importance,
+  sourceStmIds: [],
+  sourceLtmIds: []
+}
+```
 
-- upsert existing LTM topics;
-- add genuinely new durable LTM topics;
-- identify higher-order belief implications;
-- mark STM content as safely represented in LTM according to the chosen STM retention policy.
+At least one meaningful source is required. For an upsert, citing only the target LTM itself is insufficient; self-reference may accompany new STM evidence or another distinct LTM, but cannot justify cosmetic retopicing/rephrasing by itself. New LTM may use a response-local `ref` so retirement coverage can refer to the not-yet-engine-assigned record; this ref never persists in canonical mind state.
 
-The exact STM deletion/retention policy after LTM consolidation may remain compatible with existing bounded maintenance behavior, but no memory may be removed before a validated successful commit.
+STM retirement is selective and evidence-driven rather than count-driven. A pass returns grouped retirement instructions:
+
+```js
+retirementGroups: [
+  {
+    disposition: "represented",
+    stmIds: ["..."],
+    representedByLtmRefs: ["existing-or-new-ref"]
+  },
+  {
+    disposition: "safe_to_forget",
+    reason: "routine" | "redundant" | "transient",
+    stmIds: ["..."]
+  }
+]
+```
+
+A group may contain any number of STM records. `represented` means the **significant durable content that deserves to survive** is represented by one or more resulting LTM records; it does not require preserving every minor STM detail because LTM is intentionally subtractive. `safe_to_forget` is intentional forgetting of non-protected material with no unique durable value. Unique promises, boundaries, secrets, important biography, meaningful relationship changes, unresolved goals/conflicts, discoveries, defining episodes and consequential causal facts should be represented rather than casually forgotten. STM omitted from all validated groups remains in STM. Protected-memory semantics remain authoritative.
+
+The engine validates source IDs, response-local refs, coverage uniqueness, forgetting reason codes, protected-memory rules, candidate state and stale sources before one atomic commit. Failed/truncated/invalid LTM work retires nothing. No second semantic audit/repair pass is required merely to judge information preservation; the single consolidation response must provide provenance and retirement justification itself.
+
+## 12.3 Model Output Must Have Effect during memory consolidation
+
+Mind v3 follows the project-wide **Model Output Must Have Effect** invariant. The model may inspect all supplied STM/LTM as context without returning them. Relevance is not mutation. `shortTermMemoriesToUpsert` and `longTermMemoriesToUpsert` contain only records whose normalized model-writable state actually changes; unchanged records are omitted entirely and remain persistent automatically. A memory's effective writable state for deterministic no-op comparison is its normalized `topic`, `summary`, `importance`, and `retrievalBrief`; engine-owned `protected`/ID state and transient provenance/debug metadata do not create a model-authored effect. Cosmetic paraphrase merely to make an otherwise unnecessary upsert look different is forbidden by prompt contract even where semantic equivalence cannot be proven deterministically.
+
+For LTM specifically, `sourceStmIds`/`sourceLtmIds` are evidence for a real transformation, not an effect by themselves. The model must not return an existing LTM just because current STM is related to it. This prompt-level prevention exists primarily to avoid wasting completion tokens before validation: validators still reject exact normalized no-ops and repair guidance tells the model to remove them instead of inventing cosmetic differences. The dedicated 12000-token LTM ceiling remains a transport safety allowance, not permission to echo the archive, and no arbitrary LTM write-count cap is reintroduced.
+
+STM semantic repartition obeys the same rule. If a replacement retains a source STM ID, that replacement must materially change that source record. When an old STM should remain exactly intact and new evidence belongs in a separate new topic, use normal STM creation instead of routing the unchanged source through repartition.
+
+Relationship summaries in ordinary turns/reflection are also delta-only model upserts: an unchanged normalized relationship summary is omitted. Explicit semantic negative/null decisions remain valid; `action:null`, empty mutation arrays, deliberate no reaction, and LTM `safe_to_forget` are not redundant rewrites merely because they may not create a positive record mutation.
 
 ---
 
 # 13. Belief effects during LTM consolidation
 
-LTM consolidation must **not** simply count all STM content as fresh direct evidence a second time.
+LTM consolidation must **not** count autobiographical material as fresh direct evidence a second time merely because that material is being reread, merged, promoted or compared. Existing STM, existing LTM, relationships and existing beliefs are context. Their presence, retrieval, relevance or consistency is not fresh belief evidence. **Consistency is not new evidence.**
 
-Instead, this stage supports **higher-order induction/reappraisal**.
+The model must not iterate through supplied beliefs looking for beliefs compatible with supplied memories. Existing beliefs are not evidence for themselves, and old memories that already contributed to belief formation/reinforcement do not earn another confidence/activation update simply by being consolidated into LTM.
+
+Instead, this stage supports **sparse higher-order induction/reappraisal**. `higherOrderBeliefEffects` is used only when the current consolidation creates a genuinely new cross-memory inference: combining multiple memories reveals a pattern or implication that is not contained in any constituent memory alone and is not merely a restatement of an existing belief. The field should usually be empty. There is no arbitrary hard count cap; the restriction is semantic rather than numeric.
 
 Examples:
 
-- several individually reinforced events reveal a broader pattern;
-- multiple STM topics jointly imply a new belief;
-- old belief wording becomes too simplistic in light of accumulated experience;
-- an apparent contradiction becomes contextualized.
+- several individually reinforced events jointly reveal a broader pattern not explicit in any one memory;
+- multiple STM/LTM topics jointly imply a new durable interpretation;
+- accumulated experience creates a genuinely new contextualization that was not already represented by the old belief/memories.
 
 Therefore the LTM-stage belief protocol may:
 
-- add a new higher-order belief;
-- propose revision/reframing candidates for reconciliation;
-- activate beliefs made salient by the larger pattern;
-- report strong pattern-level support/contradiction only when the new inference genuinely arises from combining memories rather than merely rereading old evidence.
+- add a genuinely new higher-order belief;
+- activate only beliefs whose salience materially shaped this specific consolidation/inference;
+- report pattern-level support/contradiction only when a genuinely new cross-memory inference exists.
 
-The prompt must explicitly prohibit blindly double-counting previously consolidated events as new evidence.
+`activatedBeliefIds` is likewise sparse. Do not list beliefs merely because they were inspected, appeared in context or were compatible with a memory. An empty activation list is valid and often preferable.
+
+For an **existing** belief, the accepted higher-order effect shape is exactly the same engine-owned evidence protocol used elsewhere:
+
+```js
+{ beliefId, effect: "supports" | "contradicts" | "ambiguous", strength }
+```
+
+The model must not return replacement `newConfidence`, `newActivation`, or equivalent direct numeric state for an existing belief. The engine owns confidence and activation math. Structural validation can verify shape/IDs/numbers, but cannot deterministically prove whether an inference is semantically novel; the fresh-evidence rule is therefore deliberately prompt/contract-first. See `ltm-fresh-evidence-belief-effects-contract.md`.
 
 ---
 
@@ -866,6 +947,8 @@ On successful commit:
 
 If the mind changed incompatibly while the model was working, reject the stale result without partial commit.
 
+For STM repartition, every source STM must still exist and the maintained STM source state must remain compatible with the preparation snapshot. A materially changed source record therefore invalidates the prepared repartition. New global memory-ID allocation by unrelated work is not itself stale: new replacement IDs are allocated only from the live candidate world at serialized commit.
+
 The observations remain available and a later job may retry.
 
 ## 16.6 Canonical priority and preemption
@@ -895,6 +978,14 @@ In-flight auxiliary requests are transient runtime state.
 They are not persisted and are not resurrected after reload.
 
 The source observations/memory remain persisted, so the work simply becomes eligible again.
+
+## 16.8 Persistent recovery snapshots
+
+The transient source snapshot used for stale-safe computation is distinct from persisted developer recovery history. Persist **at most one full mind recovery snapshot per logical maintenance run**: ordinary background STM, forced pre-timelapse STM boundary, post-timelapse maintenance, or manual maintenance. A multi-stage post-timelapse run (`STM → LTM → reconciliation → activation decay`) shares one pre-run recovery snapshot rather than persisting near-identical copies before every stage. Persist lazily only before the first canonical psychological mutation; no-op runs need not add a snapshot. Retrieval-brief-only recovery never creates one. Granular rollback to an internal stage boundary is not a product requirement.
+
+## 16.9 Retrieval-brief recovery
+
+Brief backfill is an independent auxiliary metadata task, not autobiographical consolidation. It finds every STM/LTM whose `retrievalBrief` is empty, asks the Utility model only for `{id,retrievalBrief}` values, stale-checks each result against unchanged topic/summary, and writes only still-empty briefs. Failure is diagnostic-only and does not fail the surrounding maintenance opportunity.
 
 ---
 
@@ -1078,35 +1169,39 @@ When importing an older portable mind, apply the same deterministic v2→v3 migr
 
 # 20. Ordinary character-turn context
 
-Mind v3 should not blindly send the entire mind on every character turn.
+Mind storage may grow independently of ordinary decision-context size. Current configurable budgets remain tuning knobs rather than cognitive laws:
 
-A normal decision context should include:
+```text
+verbatim newest 20
+beliefs up to 16
+STM up to 12
+LTM up to 8
+```
 
-- authored identity/description;
-- current objective view and available actions;
-- current pending observations relevant to the decision;
-- bounded recent dialogue;
-- bounded verbatim recent observations;
-- relevant/high-activation beliefs;
-- current relationship to important present characters;
-- relevant STM topics;
-- a small set of relevant LTM topics.
+Current world/view, available formal actions, prepared pending observations, bounded recent dialogue, bounded recent verbatim, authored known facts and relationships remain ordinary grounded context. Beliefs/STM/LTM are selected through a cheap semantic preflight before the expensive `game-decision`.
 
-Exact retrieval/ranking is a later optimization concern.
+The Utility-model preflight receives only compact runtime context (pending observations, recent dialogue/verbatim, current location/sublocation, present characters, notable visible items/objects, continuation/current intention) plus a compact mind catalog:
 
-Initial implementation may use bounded deterministic selection based on:
+```text
+STM/LTM: id + topic + retrievalBrief
+Beliefs: id + text + confidence + activation
+```
 
-- target/current characters;
-- recency;
-- activation;
-- topic/entity overlap;
-- importance.
+It does **not** receive full STM/LTM summaries or the formal action catalog. Its only output is:
 
-The structural requirement is that high-activation beliefs receive more interpretive weight than dormant beliefs, while dormant high-confidence beliefs remain available when directly relevant.
+```json
+{ "beliefIds": [], "stmIds": [], "ltmIds": [] }
+```
+
+The selector may return fewer than the configured maxima. Semantic relevance is primary; activation/confidence are secondary signals. The engine then fetches the full canonical selected records for the Character-model decision.
+
+Preflight is Phase-1 ordinary-turn retrieval only; timelapse planning/reflection continue using their current context paths. Semantic selection is a tolerant read-path: after JSON parsing, the engine removes unknown IDs, IDs returned in the wrong mind layer, duplicates and non-string values, then truncates each ordered selection to the configured budget. Any remaining valid semantic selection — including a valid empty selection — is used directly. This sanitation never mutates mind state and diagnostics record dropped/trimmed IDs. Deterministic fallback is reserved for genuine selector failure such as transport/timeout failure, malformed/unparseable JSON, or missing required selection arrays; selector parse/truncation failure does not trigger an extra model repair request. Occasional autobiographical retrieval misses are acceptable; canonical world truth is never supplied through this recall mechanism.
 
 ---
 
 # 21. Memory and belief commit safety
+
+Canonical model writes remain strict, but STM ingress may discard explicitly known engine-owned echo fields before validation. In particular, a model-returned `protected` field is ignored rather than treated as an instruction: canonical protection remains engine-owned, protected STM still cannot be rewritten, and unrelated unknown fields still fail the exact STM write schema. This prevents harmless context echo from causing an otherwise unnecessary full repair request without weakening protected-memory safety.
 
 All model-produced mind mutations must use candidate-clone validation before commit.
 
@@ -1196,6 +1291,10 @@ The following are defaults, not core semantics:
 ```text
 VERBATIM_RETAIN_COUNT = 20
 STM_TRIGGER_COUNT = 40        // consolidation eligible when count > 40
+STM_SUMMARY_PREFERRED_MAX_CHARS = 2000
+STM_SUMMARY_MAX_CHARS = 4000      // per-record boundary; semantic repartition handles over-broad STM
+STM_WRITE_SET_LIMIT = 8           // normal writes + every repartition replacement record
+LTM_SUMMARY_MAX_CHARS = 4000      // same per-record capacity as STM; LTM differs by subtractive semantics
 MIGRATED_BELIEF_ACTIVATION = 0.5
 NEW_BELIEF_ACTIVATION = implementation default, medium-high
 BELIEF_CONFIDENCE_MIN = 0.001
@@ -1548,3 +1647,11 @@ Mind v3 should follow these principles:
 10. **Migration preserves the person before beautifying the data.** Existing developed minds must survive the architecture change with minimal reinterpretation.
 11. **Structure over tuning.** The system should behave sensibly because its information flow is correct, not because dozens of thresholds were hand-tuned around pathological feedback loops.
 
+
+## LTM semantic preflight and fresh reflection activation
+
+Historical LTM is treated as a searchable archive during STM→LTM consolidation. A read-only high-recall preflight sees all source STM in full and all historical LTM only through compact retrieval metadata (`id`, `topic`, `retrievalBrief`, `importance`, minimal protection metadata), while retaining the complete belief/relationship significance context. It returns only existing `relevantLtmIds` and has no arbitrary selection count cap. The main subtractive consolidation then sees all source STM in full again and only the selected historical LTM bodies in full. Unselected existing LTM cannot be upserted or cited as historical provenance in that proposal; new LTM creation is unaffected.
+
+The preflight is snapshot-bound. Failure or material staleness before the main consolidation request preserves canonical mind state and leaves source STM available for a future pass.
+
+Timelapse reflection follows the same fresh-evidence philosophy for activation: belief-table visibility or compatibility is not fresh salience. `activatedBeliefIds` is a sparse event-driven channel for beliefs actually brought into focus by newly completed timelapse events; empty is valid. Deterministic array/ID validation remains defense in depth.

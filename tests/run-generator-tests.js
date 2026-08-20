@@ -6,8 +6,37 @@ const path = require("path");
 const childProcess = require("child_process");
 const root = path.resolve(__dirname, "..");
 const source = JSON.parse(fs.readFileSync(path.join(root, "data/world.json"), "utf8"));
+const activeReadme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+const activeStory = fs.readFileSync(path.join(root, "src/story.twee"), "utf8");
+const activeUi = fs.readFileSync(path.join(root, "src/30-game-ui.js"), "utf8");
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function assert(condition, message) { if (!condition) throw new Error(message); }
+assert(activeReadme.includes("AI RPG Framework MVP") && !activeReadme.includes("AI RPG Framework POC"),
+    "active product terminology must use MVP rather than POC");
+assert(/^:: StoryTitle\s*\nAI RPG Framework MVP\s*$/m.test(activeStory),
+    "current SugarCube StoryTitle/save identity must be MVP");
+assert(activeUi.includes('PRODUCT_DISPLAY_NAME = "AI RPG Framework MVP"'),
+    "runtime display identity must use the MVP product name independently of the stable SugarCube save identity");
+const productTitlePostprocess = fs.readFileSync(path.join(root, "tools/postprocess-product-title.js"), "utf8");
+const windowsBuildSource = fs.readFileSync(path.join(root, "build.bat"), "utf8");
+assert(/postprocess-product-title\.js/i.test(windowsBuildSource),
+    "Windows build.bat must apply the same MVP/save-compatibility postprocess as build.sh after Tweego rebuilds dist/game.html");
+assert(productTitlePostprocess.includes('AI RPG Framework MVP') && productTitlePostprocess.includes('ai-rpg-framework-poc'),
+    "build postprocessing must keep MVP as the current identity while accepting the legacy POC save ID on load");
+const postprocessModule = require(path.join(root, "tools/postprocess-product-title.js"));
+const sugarCubeFixture = '<title>Old</title>...if(save.id!==Config.saves.id)throw new Error(L10n.get("saveErrorIdMismatch"));...';
+const patchedSugarCubeFixture = postprocessModule.postprocessHtml(sugarCubeFixture);
+assert(patchedSugarCubeFixture.includes('<title>AI RPG Framework MVP</title>') &&
+    patchedSugarCubeFixture.includes('save.id!==Config.saves.id&&save.id!=="ai-rpg-framework-poc"'),
+    "MVP build postprocessing should accept POC save payloads while preserving the current MVP save ID guard");
+assert(activeUi.includes("Remember for 7 days") && activeUi.includes("Key saved for 7 days.") && !activeUi.includes("Remember for 24 hours"),
+    "current UI must describe the seven-day persisted API-key retention period");
+const fallbackBuilderSource = fs.readFileSync(path.join(root, "tools/build-from-existing-runtime.js"), "utf8");
+assert(fallbackBuilderSource.includes("embedded story-name bootstrap") && fallbackBuilderSource.includes("generateName"),
+    "fallback build must rewrite SugarCube's embedded story-name bootstrap when StoryTitle changes");
+assert(postprocessModule.postprocessHtml(patchedSugarCubeFixture) === patchedSugarCubeFixture,
+    "legacy save-ID postprocessing should be idempotent when fallback builds reuse an already-patched SugarCube runtime");
+
 function rejects(mutator, expected) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ai-rpg-generator-"));
     try {

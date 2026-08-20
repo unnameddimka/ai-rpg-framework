@@ -205,10 +205,15 @@
         inFlight = true;
         setup.AITransientDebug.lastSafeError = "";
         try {
-            const request = setup.AITurnScheduler.buildDecisionRequest(actorId);
+            const request = setup.AITurnScheduler.buildDecisionRequest(actorId, { skipContext: true });
             if (!request.ok) throw request.error;
-            const context = clone(request.context);
-            const messages = clone(request.messages);
+            const retrieval = setup.MindSemanticRetrieval
+                ? await setup.MindSemanticRetrieval.select(actorId, request.observations, client || setup.OpenRouterClient)
+                : { ok: true, selection: setup.CharacterContext.selectMindDeterministically(actorId, request.observations), fallbackUsed: true };
+            if (!retrieval.ok) throw retrieval.error;
+            const context = setup.ContextBuilder.build(actorId, { pendingObservations: request.observations, mindSelection: retrieval.selection });
+            if (context && context.ok === false) throw context.error;
+            const messages = setup.AIProtocol.decisionMessages(context);
             const observationIds = clone(request.observationIds);
             setup.AITransientDebug.lastContext = clone(context);
             setup.AITransientDebug.lastMessages = clone(messages);
@@ -235,7 +240,8 @@
                 narrativeText: committed.narrativeText,
                 narrativeSuppressed: committed.narrativeSuppressed,
                 memorySuppressed: committed.memorySuppressed,
-                usage: decisionResult.usage || null
+                usage: decisionResult.usage || null,
+                retrieval: { semantic: retrieval.semantic === true, fallbackUsed: retrieval.fallbackUsed === true, selectorUsage: retrieval.selectorResult && retrieval.selectorResult.usage || null }
             };
         } catch (error) {
             State.variables.world = JSON.parse(before);

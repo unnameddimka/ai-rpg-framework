@@ -34,7 +34,7 @@
     function isNonBlockingPurpose(purpose) {
         return purpose === "presentation-location" || purpose === "presentation-tick" ||
             purpose === "daytime-hunting-narration" || purpose === "weather-narration" ||
-            purpose === "mind-background";
+            purpose === "mind-background" || purpose === "mind-retrieval-brief-backfill";
     }
 
     function isOptionalPresentationPurpose(purpose) {

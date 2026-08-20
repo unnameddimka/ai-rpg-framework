@@ -91,7 +91,7 @@
         const files = {};
         const manifest = {
             schema: "ai-rpg.emergency-dump",
-            version: 3,
+            version: 4,
             exportedAt: exportedAt,
             application: "AI RPG Framework",
             documentTitle: typeof document !== "undefined" ? document.title : "",
@@ -150,6 +150,40 @@
             });
             return { characters: characters };
         });
+        section("recovery-points.json", function () {
+            const world = typeof State !== "undefined" && State.variables && State.variables.world;
+            const points = [];
+            Object.keys(world && world.entities || {}).forEach(function (id) {
+                const entity = world.entities[id];
+                if (!entity || entity.type !== "character" || !Array.isArray(entity.mindMaintenanceSnapshots)) return;
+                entity.mindMaintenanceSnapshots.forEach(function (snapshot, index) {
+                    points.push({
+                        type: "mind-maintenance-snapshot",
+                        characterId: id,
+                        index: index,
+                        turn: Number.isFinite(snapshot && snapshot.turn) ? snapshot.turn : null,
+                        trigger: snapshot && snapshot.trigger || null
+                    });
+                });
+            });
+            return {
+                current: {
+                    passage: typeof State !== "undefined" ? State.passage : null,
+                    activeIndex: typeof State !== "undefined" ? State.activeIndex : null,
+                    turn: world && Number.isFinite(world.turn) ? world.turn : null,
+                    timePhase: world && world.environment && world.environment.timePhase || null,
+                    nextEventId: world && world.nextEventId || null,
+                    nextIntentId: world && world.nextIntentId || null
+                },
+                mindSnapshots: points
+            };
+        });
+        section("mind-retrieval-runtime.json", function () {
+            return {
+                selectorDiagnostics: setup.MindSemanticRetrieval && setup.MindSemanticRetrieval.getDiagnostics ? setup.MindSemanticRetrieval.getDiagnostics() : null,
+                briefBackfillDiagnostics: setup.RetrievalBriefBackfill && setup.RetrievalBriefBackfill.getStatus ? setup.RetrievalBriefBackfill.getStatus() : null
+            };
+        });
         section("scheduler-state.json", function () {
             const world = typeof State !== "undefined" && State.variables && State.variables.world;
             const pendingObservations = {};
@@ -172,11 +206,6 @@
             return setup.AIRequestExecutor && setup.AIRequestExecutor.getExchangeHistory
                 ? setup.AIRequestExecutor.getExchangeHistory()
                 : null;
-        });
-        section("ai-exchange-log.json", function () {
-            if (!setup.PromptLab || typeof setup.PromptLab.buildExchangeLog !== "function") return null;
-            const result = setup.PromptLab.buildExchangeLog();
-            return result && result.ok ? result.data : { available: false, error: result && result.error || null };
         });
         section("ai-transport-log.json", function () {
             return setup.RuntimeDiagnostics && typeof setup.RuntimeDiagnostics.getAITransportLog === "function"

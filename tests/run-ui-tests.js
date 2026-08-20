@@ -5,6 +5,7 @@ const path = require("path");
 const vm = require("vm");
 const root = path.resolve(__dirname, "..");
 const uiSource = fs.readFileSync(path.join(root, "src/30-game-ui.js"), "utf8");
+const debugUIFormatterSource = fs.readFileSync(path.join(root, "src/29-debug-ui-formatters.js"), "utf8");
 const narratorSource = fs.readFileSync(path.join(root, "src/26-presentation-narrator.js"), "utf8");
 const stylesSource = fs.readFileSync(path.join(root, "src/styles.css"), "utf8");
 let historyOnSave = null;
@@ -22,6 +23,7 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(narratorSource, context, { filename: "26-presentation-narrator.js" });
+vm.runInContext(debugUIFormatterSource, context, { filename: "29-debug-ui-formatters.js" });
 vm.runInContext(uiSource, context, { filename: "30-game-ui.js" });
 const model = context.setup.AbilityUIModel;
 const promptLabModel = context.setup.PromptLabUIModel;
@@ -348,7 +350,7 @@ assert(uiSource.includes("Download AI log") && uiSource.includes("Import AI log"
     uiSource.includes("Replay recorded exchange") && uiSource.includes('accept="application/json,.json"') &&
     uiSource.includes("API keys and authorization headers are excluded") &&
     uiSource.includes("complete browser-visible OpenRouter HTTP error details") &&
-    uiSource.includes("OpenRouter HTTP response"),
+    debugUIFormatterSource.includes("OpenRouter HTTP response"),
     "the sphere should expose safe JSON download, import, and offline replay controls");
 const escapedTrace = promptLabModel.traceMarkup({ trace: { attempts: [{
     attempt: 1,
@@ -406,7 +408,7 @@ assert(!escapedQueue.includes("<img") && escapedQueue.includes("&lt;img") &&
     escapedQueue.includes("NEXT REQUEST") && escapedQueue.includes("Recipient") &&
     escapedQueue.includes("&lt;unsafe observation&gt;"),
     "prompt-lab queue cards should identify the next recipient/event and escape authored or model-adjacent text");
-assert(uiSource.includes("<dt>Initiative</dt>") && uiSource.includes("Initiative: ${escapeHtml(aiQueue.head.initiativeScore || 0)}"),
+assert(debugUIFormatterSource.includes("<dt>Initiative</dt>") && uiSource.includes("Initiative: ${escapeHtml(aiQueue.head.initiativeScore || 0)}"),
     "debug queue UIs should expose the derived initiative score used for next-reaction ordering");
 
 assert(typeof historyOnSave === "function" && typeof historyOnLoad === "function",

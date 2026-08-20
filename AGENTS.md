@@ -31,8 +31,8 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 ## 3. Canonical view and AI context
 
 - Ordinary HumanController and AIController use the same canonical restricted character `view` for public/operational truth.
-- AI ordinary-decision context may add private identity instructions, private mind state, continuation, prepared pending observations, and bounded engine-owned recent dialogue, but must not create an alternate public world projection.
-- Recipient `pendingObservations` are the authoritative reaction inbox. Event-journal recipient/processed metadata is diagnostic/history bookkeeping and must not become a second eligibility queue.
+- AI ordinary-decision context may add private identity instructions, private mind state, continuation, prepared pending observations, and bounded engine-owned recent dialogue, but must not create an alternate public world projection. Beliefs/STM/LTM are selected by cheap semantic preflight within the configured 16/12/8 budgets; selector failure must fall back to deterministic bounded retrieval rather than fail the turn. STM/LTM preflight catalogs expose only `id/topic/retrievalBrief`, never full summaries.
+- `pendingObservations` are strictly the authoritative **AI scheduler** reaction inbox. Human/Dummy recipients still gain committed verbatim experience but must not retain scheduler pending records; controller switching/migration clear stale non-AI backlogs. Event-journal recipient/processed metadata is diagnostic/history bookkeeping and must not become a second eligibility queue.
 - Model-facing observations must be compact recipient-safe projections; never leak event routing/scheduler/provider metadata such as `recipients`, `pendingFor`, `processedBy`, controller IDs, or provider diagnostics.
 - Do not duplicate large data already present in the view under aliases.
 - Maintenance workflows (timelapse planning, reflection, consolidation, narrator work) are not ordinary controller decisions and may use purpose-specific compact contexts. Reflection must reuse the ordinary grounded AI-visible character projection for relevant nearby character identity (`id`, display name, visible description) instead of reconstructing canonical IDs from prose; do not expose an omniscient world roster solely for ID lookup.
@@ -73,7 +73,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 
 - Canonical global environment state owns coarse `timePhase` and saved `weatherNarrative`. Ordinary ticks never advance time automatically; only valid coarse-time entry points change phase.
 - Day-work offers are AI-owned formal actions. A pending offer pauses the current causal reaction wave until Human accepts/declines; resume must preserve the one-reaction-per-Human-tick invariant.
-- Emergency Dump is a cross-cutting UI escape hatch and must remain directly usable even while gameplay/modal/AI/timelapse/migration UI is blocked. One dump must include the portable Sphere/AI exchange log, low-level AI transport history, framework-owned external network history, latest weather-pipeline diagnostics, plus the most recent handled timelapse result/failure stage so failures do not require a second export.
+- Emergency Dump is a cross-cutting UI escape hatch and must remain directly usable even while gameplay/modal/AI/timelapse/migration UI is blocked. It must preserve enough canonical/SugarCube/mind/recovery-point state to reconstruct represented save points and enough complete request/response + transport/network/protocol metadata to diagnose failures. Full diagnostic payloads should exist once; remove duplication that serves neither recovery nor diagnosis.
 
 ## 7. AI request architecture
 
@@ -163,18 +163,32 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Current internal split:
   - `07-mind-v3.js`: centralized Mind v3 constants, belief semantics, confidence/activation math;
   - `08-mind-validators.js`: shared mind/dialogue record validation;
-  - `10-game-api.js`: deterministic facade/actions/world helpers;
+  - `09-passage-rules.js`: extracted passage/lock parsing, key matching, lock validation and reciprocal lock mutation;
+  - `09-world-derived-state.js`: derived item-placement synchronization;
+  - `10-game-api.js`: stable deterministic facade/actions/world helpers;
   - `11-save-migration.js`: save reconciliation and deterministic v2->v3 migration;
-  - `12-character-context.js`: restricted views and bounded Mind v3 selection;
+  - `12-character-context.js`: restricted views, deterministic fallback selection, retrieval runtime projection;
   - `13-character-memory.js`: mind/continuation/portable-mind helpers;
   - `13-verbatim-memory.js`: compact committed-experience capture;
   - `14-event-perception.js`: event routing, perception, observations, dialogue projection;
   - `15-ai-admin.js`: safe AI-activity cleanup;
-  - `24-memory-consolidator.js`: STM/LTM/belief reconciliation candidate validation + atomic commit;
-  - `24-mind-aux-executor.js`: transient per-character background mind jobs and stale/preemption gating.
+  - `23-structured-ai-request.js`: shared structured JSON request/repair lifecycle;
+  - `23-mind-consolidation-protocols.js`: Mind v3 protocol prompts/normalization/validation;
+  - `24-memory-consolidator.js`: logical maintenance orchestration and atomic commits;
+  - `24-mind-semantic-retrieval.js`: cheap ordinary-turn semantic selector with fallback;
+  - `24-retrieval-brief-backfill.js`: independent ambient brief recovery;
+  - `24-mind-aux-executor.js`: transient per-character background mind jobs and stale/preemption gating;
+  - `29-debug-ui-formatters.js`: extracted debug/Prompt Lab formatting.
 - Preserve stable IDs, JSON field names, save compatibility, event order, and available-action shapes during structural refactors.
 
-## 14. Validation before completion
+## 14. Sensitive-content engineering
+
+- Existing game/save/dump data may contain explicit material. Treat it as domain data: preserve canonical content faithfully during migration, validation, storage, diffing, recovery and testing.
+- Engineering/psychological/narrative analysis may use such material as evidence for non-explicit concepts such as attraction, intimacy, trust, boundaries, attachment, jealousy and fear.
+- Developer-facing explanations should prefer neutral semantic labels/IDs when exact explicit wording is unnecessary. Do not censor or rewrite canonical state merely to make diagnostics less explicit.
+- Synthetic regression fixtures should prefer neutral content unless exact source text is technically necessary to reproduce a parser/protocol bug.
+
+## 15. Validation before completion
 
 For any implementation patch:
 

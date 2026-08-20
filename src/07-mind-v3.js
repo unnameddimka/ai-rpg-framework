@@ -22,6 +22,9 @@
         NORMAL_CONTEXT_STM_LIMIT: 12,
         NORMAL_CONTEXT_LTM_LIMIT: 8,
         STM_WRITE_SET_LIMIT: 8,
+        STM_SUMMARY_PREFERRED_MAX_CHARS: 2000,
+        STM_SUMMARY_MAX_CHARS: 4000,
+        LTM_SUMMARY_MAX_CHARS: 4000,
         STM_BELIEF_EFFECT_LIMIT: 12,
         STM_NEW_BELIEF_LIMIT: 4,
         STM_ACTIVATED_BELIEF_LIMIT: 12,
@@ -38,6 +41,15 @@
         "activation is a number strictly between 0 and 1 describing how psychologically salient, accessible, and influential the belief currently is.",
         "Highly activated beliefs should receive more weight in current interpretation and attention, while a dormant high-confidence belief can still matter when directly relevant.",
         "Beliefs may bias how new experience is interpreted, but a belief is never evidence for itself. New remembered evidence may support, contradict, or reshape beliefs."
+    ].join(" ");
+
+    const MODEL_OUTPUT_EFFECT_INVARIANT = [
+        "MODEL OUTPUT MUST HAVE EFFECT: structured mutation output represents actual changes, not relevance or records merely considered as context.",
+        "Do not return an upsert merely because an existing record was relevant, retrieved, inspected, or used in reasoning.",
+        "Every upsert must materially change model-writable state after protocol normalization; if the effective state would remain unchanged, omit that upsert entirely.",
+        "Unmentioned existing records remain unchanged automatically, so never echo unchanged records just to preserve them.",
+        "Engine-owned fields, provenance/debug metadata, cosmetic rewording, or equivalent normalized representations do not justify an otherwise no-op upsert.",
+        "Explicit protocol-level null or negative decisions remain valid when the decision itself is the semantic result of the invocation."
     ].join(" ");
 
     function clamp(value, min, max) {
@@ -96,6 +108,7 @@
     setup.MindV3 = {
         CONFIG: CONFIG,
         BELIEF_SEMANTICS: BELIEF_SEMANTICS,
+        MODEL_OUTPUT_EFFECT_INVARIANT: MODEL_OUTPUT_EFFECT_INVARIANT,
         normalizeConfidence: normalizeConfidence,
         normalizeActivation: normalizeActivation,
         updateConfidence: updateConfidence,

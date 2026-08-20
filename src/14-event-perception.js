@@ -112,9 +112,11 @@
         const recipient = getCharacter(recipientId, world);
         if (!recipient) return null;
         const record = Object.assign({ id: world.nextObservationId++ }, clone(observation));
-        recipient.mind.pendingObservations.push(record);
         if (setup.VerbatimMemory) setup.VerbatimMemory.appendFromObservation(recipientId, record, world);
-        if (world.control.assignments[recipientId] === "ai") I.enqueueAITurn(recipientId, observation.kind || "observation", world);
+        if (world.control.assignments[recipientId] === "ai") {
+            recipient.mind.pendingObservations.push(record);
+            I.enqueueAITurn(recipientId, observation.kind || "observation", world);
+        }
         return record;
     }
 

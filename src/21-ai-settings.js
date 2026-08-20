@@ -5,7 +5,7 @@
     const MODEL_STORAGE_KEY = "aiRpg.openRouterModel.v1";
     const NARRATOR_MODEL_STORAGE_KEY = "aiRpg.openRouterNarratorModel.v1";
     const UTILITY_MODEL_STORAGE_KEY = "aiRpg.openRouterUtilityModel.v1";
-    const TTL_MS = 24 * 60 * 60 * 1000;
+    const TTL_MS = 7 * 24 * 60 * 60 * 1000;
     const catalog = setup.GeneratedModelList;
     if (!catalog || !Array.isArray(catalog.models) || !catalog.models.length) {
         throw new Error("Generated model list is missing or empty.");

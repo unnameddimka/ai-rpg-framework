@@ -29,14 +29,6 @@ if not defined TWEEGO_PATH if exist "%LOCALAPPDATA%\Tweego\storyformats" (
     set "TWEEGO_PATH=%LOCALAPPDATA%\Tweego\storyformats"
 )
 
-echo Generating model list...
-"%NODE_EXE%" tools\generate-model-list.js
-if errorlevel 1 exit /b 1
-
-echo Generating world data...
-"%NODE_EXE%" tools\generate-world-data.js
-if errorlevel 1 exit /b 1
-
 if not exist dist mkdir dist
 
 echo Running JavaScript tests...
@@ -45,6 +37,10 @@ if errorlevel 1 exit /b 1
 
 echo Building dist\game.html...
 "%TWEEGO_EXE%" -o dist\game.html src
+if errorlevel 1 exit /b 1
+
+echo Applying product/save compatibility postprocess...
+"%NODE_EXE%" tools\postprocess-product-title.js
 if errorlevel 1 exit /b 1
 
 echo Build complete: dist\game.html

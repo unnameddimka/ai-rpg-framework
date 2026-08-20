@@ -35,13 +35,13 @@ function queueHooded() {
     return world;
 }
 
-load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/10-game-api.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
 load("src/14-event-perception.js"); load("src/17-runtime-diagnostics.js"); load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
-load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/24-ai-request-executor.js"); load("src/24-item-model-effects.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
+load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/23-structured-ai-request.js"); load("src/24-ai-request-executor.js"); load("src/24-item-model-effects.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js"); load("src/24-prompt-lab.js"); load("src/25-turn-flow.js");
 
 async function main() {
     setup.Game.resetWorld();
@@ -231,11 +231,18 @@ async function main() {
     ok(setup.AIRuntimeSettings.save(sentinel, false, storage, 1000), "memory-only key save");
     assert(!storageData[setup.AIRuntimeSettings.STORAGE_KEY], "memory-only mode should not persist key");
     const remembered = setup.AIRuntimeSettings.save(sentinel, true, storage, 1000);
-    assert(remembered.expiresAt === 1000 + setup.AIRuntimeSettings.TTL_MS, "remembered key should expire exactly after 24 hours");
+    assert(setup.AIRuntimeSettings.TTL_MS === 7 * 24 * 60 * 60 * 1000, "API key TTL must be exactly seven 24-hour days");
+    assert(remembered.expiresAt === 1000 + setup.AIRuntimeSettings.TTL_MS, "remembered key should expire exactly after seven days");
     setup.AIRuntimeSettings.readSaved(storage, 1001);
     assert(setup.AIRuntimeSettings.getKey() === sentinel, "unexpired saved key should restore to transient memory");
     setup.AIRuntimeSettings.forget(storage);
-    assert(!setup.AIRuntimeSettings.hasKey() && !storageData[setup.AIRuntimeSettings.STORAGE_KEY], "forget should clear in-memory and persisted key stores");
+    storageData[setup.AIRuntimeSettings.STORAGE_KEY] = JSON.stringify({ apiKey: sentinel, expiresAt: 1000 + setup.AIRuntimeSettings.TTL_MS });
+    setup.AIRuntimeSettings.readSaved(storage, 1000 + setup.AIRuntimeSettings.TTL_MS - 1);
+    assert(setup.AIRuntimeSettings.getKey() === sentinel, "persisted key should still restore one millisecond before the seven-day TTL boundary");
+    setup.AIRuntimeSettings.forget(storage);
+    storageData[setup.AIRuntimeSettings.STORAGE_KEY] = JSON.stringify({ apiKey: sentinel, expiresAt: 1000 + setup.AIRuntimeSettings.TTL_MS });
+    setup.AIRuntimeSettings.readSaved(storage, 1000 + setup.AIRuntimeSettings.TTL_MS);
+    assert(!setup.AIRuntimeSettings.hasKey() && !storageData[setup.AIRuntimeSettings.STORAGE_KEY], "persisted key must expire exactly at the seven-day TTL boundary and must not be silently reused");
     storageData[setup.AIRuntimeSettings.STORAGE_KEY] = JSON.stringify({ apiKey: sentinel, expiresAt: 2 });
     setup.AIRuntimeSettings.readSaved(storage, 3);
     assert(!setup.AIRuntimeSettings.hasKey() && !storageData[setup.AIRuntimeSettings.STORAGE_KEY], "expired key should be deleted");
@@ -352,6 +359,12 @@ async function main() {
         itemUtilityProfile.reasoningEffort === "none" && itemUtilityProfile.maxTokens === 1800 &&
         itemUtilityProfile.temperature === 0.55 && itemUtilityProfile.sessionId.includes("hoodedWoman"),
         "authored item utility queries should use the Utility model with bounded no-reasoning output and actor-scoped sticky routing");
+    const ltmMaintenanceProfile = setup.AIRequestProfiles.resolve("mind-v3-ltm", { actorId: "hoodedWoman" });
+    const ltmPreflightProfile = setup.AIRequestProfiles.resolve("mind-v3-ltm-preflight", { actorId: "hoodedWoman" });
+    const ordinaryDecisionProfile = setup.AIRequestProfiles.resolve("game-decision", { actorId: "hoodedWoman" });
+    assert(ltmMaintenanceProfile.timeoutMs === 300000 &&
+        ltmPreflightProfile.timeoutMs === undefined && ordinaryDecisionProfile.timeoutMs === undefined,
+        "only the expensive Stage 2 Mind v3 LTM consolidation profile should extend the transport timeout to 300 seconds; preflight and ordinary gameplay keep the shared 180-second default");
     await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "profiled" }], utilityProfile, fetchOk);
     const profiledBody = JSON.parse(captured.options.body);
     assert(profiledBody.model === setup.AIRuntimeSettings.getSelectedUtilityModelId() &&
@@ -389,6 +402,7 @@ async function main() {
         queryActionResult.feedback.length === 0,
         "generic utility_query item use should defer model content rather than pretending the synchronous engine generated it");
     const beforeQueryObservationCount = world.entities.player.mind.pendingObservations.length;
+    const beforeQueryVerbatimCount = world.entities.player.mind.verbatimObservations.length;
     const utilityResolverResult = await setup.ItemModelEffects.resolveActionResult("player", queryActionResult, {
         enforceRequestTiming: false,
         chat: async function (messages, requestOptions) {
@@ -403,9 +417,11 @@ async function main() {
     });
     assert(utilityResolverResult.ok && queryActionResult.feedback.some(function (entry) {
         return entry.code === "ITEM_UTILITY_QUERY_RESULT" && entry.text.includes("A concise test-source result.");
-    }) && world.entities.player.mind.pendingObservations.length === beforeQueryObservationCount + 1 &&
-        world.entities.player.mind.pendingObservations[world.entities.player.mind.pendingObservations.length - 1].code === "ITEM_UTILITY_QUERY_RESULT",
-        "resolved generic Utility item content should become private grounded action feedback/observation for the reader without creating a public actor");
+    }) && world.entities.player.mind.pendingObservations.length === beforeQueryObservationCount &&
+        world.entities.player.mind.verbatimObservations.length === beforeQueryVerbatimCount + 1 &&
+        world.entities.player.mind.verbatimObservations[world.entities.player.mind.verbatimObservations.length - 1].kind === "action_feedback" &&
+        world.entities.player.mind.verbatimObservations[world.entities.player.mind.verbatimObservations.length - 1].text.includes("A concise test-source result"),
+        "resolved generic Utility item content should become private grounded experienced feedback without accumulating a Human scheduler inbox");
     async function statusFetch(status) { return { ok: false, status: status, json: async function () { return {}; } }; }
     for (const pair of [[401,"AUTHENTICATION_FAILED"],[402,"INSUFFICIENT_CREDITS"],[429,"RATE_LIMITED"],[503,"PROVIDER_UNAVAILABLE"]]) {
         const result = await setup.OpenRouterClient.chat([], function () { return statusFetch(pair[0]); });
@@ -518,8 +534,11 @@ async function main() {
         decisionPrompt.includes("Autobiographical memory and belief confidence are maintained by Mind v3 consolidation") &&
         decisionPrompt.includes("Do not fabricate persistent memory updates inside an ordinary decision") &&
         decisionPrompt.includes("Relationship updates may summarize genuinely changed social understanding") &&
+        decisionPrompt.includes("relationshipsToUpsert is delta-only") &&
+        decisionPrompt.includes("MODEL OUTPUT MUST HAVE EFFECT") &&
+        decisionPrompt.includes("Do not return an upsert merely because an existing record was relevant") &&
         decisionPrompt.includes("activatedBeliefIds may mark beliefs that were actually salient"),
-        "decision prompt should preserve social identity while routing autobiography/belief confidence through Mind v3 rather than ordinary-turn mutation");
+        "decision prompt should preserve social identity while routing autobiography/belief confidence through Mind v3 and forbidding useless relationship echoes before generation");
     assert(decisionPrompt.includes("spokenLoudness is per utterance, not persistent state") &&
         decisionPrompt.includes('must be "noticeable" or "hidden"') &&
         decisionPrompt.includes("Choose spokenLoudness structurally for this utterance") &&
@@ -640,6 +659,11 @@ async function main() {
     assert(setup.AIProtocol.validateDecision(decisionFixture({ action: { type: "move", destination_id: "bar" }, publicNarrative: "She starts walking.", spokenText: "Come on.",
         memoryUpdates: { relationshipsToUpsert: [{ targetCharacterId: "player", summary: "The Traveler is accompanying me." }], activatedBeliefIds: [] } }), available).ok,
         "one response may combine narrative, one formal action, and bounded relationship/salience updates");
+    const existingRelationshipContext=[{targetCharacterId:"player",summary:"The Traveler is accompanying me."}];
+    const unchangedRelationshipDecision=setup.AIProtocol.validateDecision(decisionFixture({ action:null, publicNarrative:null, spokenText:null, memoryUpdates:{relationshipsToUpsert:[{targetCharacterId:"player",summary:"  The Traveler is accompanying me.  "}],activatedBeliefIds:[]} }),available,[],[],existingRelationshipContext);
+    const changedRelationshipDecision=setup.AIProtocol.validateDecision(decisionFixture({ action:null, publicNarrative:null, spokenText:null, memoryUpdates:{relationshipsToUpsert:[{targetCharacterId:"player",summary:"The Traveler is accompanying me and I now trust them with a private concern."}],activatedBeliefIds:[]} }),available,[],[],existingRelationshipContext);
+    assert(!unchangedRelationshipDecision.ok&&unchangedRelationshipDecision.errors.some(e=>e.includes("has no effect after normalization"))&&changedRelationshipDecision.ok,"relationship upserts must be rejected when normalized model-writable state is unchanged while genuine changes remain valid");
+    assert(setup.AIProtocol.validateDecision(decisionFixture({action:null,publicNarrative:null,spokenText:null,memoryUpdates:emptyUpdates()}),available,[],[],existingRelationshipContext).ok,"an explicit action:null with an empty mutation set remains a valid semantic decision under the effect invariant");
     assert(setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Mara?", spokenTargetId: "hoodedWoman", spokenLoudness: "noticeable", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
         !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: "Who are you?", spokenTargetId: "missing", spokenLoudness: "noticeable", continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok &&
         !setup.AIProtocol.validateDecision({ action: null, publicNarrative: null, spokenText: null, spokenTargetId: "hoodedWoman", spokenLoudness: null, continuation: null, memoryUpdates: emptyUpdates() }, available, ["hoodedWoman"]).ok,
@@ -682,6 +706,22 @@ async function main() {
 
     assert(!setup.AIProtocol.validateDecision(decisionFixture({ action: null, publicNarrative: null, spokenText: null, memoryUpdates: emptyUpdates(), chainOfThought: "secret" }), available).ok,
         "chain-of-thought or arbitrary protocol fields should be rejected");
+    const relationshipValidationMessages=setup.AIProtocol.decisionMessages({
+        schemaVersion:1,
+        view:{available_actions:available,location:{characters:[{id:"player",name:"Traveler"}]}},
+        character:{aiDescription:"Test actor"},
+        mind:{knownFacts:[],beliefs:[],relationships:[{targetCharacterId:"player",summary:"Existing stable relationship."}],shortTermMemories:[],longTermMemories:[]},
+        continuation:null,pendingObservations:[]
+    });
+    let relationshipRepairCalls=0; let relationshipRepairMessages=null;
+    const relationshipRepairClient={chat:async function(messages){
+        relationshipRepairCalls++; relationshipRepairMessages=messages;
+        return relationshipRepairCalls===1
+            ? response({action:null,publicNarrative:null,spokenText:null,memoryUpdates:{relationshipsToUpsert:[{targetCharacterId:"player",summary:"Existing stable relationship."}],activatedBeliefIds:[]}})
+            : response({action:null,publicNarrative:null,spokenText:null,memoryUpdates:emptyUpdates()});
+    }};
+    const relationshipRepaired=await setup.AIProtocol.requestValidated(relationshipValidationMessages,"decision",relationshipRepairClient);
+    assert(relationshipRepaired.ok&&relationshipRepairCalls===2&&relationshipRepairMessages.some(m=>m.role==="user"&&m.content.includes("has no effect after normalization")&&m.content.includes("remove it rather than inventing cosmetic wording")),"ordinary-turn no-op relationship output must reach repair with explicit omission guidance instead of being committed or cosmetically rewritten");
     let repairCalls = 0;
     let repairMessages = null;
     const repairClient = { chat: async function (messages) {

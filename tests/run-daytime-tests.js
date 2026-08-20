@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const root = path.resolve(__dirname, "..");
+const runtimeFiles = require("./runtime-files");
 
 function memoryStorage() {
     const values = new Map();
@@ -19,7 +20,7 @@ function load(file) { vm.runInThisContext(fs.readFileSync(path.join(root,file),"
 function assert(value,message){ if(!value) throw new Error(message); }
 function ok(result,message){ assert(result&&result.ok, `${message}: ${JSON.stringify(result)}`); return result; }
 function emptyUpdates(){ return { relationshipsToUpsert:[], activatedBeliefIds:[] }; }
-function emptyStmResult(){ return { shortTermMemoriesToUpsert:[], shortTermMemoriesToAdd:[], beliefEffects:[], beliefsToAdd:[], activatedBeliefIds:[] }; }
+function emptyStmResult(){ return { shortTermMemoriesToUpsert:[], shortTermMemoriesToAdd:[], stmRepartitions:[], beliefEffects:[], beliefsToAdd:[], activatedBeliefIds:[] }; }
 function emptyLtmResult(){ return { longTermMemoriesToUpsert:[], longTermMemoriesToAdd:[], retirementGroups:[], higherOrderBeliefEffects:[], beliefsToAdd:[], activatedBeliefIds:[] }; }
 function mindProtocolResponse(messages){
     const user=String(messages&&messages[1]&&messages[1].content||"");
@@ -31,12 +32,12 @@ function mindProtocolResponse(messages){
     return null;
 }
 
-[
+runtimeFiles.augment([
 "src/00-model-list.js","src/generated/world-data.js","src/07-mind-v3.js","src/08-mind-validators.js","src/10-game-api.js","src/11-save-migration.js",
 "src/12-character-context.js","src/13-character-memory.js","src/13-verbatim-memory.js","src/14-event-perception.js","src/17-runtime-diagnostics.js","src/21-ai-settings.js","src/21-ai-request-profiles.js",
 "src/22-openrouter-client.js","src/23-ai-protocol.js","src/23-world-environment.js","src/24-ai-request-executor.js","src/24-ai-turn-scheduler.js",
 "src/20-controllers.js","src/24-memory-consolidator.js","src/24-mind-aux-executor.js","src/24-timelapse-core.js","src/24-daytime-timelapse.js","src/24-night-timelapse.js","src/25-turn-flow.js"
-].forEach(load);
+]).forEach(load);
 
 setup.AIRuntimeSettings.save("sk-or-v1-test-daytime-key-1234567890", false, storage, Date.now());
 

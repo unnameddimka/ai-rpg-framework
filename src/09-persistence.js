@@ -1,6 +1,54 @@
 (function () {
     "use strict";
 
+    const CURRENT_SAVE_STORAGE_ID = "ai-rpg-framework-mvp";
+    const LEGACY_SAVE_STORAGE_IDS = ["ai-rpg-framework-poc"];
+    const BROWSER_SAVE_SUBKEY_RE = /^save\.(?:auto|slot)\.(?:data|info):\d+$/;
+
+    function migrateLegacyBrowserSaveNamespace(engine, currentStorageId) {
+        if (!engine || typeof engine.length !== "number" || typeof engine.key !== "function" ||
+            typeof engine.getItem !== "function" || typeof engine.setItem !== "function") {
+            return { copied: 0, skipped: 0 };
+        }
+        const targetId = String(currentStorageId || "");
+        if (targetId !== CURRENT_SAVE_STORAGE_ID) return { copied: 0, skipped: 0 };
+
+        const keys = [];
+        for (let index = 0; index < engine.length; index += 1) {
+            const key = engine.key(index);
+            if (typeof key === "string") keys.push(key);
+        }
+
+        let copied = 0;
+        let skipped = 0;
+        LEGACY_SAVE_STORAGE_IDS.forEach(function (legacyId) {
+            const prefix = `${legacyId}.`;
+            keys.forEach(function (sourceKey) {
+                if (!sourceKey.startsWith(prefix)) return;
+                const subkey = sourceKey.slice(prefix.length);
+                if (!BROWSER_SAVE_SUBKEY_RE.test(subkey)) return;
+                const targetKey = `${CURRENT_SAVE_STORAGE_ID}.${subkey}`;
+                if (engine.getItem(targetKey) !== null) {
+                    skipped += 1;
+                    return;
+                }
+                const raw = engine.getItem(sourceKey);
+                if (raw === null) return;
+                engine.setItem(targetKey, raw);
+                copied += 1;
+            });
+        });
+        return { copied: copied, skipped: skipped };
+    }
+
+    function migrateLegacyBrowserSavesAtStartup() {
+        if (typeof storage === "undefined" || !storage || storage.name !== "localStorage" ||
+            typeof window === "undefined" || !window.localStorage) {
+            return { copied: 0, skipped: 0 };
+        }
+        return migrateLegacyBrowserSaveNamespace(window.localStorage, storage.id);
+    }
+
     function cloneSerializable(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
     }
@@ -47,9 +95,14 @@
     }
 
     setup.Persistence = {
+        CURRENT_SAVE_STORAGE_ID: CURRENT_SAVE_STORAGE_ID,
+        LEGACY_SAVE_STORAGE_IDS: LEGACY_SAVE_STORAGE_IDS.slice(),
         synchronizeSaveObject: synchronizeSaveObject,
-        registerSaveSynchronizationHook: registerSaveSynchronizationHook
+        registerSaveSynchronizationHook: registerSaveSynchronizationHook,
+        migrateLegacyBrowserSaveNamespace: migrateLegacyBrowserSaveNamespace,
+        migrateLegacyBrowserSavesAtStartup: migrateLegacyBrowserSavesAtStartup
     };
 
+    migrateLegacyBrowserSavesAtStartup();
     registerSaveSynchronizationHook();
 }());

@@ -16,6 +16,7 @@
     const getSublocation = I.getSublocation;
     const locationExitEntries = I.locationExitEntries;
     const validateWorld = I.validateWorld;
+    const synchronizeDerivedItemPlacement = I.synchronizeDerivedItemPlacement;
     const validateControlAssignments = I.validateControlAssignments;
     const repairControlInvariant = I.repairControlInvariant;
     const currentAuthoringRevision = I.currentAuthoringRevision;
@@ -98,16 +99,20 @@
             Array.isArray(sourceMind.longTermMemories) && Array.isArray(sourceMind.verbatimObservations);
         if (isV3) {
             const beliefs = clone(sourceMind.beliefs);
-            const shortTermMemories = clone(sourceMind.shortTermMemories);
-            const longTermMemories = clone(sourceMind.longTermMemories);
+            const shortTermMemories = clone(sourceMind.shortTermMemories).map(function (record) { if (record.retrievalBrief === undefined) record.retrievalBrief = ""; return record; });
+            const longTermMemories = clone(sourceMind.longTermMemories).map(function (record) { if (record.retrievalBrief === undefined) record.retrievalBrief = ""; return record; });
             const verbatimObservations = clone(sourceMind.verbatimObservations);
             beliefs.forEach(function (record) {
                 const validation = setup.MindValidators.validateBeliefRecord(record, { maxTextLength: 2000 });
                 if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 belief: ${validation.error.message}`);
             });
-            shortTermMemories.concat(longTermMemories).forEach(function (record) {
-                const validation = setup.MindValidators.validateMemoryRecord(record, { maxSummaryLength: 2000 });
-                if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 memory: ${validation.error.message}`);
+            shortTermMemories.forEach(function (record) {
+                const validation = setup.MindValidators.validateMemoryRecord(record, { maxSummaryLength: setup.MindV3.CONFIG.STM_SUMMARY_MAX_CHARS });
+                if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 STM: ${validation.error.message}`);
+            });
+            longTermMemories.forEach(function (record) {
+                const validation = setup.MindValidators.validateMemoryRecord(record, { maxSummaryLength: setup.MindV3.CONFIG.LTM_SUMMARY_MAX_CHARS });
+                if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 LTM: ${validation.error.message}`);
             });
             verbatimObservations.forEach(function (record) {
                 const validation = setup.MindValidators.validateVerbatimObservation(record);
@@ -325,6 +330,7 @@
         getCharacters(candidate).forEach(function (character) {
             const savedCharacter = savedWorld.entities && savedWorld.entities[character.id];
             character.mind.pendingObservations = [];
+            if (candidate.control.assignments[character.id] !== "ai") return;
             if (!savedCharacter || !savedCharacter.mind || !Array.isArray(savedCharacter.mind.pendingObservations)) return;
             savedCharacter.mind.pendingObservations.forEach(function (observation) {
                 const copy = sanitizeSavedObservation(observation, character.id, candidate, preservedEventIds, seenObservationIds, report);
@@ -715,6 +721,7 @@
             restoreSavedPassageLocks(candidate, source, report);
             restoreRuntimeJournal(candidate, source, report);
             reconstructPersistentCounters(candidate, source);
+            synchronizeDerivedItemPlacement(candidate);
             const validation = validateWorld(candidate);
             if (!validation.ok) throw new Error(validation.error.message);
 

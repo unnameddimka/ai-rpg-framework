@@ -133,7 +133,8 @@
         };
     }
 
-    function buildDecisionRequest(characterId) {
+    function buildDecisionRequest(characterId, options) {
+        options = options && typeof options === "object" ? options : {};
         const world = setup.Game.getWorld();
         const actor = world.entities[characterId];
         if (!actor || actor.type !== "character" || !actor.mind || !Array.isArray(actor.mind.pendingObservations)) {
@@ -145,19 +146,22 @@
         const originalObservations = clone(actor.mind.pendingObservations.slice(0, 50));
         const projectedObservations = setup.EventPerception.projectObservationsForModel(actor.id, originalObservations, world);
         const observations = combineInteractionObservations(projectedObservations, world);
-        const context = setup.ContextBuilder.build(actor.id, { pendingObservations: observations });
-        if (context && context.ok === false) return context;
-        return {
+        const result = {
             ok: true,
             actorId: actor.id,
             actorName: actor.name,
             stage: "decision",
             observations: observations,
             originalObservations: originalObservations,
-            observationIds: originalObservations.map(function (item) { return item.id; }),
-            context: context,
-            messages: setup.AIProtocol.decisionMessages(context)
+            observationIds: originalObservations.map(function (item) { return item.id; })
         };
+        if (options.skipContext !== true) {
+            const context = setup.ContextBuilder.build(actor.id, { pendingObservations: observations });
+            if (context && context.ok === false) return context;
+            result.context = context;
+            result.messages = setup.AIProtocol.decisionMessages(context);
+        }
+        return result;
     }
 
     function initiativeContribution(observation, characterId) {
@@ -284,7 +288,10 @@
         } catch (error) {
             // The setting still applies for the current page when storage is unavailable.
         }
-        return { ok: true, enabled: autoMemoryCompressionEnabled };
+        const scheduledCharacterIds = autoMemoryCompressionEnabled && setup.MindAuxExecutor && typeof setup.MindAuxExecutor.pokeEligible === "function"
+            ? setup.MindAuxExecutor.pokeEligible()
+            : [];
+        return { ok: true, enabled: autoMemoryCompressionEnabled, scheduledCharacterIds: scheduledCharacterIds };
     }
 
     function automaticMemoryCandidates() {

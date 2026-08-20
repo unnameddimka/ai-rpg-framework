@@ -28,7 +28,7 @@ function place(world, itemId, inventoryId) {
 
 load("src/generated/world-data.js");
 load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/10-game-api.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -196,12 +196,10 @@ assert(world.ai.continuations.hoodedWoman === legacy.ai.continuations.hoodedWoma
     "Mara's model-authored continuation should survive migration unchanged");
 assert(world.entities.hoodedWoman.wallet === 19 && world.control.assignments.hoodedWoman === "human" && world.control.assignments.player === "ai",
     "valid saved wallet and HumanController assignment should survive");
-assert(world.entities.hoodedWoman.mind.pendingObservations.some(function (observation) {
-        return observation.id === 777 && observation.kind === "external_story" && observation.data.itemId === "arcaneKnowledgeSlab_01";
-    }) && world.events.some(function (event) { return event.id === 99; }),
-    "compatible runtime observations and event journal state should survive fresh-world migration");
+assert(world.entities.hoodedWoman.mind.pendingObservations.length === 0 && world.events.some(function (event) { return event.id === 99; }),
+    "Human-controlled scheduler inbox backlog should be normalized away while compatible canonical event journal state survives migration");
 assert(!world.ai.turnQueue.some(function (entry) { return entry.characterId === "hoodedWoman"; }),
-    "a restored pending observation must not enqueue a character currently controlled by HumanController");
+    "a Human-controlled character must not be restored into the AI scheduler queue");
 assert(world.nextObservationId >= 778 && world.nextEventId >= 100,
     "migration should preserve/reconstruct runtime observation and event counters beyond injected IDs");
 assert(world.entities.captainPrice.mind.knownFacts.some(function (fact) { return fact.id === "price_lodging"; }) &&
@@ -456,7 +454,8 @@ assert(State.variables.world.entities.innkeeper.mind.relationships.some(function
 const snapshotMigrationWorld = clone(current);
 snapshotMigrationWorld.authoringRevision = "8888888888888888888888888888888888888888888888888888888888888888";
 snapshotMigrationWorld.entities.hoodedWoman.mindMaintenanceState = { reconciliationCursor: { afterBeliefId: "obsolete_v2_cursor" } };
-snapshotMigrationWorld.entities.hoodedWoman.mind.shortTermMemories.push({ id: "memory_ai_777", topic: "Migration sentinel", summary: "A current v3 STM sentinel.", importance: 0.5, protected: false });
+const migrationLongStmSummary = "M".repeat(2800);
+snapshotMigrationWorld.entities.hoodedWoman.mind.shortTermMemories.push({ id: "memory_ai_777", topic: "Migration sentinel", summary: migrationLongStmSummary, importance: 0.5, protected: false });
 snapshotMigrationWorld.entities.hoodedWoman.mindMaintenanceSnapshots = [{
     createdAt: "2026-08-15T18:00:00.000Z",
     turn: 123,
@@ -473,7 +472,7 @@ assert(migratedSnapshotWorld.ok && migratedSnapshotWorld.migrated &&
     State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots.length === 1 &&
     State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots[0].turn === 123 &&
     State.variables.world.entities.hoodedWoman.mindMaintenanceSnapshots[0].trigger === "manual" &&
-    State.variables.world.entities.hoodedWoman.mind.shortTermMemories.some(function (memory) { return memory.id === "memory_ai_777"; }) &&
+    State.variables.world.entities.hoodedWoman.mind.shortTermMemories.some(function (memory) { return memory.id === "memory_ai_777" && memory.summary === migrationLongStmSummary; }) &&
     !Object.prototype.hasOwnProperty.call(State.variables.world.entities.hoodedWoman.mind, "maintenanceArchive") &&
     Object.keys(State.variables.world.entities.hoodedWoman.mindMaintenanceState).length === 0 &&
     State.variables.world.entities.hoodedWoman.mindRevision === 9 &&

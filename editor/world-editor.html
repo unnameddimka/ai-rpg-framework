@@ -33,79 +33,521 @@ label{display:grid;gap:.25rem;font-weight:650}label small,.help{font-weight:400;
   <main class="main"><div id="messages"></div><div id="editor-panel"></div></main>
 </div>
 
+<!-- BEGIN GENERATED AUTHORED VALIDATOR -->
+<script id="world-authored-validator">
+(function (root, factory) {
+    "use strict";
+    const api = factory();
+    if (typeof module !== "undefined" && module.exports) module.exports = api;
+    if (root) root.AIRPGAuthoredValidator = api;
+}(typeof globalThis !== "undefined" ? globalThis : this, function () {
+    "use strict";
+const knownActions = new Set([
+    "move", "move_within_location", "take_item", "drop_item", "give_item",
+    "give_money", "place_item", "fill", "consume", "equip", "unequip", "lock", "unlock", "read_aura", "sleep"
+]);
+const knownEnvironmentCapabilities = new Set(["ale_source"]);
+const knownItemEffects = new Set(["report_memory_counts", "narrative_feedback", "abstract_study", "utility_query"]);
+const knownTimelapseEffects = new Set(["collect_mugs_to_storage"]);
+const controllers = new Set(["human", "dummy", "ai"]);
+
+function requireCondition(condition, message) {
+    if (!condition) {
+        throw new Error(message);
+    }
+}
+
+function isObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nonBlank(value) {
+    return typeof value === "string" && value.trim().length > 0;
+}
+
+function own(object, key) {
+    return isObject(object) && Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function entries(object) {
+    return isObject(object) ? Object.entries(object) : [];
+}
+
+function exitRecord(exitValue) {
+    if (typeof exitValue === "string") {
+        return { destinationId: exitValue, blocked: false, blockedReason: "", lockId: "", locked: false, lockedReason: "" };
+    }
+    if (isObject(exitValue)) {
+        return {
+            destinationId: typeof exitValue.destinationId === "string" ? exitValue.destinationId : "",
+            blocked: exitValue.blocked === true,
+            blockedReason: typeof exitValue.blockedReason === "string" ? exitValue.blockedReason : "",
+            lockId: typeof exitValue.lockId === "string" ? exitValue.lockId : "",
+            locked: exitValue.locked === true,
+            lockedReason: typeof exitValue.lockedReason === "string" ? exitValue.lockedReason : ""
+        };
+    }
+    return { destinationId: "", blocked: false, blockedReason: "", lockId: "", locked: false, lockedReason: "" };
+}
+
+function exitTarget(exitValue) {
+    return exitRecord(exitValue).destinationId;
+}
+
+function registerInventory(owners, id, owner) {
+    requireCondition(nonBlank(id), `${owner} must define an inventory ID.`);
+    if (owners.has(id)) {
+        throw new Error(`Duplicate inventory ID '${id}' is owned by both ${owners.get(id)} and ${owner}.`);
+    }
+    owners.set(id, owner);
+}
+
+function registerTechnicalId(owners, id, owner) {
+    requireCondition(nonBlank(id), `${owner} must define a technical ID.`);
+    if (owners.has(id)) {
+        throw new Error(`Duplicate technical ID '${id}' is used by both ${owners.get(id)} and ${owner}.`);
+    }
+    owners.set(id, owner);
+}
+
+function validateMind(mind, characterId) {
+    requireCondition(isObject(mind), `Character ${characterId} must define initialMind.`);
+    requireCondition(mind.schemaVersion === 3, `Character ${characterId} initialMind.schemaVersion must be 3.`);
+    for (const listName of ["knownFacts", "beliefs", "relationships", "verbatimObservations", "shortTermMemories", "longTermMemories"]) {
+        requireCondition(Array.isArray(mind[listName]), `Character ${characterId} initialMind.${listName} must be an array.`);
+    }
+
+    for (const listName of ["knownFacts", "beliefs", "shortTermMemories", "longTermMemories"]) {
+        const seen = new Set();
+        for (const record of mind[listName]) {
+            const id = record && String(record.id || "");
+            requireCondition(nonBlank(id), `Character ${characterId} ${listName} record needs an ID.`);
+            requireCondition(!seen.has(id), `Character ${characterId} has duplicate ${listName} ID '${id}'.`);
+            seen.add(id);
+        }
+    }
+
+    for (const belief of mind.beliefs) {
+        requireCondition(typeof belief.confidence === "number" && Number.isFinite(belief.confidence) && belief.confidence > 0 && belief.confidence < 1,
+            `Character ${characterId} belief '${belief.id}' has invalid confidence.`);
+        requireCondition(typeof belief.activation === "number" && Number.isFinite(belief.activation) && belief.activation > 0 && belief.activation < 1,
+            `Character ${characterId} belief '${belief.id}' has invalid activation.`);
+    }
+
+    for (const listName of ["shortTermMemories", "longTermMemories"]) {
+        for (const memory of mind[listName]) {
+            requireCondition(nonBlank(memory.topic), `Character ${characterId} memory '${memory.id}' needs a topic.`);
+            requireCondition(typeof memory.importance === "number" && Number.isFinite(memory.importance) && memory.importance >= 0 && memory.importance <= 1,
+                `Character ${characterId} memory '${memory.id}' has invalid importance.`);
+            requireCondition(typeof memory.protected === "boolean", `Character ${characterId} memory '${memory.id}' protected must be Boolean.`);
+            if (Object.prototype.hasOwnProperty.call(memory, "retrievalBrief")) {
+                requireCondition(typeof memory.retrievalBrief === "string" && memory.retrievalBrief.length <= 600,
+                    `Character ${characterId} memory '${memory.id}' retrievalBrief must be a string up to 600 characters.`);
+            }
+        }
+    }
+}
+
+function validateWorld(document) {
+    requireCondition(isObject(document), "world.json must contain a JSON object.");
+    requireCondition(document.schemaVersion === 2, "Unsupported world schemaVersion. Expected 2.");
+    requireCondition(isObject(document.locations) && isObject(document.characters) && isObject(document.abilities) &&
+        isObject(document.itemDefinitions) && isObject(document.items) && isObject(document.dayActivities) && isObject(document.travelerProfiles),
+        "world.json must contain locations, characters, abilities, itemDefinitions, items, dayActivities, and travelerProfiles objects.");
+    requireCondition(nonBlank(document.startLocationId) && own(document.locations, document.startLocationId),
+        "startLocationId must reference an existing location.");
+
+    const passageOwners = new Map();
+    const inventoryOwners = new Map();
+    const technicalIdOwners = new Map();
+    const lockIds = new Set();
+    const keyedContainerRefs = [];
+
+    for (const [id, location] of entries(document.locations)) {
+        requireCondition(isObject(location) && location.id === id, `Location key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `location ${id}`);
+        const passage = String(location.passage || "");
+        requireCondition(nonBlank(passage) && !/[\r\n\[\]]/.test(passage),
+            `Location ${id} has an invalid Twine passage name.`);
+        if (passageOwners.has(passage)) {
+            throw new Error(`Duplicate passage name '${passage}' is used by both ${passageOwners.get(passage)} and ${id}.`);
+        }
+        passageOwners.set(passage, id);
+        registerInventory(inventoryOwners, String(location.inventoryId || ""), `location ${id}`);
+
+        requireCondition(isObject(location.exits), `Location ${id} exits must be an object.`);
+        const exitTargets = new Set();
+        for (const [exitKey, exitValue] of entries(location.exits)) {
+            const exit = exitRecord(exitValue);
+            const destinationId = exit.destinationId;
+            requireCondition(nonBlank(destinationId) && own(document.locations, destinationId),
+                `Location ${id} exit '${exitKey}' references missing location '${destinationId || String(exitValue)}'.`);
+            requireCondition(destinationId !== id, `Location ${id} cannot exit to itself.`);
+            requireCondition(!exitTargets.has(destinationId), `Location ${id} contains duplicate exit to '${destinationId}'.`);
+            exitTargets.add(destinationId);
+            if (isObject(exitValue)) {
+                if (own(exitValue, "blocked")) {
+                    requireCondition(typeof exitValue.blocked === "boolean",
+                        `Location ${id} exit '${exitKey}' blocked must be Boolean.`);
+                }
+                if (own(exitValue, "blockedReason")) {
+                    requireCondition(typeof exitValue.blockedReason === "string",
+                        `Location ${id} exit '${exitKey}' blockedReason must be text.`);
+                }
+                if (own(exitValue, "lockId")) {
+                    requireCondition(/^[A-Za-z][A-Za-z0-9_-]*$/.test(String(exitValue.lockId || "")),
+                        `Location ${id} exit '${exitKey}' lockId is invalid.`);
+                }
+                if (own(exitValue, "locked")) {
+                    requireCondition(typeof exitValue.locked === "boolean",
+                        `Location ${id} exit '${exitKey}' locked must be Boolean.`);
+                }
+                if (own(exitValue, "lockedReason")) {
+                    requireCondition(typeof exitValue.lockedReason === "string",
+                        `Location ${id} exit '${exitKey}' lockedReason must be text.`);
+                }
+                requireCondition(Boolean(exit.lockId) || (!own(exitValue, "locked") && !own(exitValue, "lockedReason")),
+                    `Location ${id} exit '${exitKey}' cannot define lock state without lockId.`);
+            }
+            if (exit.lockId) {
+                lockIds.add(exit.lockId);
+                const destination = document.locations[destinationId];
+                const reciprocalValue = entries(destination.exits).map((pair) => pair[1])
+                    .find((value) => exitTarget(value) === id);
+                const reciprocal = exitRecord(reciprocalValue);
+                requireCondition(Boolean(reciprocalValue) && reciprocal.lockId === exit.lockId && reciprocal.locked === exit.locked,
+                    `Location ${id} exit '${exitKey}' has an inconsistent reciprocal lock.`);
+            }
+        }
+
+        const timelapseActions = location.timelapseActions === undefined ? [] : location.timelapseActions;
+        requireCondition(Array.isArray(timelapseActions), `Location ${id} timelapseActions must be an array.`);
+        const timelapseActionIds = new Set();
+        for (const action of timelapseActions) {
+            requireCondition(isObject(action) && nonBlank(action.id) && nonBlank(action.label) &&
+                nonBlank(action.description) && nonBlank(action.effectId) && isObject(action.effectParams),
+            `Location ${id} has an invalid timelapseAction.`);
+            requireCondition(!timelapseActionIds.has(action.id),
+                `Location ${id} has duplicate timelapseAction ID '${action.id}'.`);
+            timelapseActionIds.add(action.id);
+            requireCondition(knownTimelapseEffects.has(action.effectId),
+                `Location ${id} timelapseAction '${action.id}' references unknown effect '${action.effectId}'.`);
+        }
+
+        requireCondition(isObject(location.sublocations) && own(location.sublocations, String(location.defaultSublocationId || "")),
+            `Location ${id} has an invalid default sublocation.`);
+        for (const [sublocationId, sublocation] of entries(location.sublocations)) {
+            requireCondition(isObject(sublocation) && sublocation.id === sublocationId && sublocation.locationId === id,
+                `Sublocation ${sublocationId} has invalid identity or parent.`);
+            registerTechnicalId(technicalIdOwners, sublocationId, `sublocation ${sublocationId}`);
+            if (nonBlank(String(sublocation.inventoryId || ""))) {
+                registerInventory(inventoryOwners, String(sublocation.inventoryId), `sublocation ${sublocationId}`);
+            }
+            if (own(sublocation, "requiredKeyItemId")) {
+                requireCondition(nonBlank(String(sublocation.inventoryId || "")),
+                    `Sublocation ${sublocationId} cannot require a key without an inventory.`);
+                requireCondition(/^[A-Za-z][A-Za-z0-9_-]*$/.test(String(sublocation.requiredKeyItemId || "")),
+                    `Sublocation ${sublocationId} has invalid requiredKeyItemId '${String(sublocation.requiredKeyItemId)}'.`);
+                keyedContainerRefs.push({ sublocationId: sublocationId, itemId: String(sublocation.requiredKeyItemId) });
+            }
+            const capabilities = Array.isArray(sublocation.capabilities) ? sublocation.capabilities : [];
+            for (const capability of capabilities) {
+                const action = String(capability || "");
+                if (nonBlank(action)) {
+                    requireCondition(knownActions.has(action) || knownEnvironmentCapabilities.has(action),
+                        `Sublocation ${sublocationId} grants unknown action '${action}'.`);
+                }
+            }
+        }
+    }
+
+    for (const [id, definition] of entries(document.itemDefinitions)) {
+        requireCondition(isObject(definition) && definition.id === id,
+            `Item definition key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `item definition ${id}`);
+        requireCondition(nonBlank(definition.name) && nonBlank(definition.familyId),
+            `Item definition ${id} needs a name and familyId.`);
+        requireCondition(Array.isArray(definition.tags), `Item definition ${id} tags must be an array.`);
+        if (own(definition, "keyLockId")) {
+            requireCondition(/^[A-Za-z][A-Za-z0-9_-]*$/.test(String(definition.keyLockId || "")) &&
+                lockIds.has(definition.keyLockId),
+            `Item definition ${id} references invalid keyLockId '${definition.keyLockId}'.`);
+        }
+        for (const flag of ["consumable", "fillable"]) {
+            requireCondition(typeof definition[flag] === "boolean",
+                `Item definition ${id} ${flag} must be Boolean.`);
+        }
+        const equipSlots = definition.equipSlots === undefined ? [] : definition.equipSlots;
+        requireCondition(Array.isArray(equipSlots) && equipSlots.every(nonBlank) && new Set(equipSlots).size === equipSlots.length,
+            `Item definition ${id} equipSlots must be a unique list of non-empty strings.`);
+        if (equipSlots.length > 0) {
+            requireCondition(nonBlank(definition.equippedDescription),
+                `Item definition ${id} with equipSlots requires equippedDescription.`);
+        } else if (definition.equippedDescription !== undefined) {
+            requireCondition(typeof definition.equippedDescription === "string",
+                `Item definition ${id} equippedDescription must be text.`);
+        }
+        if (definition.fillAction) {
+            requireCondition(nonBlank(definition.fillAction.actionLabel) &&
+                nonBlank(definition.fillAction.requiredEnvironmentCapability) &&
+                nonBlank(definition.fillAction.resultDefinitionId),
+            `Item definition ${id} has an invalid fillAction.`);
+        }
+        if (definition.consumeAction) {
+            requireCondition(nonBlank(definition.consumeAction.actionLabel) &&
+                definition.consumeAction.resultType === "transform" &&
+                nonBlank(definition.consumeAction.resultDefinitionId),
+            `Item definition ${id} has an invalid consumeAction.`);
+        }
+        if (definition.description !== undefined) {
+            requireCondition(typeof definition.description === "string",
+                `Item definition ${id} description must be text.`);
+        }
+        if (definition.useAction) {
+            requireCondition(nonBlank(definition.useAction.actionLabel) &&
+                nonBlank(definition.useAction.effectId) &&
+                knownItemEffects.has(definition.useAction.effectId) &&
+                nonBlank(definition.useAction.publicText) &&
+                nonBlank(definition.useAction.feedbackText),
+            `Item definition ${id} has an invalid useAction.`);
+            if (definition.useAction.aiInstructions !== undefined) {
+                requireCondition(typeof definition.useAction.aiInstructions === "string" && nonBlank(definition.useAction.aiInstructions),
+                    `Item definition ${id} useAction.aiInstructions must be non-empty text when present.`);
+            }
+            if (definition.useAction.effectId === "utility_query" || definition.useAction.effectId === "abstract_study") {
+                requireCondition(nonBlank(definition.useAction.inputLabel),
+                    `Item definition ${id} ${definition.useAction.effectId} useAction requires inputLabel.`);
+                if (definition.useAction.inputPlaceholder !== undefined) {
+                    requireCondition(typeof definition.useAction.inputPlaceholder === "string",
+                        `Item definition ${id} useAction.inputPlaceholder must be text when present.`);
+                }
+                if (definition.useAction.inputMaxLength !== undefined) {
+                    requireCondition(Number.isInteger(definition.useAction.inputMaxLength) &&
+                        definition.useAction.inputMaxLength >= 1 && definition.useAction.inputMaxLength <= 2000,
+                        `Item definition ${id} useAction.inputMaxLength must be an integer from 1 to 2000.`);
+                }
+            }
+            if (definition.useAction.effectId === "abstract_study") {
+                for (const field of ["focusedFeedbackText", "saturatedFeedbackText"]) {
+                    if (definition.useAction[field] !== undefined) {
+                        requireCondition(typeof definition.useAction[field] === "string" && nonBlank(definition.useAction[field]),
+                            `Item definition ${id} useAction.${field} must be non-empty text when present.`);
+                    }
+                }
+            }
+            if (definition.useAction.effectId === "utility_query") {
+                requireCondition(nonBlank(definition.useAction.utilityPrompt),
+                    `Item definition ${id} utility_query useAction requires utilityPrompt.`);
+                if (definition.useAction.utilityMaxTokens !== undefined) {
+                    requireCondition(Number.isInteger(definition.useAction.utilityMaxTokens) &&
+                        definition.useAction.utilityMaxTokens >= 64 && definition.useAction.utilityMaxTokens <= 4000,
+                        `Item definition ${id} useAction.utilityMaxTokens must be an integer from 64 to 4000.`);
+                }
+            }
+        }
+    }
+
+    for (const [id, definition] of entries(document.itemDefinitions)) {
+        for (const actionField of ["fillAction", "consumeAction"]) {
+            const action = definition[actionField];
+            if (action) {
+                requireCondition(own(document.itemDefinitions, action.resultDefinitionId),
+                    `Item definition ${id} references missing result definition '${action.resultDefinitionId}'.`);
+            }
+        }
+    }
+
+    for (const [id, ability] of entries(document.abilities)) {
+        requireCondition(isObject(ability) && ability.id === id, `Ability key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `ability ${id}`);
+        requireCondition(knownActions.has(String(ability.actionType)),
+            `Ability ${id} references unknown action '${ability.actionType}'.`);
+    }
+
+    for (const [id, profile] of entries(document.travelerProfiles)) {
+        requireCondition(isObject(profile) && profile.id === id, `Traveler profile key ${id} must match its id.`);
+        requireCondition(/^[A-Za-z][A-Za-z0-9_-]*$/.test(id), `Traveler profile ${id} has an invalid technical ID.`);
+        requireCondition(nonBlank(profile.name) && profile.name.trim().length <= 120, `Traveler profile ${id} needs a name up to 120 characters.`);
+        requireCondition(nonBlank(profile.playerDescription) && profile.playerDescription.trim().length <= 2000, `Traveler profile ${id} needs a visible description up to 2000 characters.`);
+        requireCondition(nonBlank(profile.aiDescription) && profile.aiDescription.trim().length <= 4000, `Traveler profile ${id} needs AI-facing authoring up to 4000 characters.`);
+        requireCondition(Object.keys(profile).every((key) => ["id", "name", "playerDescription", "aiDescription"].includes(key)),
+            `Traveler profile ${id} may contain only id, name, playerDescription, and aiDescription.`);
+    }
+
+    let humanCount = 0;
+    for (const [id, character] of entries(document.characters)) {
+        requireCondition(isObject(character) && character.id === id, `Character key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `character ${id}`);
+        requireCondition(nonBlank(character.name), `Character ${id} needs a name.`);
+        requireCondition(nonBlank(character.playerDescription) && nonBlank(character.aiDescription),
+            `Character ${id} needs public and AI descriptions.`);
+        requireCondition(own(document.locations, String(character.locationId || "")),
+            `Character ${id} has an invalid location.`);
+        const location = document.locations[character.locationId];
+        requireCondition(isObject(location.sublocations) && own(location.sublocations, String(character.sublocationId || "")),
+            `Character ${id} has an invalid sublocation.`);
+        requireCondition(Number.isInteger(character.wallet) && character.wallet >= 0,
+            `Character ${id} has an invalid wallet.`);
+        requireCondition(controllers.has(String(character.initialControllerId)),
+            `Character ${id} has an unknown initial controller.`);
+        requireCondition(controllers.has(String(character.defaultControllerId)) && character.defaultControllerId !== "human",
+            `Character ${id} has an invalid default controller.`);
+        if (character.initialControllerId === "human") {
+            humanCount += 1;
+        }
+
+        registerInventory(inventoryOwners, String(character.inventoryId || ""), `character ${id}`);
+        const assigned = new Set();
+        const abilityIds = Array.isArray(character.abilityIds) ? character.abilityIds : [];
+        for (const rawAbilityId of abilityIds) {
+            const abilityId = String(rawAbilityId || "");
+            if (!nonBlank(abilityId)) {
+                continue;
+            }
+            requireCondition(own(document.abilities, abilityId),
+                `Character ${id} references missing ability '${abilityId}'.`);
+            requireCondition(!assigned.has(abilityId),
+                `Character ${id} assigns ability '${abilityId}' more than once.`);
+            assigned.add(abilityId);
+        }
+
+        validateMind(character.initialMind, id);
+        for (const relationship of character.initialMind.relationships) {
+            const targetId = String((relationship && relationship.targetCharacterId) || "");
+            requireCondition(own(document.characters, targetId) && targetId !== id,
+                `Character ${id} has an invalid relationship target '${targetId}'.`);
+        }
+    }
+
+    for (const [locationId, location] of entries(document.locations)) {
+        for (const action of (location.timelapseActions || [])) {
+            if (action.effectId === "collect_mugs_to_storage") {
+                const params = action.effectParams || {};
+                requireCondition(nonBlank(params.itemFamilyId) && nonBlank(params.emptyDefinitionId) &&
+                    nonBlank(params.destinationInventoryId),
+                `Location ${locationId} timelapseAction '${action.id}' has invalid collect_mugs_to_storage parameters.`);
+                requireCondition(own(document.itemDefinitions, params.emptyDefinitionId),
+                    `Location ${locationId} timelapseAction '${action.id}' references missing empty definition '${params.emptyDefinitionId}'.`);
+                requireCondition(inventoryOwners.has(params.destinationInventoryId),
+                    `Location ${locationId} timelapseAction '${action.id}' references missing destination inventory '${params.destinationInventoryId}'.`);
+            }
+        }
+    }
+
+
+    for (const [id, activity] of entries(document.dayActivities)) {
+        requireCondition(isObject(activity) && activity.id === id, `Day activity key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `day activity ${id}`);
+        requireCondition(activity.kind === "sponsored_job" || activity.kind === "solo",
+            `Day activity ${id} has invalid kind.`);
+        requireCondition(nonBlank(activity.name) && own(document.locations, String(activity.workLocationId || "")),
+            `Day activity ${id} needs a name and valid workLocationId.`);
+        requireCondition(nonBlank(activity.narrationInstructions),
+            `Day activity ${id} needs narrationInstructions.`);
+        if (activity.kind === "sponsored_job") {
+            requireCondition(own(document.characters, String(activity.sponsorCharacterId || "")),
+                `Day activity ${id} references missing sponsorCharacterId '${activity.sponsorCharacterId}'.`);
+            requireCondition(nonBlank(activity.offerDescription),
+                `Day activity ${id} needs offerDescription.`);
+        } else {
+            requireCondition(!activity.sponsorCharacterId && own(document.locations, String(activity.entryLocationId || "")) && nonBlank(activity.entryActionLabel),
+                `Solo day activity ${id} needs a valid entryLocationId and entryActionLabel.`);
+        }
+        const settlement = activity.settlement;
+        requireCondition(isObject(settlement) && ["sponsor_items", "sponsor_gold", "random_items"].includes(settlement.type),
+            `Day activity ${id} has invalid settlement.`);
+        if (settlement.type === "sponsor_items") {
+            requireCondition(Number.isInteger(settlement.minTotal) && Number.isInteger(settlement.maxTotal) &&
+                settlement.minTotal >= 1 && settlement.maxTotal >= settlement.minTotal && Array.isArray(settlement.definitionIds) && settlement.definitionIds.length > 0,
+                `Day activity ${id} has invalid sponsor_items settlement bounds.`);
+            settlement.definitionIds.forEach((definitionId) => requireCondition(own(document.itemDefinitions, String(definitionId || "")),
+                `Day activity ${id} settlement references missing item definition '${definitionId}'.`));
+        } else if (settlement.type === "sponsor_gold") {
+            requireCondition(Number.isInteger(settlement.min) && Number.isInteger(settlement.max) && settlement.min >= 0 && settlement.max >= settlement.min,
+                `Day activity ${id} has invalid sponsor_gold settlement bounds.`);
+        } else if (settlement.type === "random_items") {
+            requireCondition(Number.isInteger(settlement.minTotal) && Number.isInteger(settlement.maxTotal) && settlement.minTotal >= 1 &&
+                settlement.maxTotal >= settlement.minTotal && own(document.itemDefinitions, String(settlement.definitionId || "")),
+                `Day activity ${id} has invalid random_items settlement.`);
+        }
+    }
+
+    const authoredEquipmentSlots = new Set();
+    for (const [id, item] of entries(document.items)) {
+        requireCondition(isObject(item) && item.id === id, `Item key ${id} must match its id.`);
+        registerTechnicalId(technicalIdOwners, id, `item ${id}`);
+        requireCondition(own(document.itemDefinitions, String(item.definitionId || "")),
+            `Item ${id} references missing definition '${item.definitionId}'.`);
+        const hasInventory = nonBlank(String(item.inventoryId || ""));
+        const hasEquippedOwner = nonBlank(String(item.equippedByCharacterId || ""));
+        const hasEquippedSlot = nonBlank(String(item.equippedSlot || ""));
+        requireCondition(hasInventory !== hasEquippedOwner,
+            `Item ${id} must start in exactly one inventory or equipped on one character.`);
+        if (hasInventory) {
+            requireCondition(!hasEquippedSlot && inventoryOwners.has(String(item.inventoryId)),
+                `Item ${id} references missing inventory '${item.inventoryId}' or also defines equippedSlot.`);
+        } else {
+            requireCondition(hasEquippedSlot && own(document.characters, String(item.equippedByCharacterId)),
+                `Item ${id} has invalid equipped starting placement.`);
+            const definition = document.itemDefinitions[item.definitionId];
+            requireCondition(Array.isArray(definition.equipSlots) && definition.equipSlots.includes(item.equippedSlot),
+                `Item ${id} equippedSlot '${item.equippedSlot}' is not allowed by its definition.`);
+            const occupancyKey = `${item.equippedByCharacterId}:${item.equippedSlot}`;
+            requireCondition(!authoredEquipmentSlots.has(occupancyKey),
+                `Item ${id} conflicts with another authored item in ${occupancyKey}.`);
+            authoredEquipmentSlots.add(occupancyKey);
+        }
+    }
+
+    keyedContainerRefs.forEach(function (record) {
+        requireCondition(own(document.items, record.itemId),
+            `Sublocation ${record.sublocationId} references missing required key item '${record.itemId}'.`);
+    });
+
+    requireCondition(humanCount === 1,
+        `Exactly one initial human-controlled character is required; found ${humanCount}.`);
+}
+
+
+    function validateWorldDocument(document) {
+        try { validateWorld(document); return []; }
+        catch (error) { return [{ message: error && error.message || "World validation failed." }]; }
+    }
+
+    function createEmptyWorld() {
+        return { schemaVersion: 2, startLocationId: "", protectedLocationIds: [], protectedSublocationIds: [], protectedCharacterIds: [], protectedAbilityIds: [], locations: {}, characters: {}, travelerProfiles: {}, abilities: {}, itemDefinitions: {}, items: {}, dayActivities: {} };
+    }
+
+    return {
+        ID_PATTERN: /^[A-Za-z][A-Za-z0-9_-]*$/,
+        SCHEMA_VERSION: 2,
+        KNOWN_ACTIONS: Array.from(knownActions),
+        KNOWN_ITEM_EFFECTS: Array.from(knownItemEffects),
+        validateWorld: validateWorld,
+        validateWorldDocument: validateWorldDocument,
+        requireCondition: requireCondition,
+        createEmptyWorld: createEmptyWorld,
+        isObject: isObject,
+        nonBlank: nonBlank,
+        own: own,
+        entries: entries,
+        exitRecord: exitRecord,
+        exitTarget: exitTarget
+    };
+}));
+</script>
+<!-- END GENERATED AUTHORED VALIDATOR -->
+
 <script id="world-editor-core">
 (function(root){"use strict";
-const ID_PATTERN=/^[A-Za-z][A-Za-z0-9_-]*$/;const SCHEMA_VERSION=2;const KNOWN_ACTIONS=["move","move_within_location","take_item","drop_item","give_item","give_money","place_item","fill","consume","equip","unequip","lock","unlock","read_aura"];const KNOWN_ITEM_EFFECTS=["report_memory_counts","narrative_feedback","abstract_study","utility_query"];
+const SharedValidator=root.AIRPGAuthoredValidator;if(!SharedValidator)throw new Error("Shared authored-world validator was not loaded.");
+const ID_PATTERN=SharedValidator.ID_PATTERN;const SCHEMA_VERSION=SharedValidator.SCHEMA_VERSION;const KNOWN_ACTIONS=SharedValidator.KNOWN_ACTIONS;const KNOWN_ITEM_EFFECTS=SharedValidator.KNOWN_ITEM_EFFECTS;
 function clone(value){return JSON.parse(JSON.stringify(value));}
 function parseWorldJson(text){let value;try{value=JSON.parse(text);}catch(error){throw new Error("The selected file is not valid JSON: "+error.message);}return value;}
-function createEmptyWorld(){return{schemaVersion:SCHEMA_VERSION,startLocationId:"",protectedLocationIds:[],protectedSublocationIds:[],protectedCharacterIds:[],protectedAbilityIds:[],locations:{},characters:{},travelerProfiles:{},abilities:{},itemDefinitions:{},items:{},dayActivities:{}};}
-function error(message,locationId,sublocationId){return{message:message,locationId:locationId||"",sublocationId:sublocationId||""};}
-function exitTarget(value){return exitRecord(value).destinationId;}
-function exitRecord(value){if(typeof value==="string")return{destinationId:value,blocked:false,blockedReason:"",lockId:"",locked:false,lockedReason:""};if(value&&typeof value==="object"&&!Array.isArray(value))return{destinationId:typeof value.destinationId==="string"?value.destinationId:"",blocked:value.blocked===true,blockedReason:typeof value.blockedReason==="string"?value.blockedReason:"",lockId:typeof value.lockId==="string"?value.lockId:"",locked:value.locked===true,lockedReason:typeof value.lockedReason==="string"?value.lockedReason:""};return{destinationId:"",blocked:false,blockedReason:"",lockId:"",locked:false,lockedReason:""};}
-function validateWorldDocument(doc){
-const errors=[];if(!doc||typeof doc!=="object"||Array.isArray(doc))return[error("The document must be a JSON object.")];
-if(doc.schemaVersion!==SCHEMA_VERSION)errors.push(error("Unsupported schema version. Expected "+SCHEMA_VERSION+"."));
-if(!doc.locations||typeof doc.locations!=="object"||Array.isArray(doc.locations)){errors.push(error("The document must contain a locations object."));return errors;}
-if(!doc.travelerProfiles||typeof doc.travelerProfiles!=="object"||Array.isArray(doc.travelerProfiles))errors.push(error("The document must contain a travelerProfiles object."));
-else for(const [id,profile] of Object.entries(doc.travelerProfiles)){if(!profile||typeof profile!=="object"||Array.isArray(profile)){errors.push(error("Traveler profile `"+id+"` must be an object."));continue;}if(profile.id!==id||!ID_PATTERN.test(id))errors.push(error("Traveler profile `"+id+"` has an invalid or mismatched technical ID."));if(typeof profile.name!=="string"||!profile.name.trim()||profile.name.trim().length>120)errors.push(error("Traveler profile `"+id+"` needs a name up to 120 characters."));if(typeof profile.playerDescription!=="string"||!profile.playerDescription.trim()||profile.playerDescription.trim().length>2000)errors.push(error("Traveler profile `"+id+"` needs a visible description up to 2000 characters."));if(typeof profile.aiDescription!=="string"||!profile.aiDescription.trim()||profile.aiDescription.trim().length>4000)errors.push(error("Traveler profile `"+id+"` needs AI-facing authoring up to 4000 characters."));if(Object.keys(profile).some(key=>!["id","name","playerDescription","aiDescription"].includes(key)))errors.push(error("Traveler profile `"+id+"` may contain only id, name, playerDescription, and aiDescription."));}
-if(!doc.itemDefinitions||typeof doc.itemDefinitions!=="object"||Array.isArray(doc.itemDefinitions))errors.push(error("The document must contain an itemDefinitions object."));
-if(!doc.items||typeof doc.items!=="object"||Array.isArray(doc.items))errors.push(error("The document must contain an items object."));
-if(doc.protectedLocationIds!==undefined&&(!Array.isArray(doc.protectedLocationIds)||doc.protectedLocationIds.some(x=>typeof x!=="string")))errors.push(error("protectedLocationIds must be a list of IDs."));
-if(doc.protectedSublocationIds!==undefined&&(!Array.isArray(doc.protectedSublocationIds)||doc.protectedSublocationIds.some(x=>typeof x!=="string")))errors.push(error("protectedSublocationIds must be a list of IDs."));
-const ids=new Map(),lockIds=new Set();
-function register(id,kind,owner){if(typeof id!=="string"||!ID_PATTERN.test(id)){errors.push(error(kind+" ID `"+String(id)+"` must start with a letter and contain only letters, numbers, _ or -.",owner));return;}if(ids.has(id))errors.push(error("Technical ID `"+id+"` is used more than once.",owner));else ids.set(id,kind);}
-for(const [locationKey,location] of Object.entries(doc.locations)){
-if(!location||typeof location!=="object"||Array.isArray(location)){errors.push(error("Location `"+locationKey+"` must be an object.",locationKey));continue;}
-register(location.id,"Location",locationKey);if(location.id!==locationKey)errors.push(error("Location key `"+locationKey+"` must match its ID `"+String(location.id)+"`.",locationKey));
-if(typeof location.name!=="string"||!location.name.trim())errors.push(error("Location `"+locationKey+"` needs a display name.",locationKey));
-if(!Array.isArray(location.description)||location.description.some(x=>typeof x!=="string"))errors.push(error("Location `"+locationKey+"` description must be a list of paragraphs.",locationKey));
-if(typeof location.passage!=="string"||!location.passage.trim()||/[\r\n\[\]]/.test(location.passage))errors.push(error("Location `"+locationKey+"` needs a valid one-line Twine passage name without brackets.",locationKey));
-if(typeof location.inventoryId!=="string"||!ID_PATTERN.test(location.inventoryId))errors.push(error("Location `"+locationKey+"` needs a valid inventory ID.",locationKey));
-if(!location.exits||typeof location.exits!=="object"||Array.isArray(location.exits))errors.push(error("Location `"+locationKey+"` exits must be an object.",locationKey));
-else{const targets=new Set();for(const [exitKey,value] of Object.entries(location.exits)){
-const record=exitRecord(value),target=record.destinationId;
-if(!target||!doc.locations[target])errors.push(error("Location `"+locationKey+"` has an exit to missing location `"+String(target||value)+"`.",locationKey));
-if(target===locationKey)errors.push(error("Location `"+locationKey+"` cannot exit to itself.",locationKey));
-if(targets.has(target))errors.push(error("Location `"+locationKey+"` contains a duplicate exit to `"+target+"`.",locationKey));targets.add(target);
-if(value&&typeof value==="object"&&!Array.isArray(value)){
-if(value.blocked!==undefined&&typeof value.blocked!=="boolean")errors.push(error("Location `"+locationKey+"` exit `"+exitKey+"` blocked must be checked or unchecked.",locationKey));
-if(value.blockedReason!==undefined&&typeof value.blockedReason!=="string")errors.push(error("Location `"+locationKey+"` exit `"+exitKey+"` blocked reason must be text.",locationKey));
-if(value.lockId!==undefined&&(typeof value.lockId!=="string"||!ID_PATTERN.test(value.lockId)))errors.push(error("Location `"+locationKey+"` exit `"+exitKey+"` lock ID is invalid.",locationKey));
-if(value.locked!==undefined&&typeof value.locked!=="boolean")errors.push(error("Location `"+locationKey+"` exit `"+exitKey+"` locked must be checked or unchecked.",locationKey));
-if(value.lockedReason!==undefined&&typeof value.lockedReason!=="string")errors.push(error("Location `"+locationKey+"` exit `"+exitKey+"` locked reason must be text.",locationKey));
-if(!record.lockId&&(value.locked!==undefined||value.lockedReason!==undefined))errors.push(error("Location `"+locationKey+"` exit `"+exitKey+"` cannot define lock state without a lock ID.",locationKey));
-}
-if(record.lockId)lockIds.add(record.lockId);
-}}
-const subs=location.sublocations;if(!subs||typeof subs!=="object"||Array.isArray(subs)){errors.push(error("Location `"+locationKey+"` must contain a sublocations object.",locationKey));continue;}
-if(!subs[location.defaultSublocationId])errors.push(error("Location `"+locationKey+"` default position `"+String(location.defaultSublocationId)+"` does not exist.",locationKey));
-for(const [subKey,sub] of Object.entries(subs)){
-if(!sub||typeof sub!=="object"||Array.isArray(sub)){errors.push(error("Position `"+subKey+"` must be an object.",locationKey,subKey));continue;}
-register(sub.id,"Sublocation",locationKey);if(sub.id!==subKey)errors.push(error("Position key `"+subKey+"` must match its ID `"+String(sub.id)+"`.",locationKey,subKey));
-if(sub.locationId!==locationKey)errors.push(error("Position `"+subKey+"` must belong to location `"+locationKey+"`.",locationKey,subKey));
-if(typeof sub.name!=="string"||!sub.name.trim())errors.push(error("Position `"+subKey+"` needs a display name.",locationKey,subKey));
-if(!Number.isInteger(sub.capacity)||sub.capacity<1)errors.push(error("Position `"+subKey+"` capacity must be a positive whole number.",locationKey,subKey));
-for(const field of ["enterLabel","selfText","occupantTemplate"])if(typeof sub[field]!=="string"||!sub[field].trim())errors.push(error("Position `"+subKey+"` needs "+field+" text.",locationKey,subKey));
-if(typeof sub.occupantTemplate==="string"&&!sub.occupantTemplate.includes("{name}"))errors.push(error("Position `"+subKey+"` occupant text must include {name}.",locationKey,subKey));
-if(!Array.isArray(sub.reachableSublocationIds))errors.push(error("Position `"+subKey+"` reachable positions must be a list.",locationKey,subKey));else for(const target of sub.reachableSublocationIds)if(!subs[target])errors.push(error("Position `"+subKey+"` references missing position `"+String(target)+"`.",locationKey,subKey));
-if(sub.inventoryId!==undefined&&(typeof sub.inventoryId!=="string"||!ID_PATTERN.test(sub.inventoryId)))errors.push(error("Position `"+subKey+"` has an invalid inventory ID.",locationKey,subKey));
-if(sub.requiredKeyItemId!==undefined){if(!sub.inventoryId)errors.push(error("Position `"+subKey+"` cannot require a key without an inventory.",locationKey,subKey));if(typeof sub.requiredKeyItemId!=="string"||!ID_PATTERN.test(sub.requiredKeyItemId)||!doc.items?.[sub.requiredKeyItemId])errors.push(error("Position `"+subKey+"` has an invalid required key item ID.",locationKey,subKey));}
-if(sub.capabilities!==undefined&&(!Array.isArray(sub.capabilities)||sub.capabilities.some(x=>typeof x!=="string")))errors.push(error("Position `"+subKey+"` capabilities must be a list of IDs.",locationKey,subKey));
-}}
-for(const [locationKey,location] of Object.entries(doc.locations||{}))for(const [exitKey,value] of Object.entries(location.exits||{})){const record=exitRecord(value);if(!record.lockId||!doc.locations[record.destinationId])continue;const reverse=Object.values(doc.locations[record.destinationId].exits||{}).map(exitRecord).find(candidate=>candidate.destinationId===locationKey);if(!reverse||reverse.lockId!==record.lockId||reverse.locked!==record.locked)errors.push(error("Location `"+locationKey+"` exit `"+exitKey+"` has an inconsistent reciprocal lock.",locationKey));}
-for(const id of doc.protectedLocationIds||[])if(!doc.locations[id])errors.push(error("Game-required location `"+id+"` is missing.",id));
-for(const id of doc.protectedSublocationIds||[]){let found=false;for(const location of Object.values(doc.locations))if(location.sublocations&&location.sublocations[id])found=true;if(!found)errors.push(error("Game-required position `"+id+"` is missing."));}
-if(!doc.startLocationId||!doc.locations[doc.startLocationId])errors.push(error("startLocationId must reference an existing location."));
-const passages=new Map(),inventories=new Map();function inventory(id,owner){if(!id)return;if(inventories.has(id))errors.push(error("Inventory ID `"+id+"` is used by both "+inventories.get(id)+" and "+owner+"."));else inventories.set(id,owner);}
-for(const [id,location] of Object.entries(doc.locations)){if(passages.has(location.passage))errors.push(error("Twine passage name `"+location.passage+"` is used more than once.",id));else passages.set(location.passage,id);inventory(location.inventoryId,"location "+id);for(const [sid,sub] of Object.entries(location.sublocations||{}))inventory(sub.inventoryId,"position "+sid);}
-if(!doc.characters||typeof doc.characters!=="object"||Array.isArray(doc.characters))errors.push(error("The document must contain a characters object."));
-if(!doc.abilities||typeof doc.abilities!=="object"||Array.isArray(doc.abilities))errors.push(error("The document must contain an abilities object."));
-for(const [id,ability] of Object.entries(doc.abilities||{})){if(ability.id!==id)errors.push(error("Ability key `"+id+"` must match its ID."));if(!ability.name||!ability.playerDescription||!ability.aiDescription)errors.push(error("Ability `"+id+"` needs a name and both descriptions."));if(!KNOWN_ACTIONS.includes(ability.actionType))errors.push(error("Ability `"+id+"` uses unknown action type `"+ability.actionType+"`."));}
-let humans=0;for(const [id,ch] of Object.entries(doc.characters||{})){if(ch.id!==id)errors.push(error("Character key `"+id+"` must match its ID."));if(!ch.name||!ch.playerDescription||!ch.aiDescription)errors.push(error("Character `"+id+"` needs a name and both descriptions."));if(!doc.locations[ch.locationId])errors.push(error("Character `"+id+"` references missing location `"+ch.locationId+"`."));else if(!doc.locations[ch.locationId].sublocations[ch.sublocationId])errors.push(error("Character `"+id+"` references missing position `"+ch.sublocationId+"`."));if(!Number.isInteger(ch.wallet)||ch.wallet<0)errors.push(error("Character `"+id+"` wallet must be a non-negative whole number."));if(!["human","dummy","ai"].includes(ch.initialControllerId))errors.push(error("Character `"+id+"` has an unknown initial controller."));if(ch.initialControllerId==="human")humans++;if(!["dummy","ai"].includes(ch.defaultControllerId))errors.push(error("Character `"+id+"` fallback controller must be dummy or ai."));inventory(ch.inventoryId,"character "+id);const assigned=new Set();for(const aid of ch.abilityIds||[]){if(!doc.abilities[aid])errors.push(error("Character `"+id+"` references missing ability `"+aid+"`."));if(assigned.has(aid))errors.push(error("Character `"+id+"` assigns ability `"+aid+"` more than once."));assigned.add(aid);}validateMind(ch.initialMind,id,doc,errors);}
-for(const [id,definition] of Object.entries(doc.itemDefinitions||{})){register(definition.id,"Item definition",id);if(definition.id!==id)errors.push(error("Item definition key `"+id+"` must match its ID."));if(!definition.name||!definition.familyId)errors.push(error("Item definition `"+id+"` needs a name and family ID."));if(definition.description!==undefined&&typeof definition.description!=="string")errors.push(error("Item definition `"+id+"` description must be text."));if(!Array.isArray(definition.tags))errors.push(error("Item definition `"+id+"` tags must be a list."));if(definition.keyLockId!==undefined&&(!ID_PATTERN.test(String(definition.keyLockId||""))||!lockIds.has(definition.keyLockId)))errors.push(error("Item definition `"+id+"` has an invalid key lock ID.",id));for(const flag of ["consumable","fillable"])if(typeof definition[flag]!=="boolean")errors.push(error("Item definition `"+id+"` "+flag+" must be checked or unchecked."));const equipSlots=definition.equipSlots===undefined?[]:definition.equipSlots;if(!Array.isArray(equipSlots)||equipSlots.some(x=>typeof x!=="string"||!x.trim())||new Set(equipSlots).size!==equipSlots.length)errors.push(error("Item definition `"+id+"` equipSlots must be a unique list of non-empty strings."));if(equipSlots.length&&(!definition.equippedDescription||!String(definition.equippedDescription).trim()))errors.push(error("Item definition `"+id+"` with equipSlots requires an equipped description."));if(definition.fillAction){if(!definition.fillAction.actionLabel||!definition.fillAction.requiredEnvironmentCapability||!doc.itemDefinitions[definition.fillAction.resultDefinitionId])errors.push(error("Item definition `"+id+"` has an invalid fill action."));}if(definition.consumeAction){if(!definition.consumeAction.actionLabel||definition.consumeAction.resultType!=="transform"||!doc.itemDefinitions[definition.consumeAction.resultDefinitionId])errors.push(error("Item definition `"+id+"` has an invalid consume action."));}if(definition.useAction){if(!definition.useAction.actionLabel||!KNOWN_ITEM_EFFECTS.includes(definition.useAction.effectId)||!definition.useAction.publicText||!definition.useAction.feedbackText)errors.push(error("Item definition `"+id+"` has an invalid use action."));if(definition.useAction.aiInstructions!==undefined&&(!String(definition.useAction.aiInstructions||"").trim()))errors.push(error("Item definition `"+id+"` use AI guidance must be non-empty when present."));if(definition.useAction.effectId==="utility_query"||definition.useAction.effectId==="abstract_study"){if(!String(definition.useAction.inputLabel||"").trim())errors.push(error("Item definition `"+id+"` text-input use action requires an input label."));if(definition.useAction.inputPlaceholder!==undefined&&typeof definition.useAction.inputPlaceholder!=="string")errors.push(error("Item definition `"+id+"` text-input placeholder must be text."));if(definition.useAction.inputMaxLength!==undefined&&(!Number.isInteger(definition.useAction.inputMaxLength)||definition.useAction.inputMaxLength<1||definition.useAction.inputMaxLength>2000))errors.push(error("Item definition `"+id+"` text-input length must be 1-2000."));}if(definition.useAction.effectId==="abstract_study"){for(const f of ["focusedFeedbackText","saturatedFeedbackText"])if(definition.useAction[f]!==undefined&&!String(definition.useAction[f]||"").trim())errors.push(error("Item definition `"+id+"` "+f+" must be non-empty when present."));}if(definition.useAction.effectId==="utility_query"){if(!String(definition.useAction.utilityPrompt||"").trim())errors.push(error("Item definition `"+id+"` utility query requires a utility prompt."));if(definition.useAction.utilityMaxTokens!==undefined&&(!Number.isInteger(definition.useAction.utilityMaxTokens)||definition.useAction.utilityMaxTokens<64||definition.useAction.utilityMaxTokens>4000))errors.push(error("Item definition `"+id+"` utility query output token cap must be 64-4000."));}}}
-const occupiedEquipment=new Set();for(const [id,item] of Object.entries(doc.items||{})){register(item.id,"Item",id);if(item.id!==id)errors.push(error("Item key `"+id+"` must match its ID."));const definition=doc.itemDefinitions[item.definitionId];if(!definition)errors.push(error("Item `"+id+"` references missing definition `"+item.definitionId+"`."));const hasInventory=typeof item.inventoryId==="string"&&item.inventoryId.trim();const hasOwner=typeof item.equippedByCharacterId==="string"&&item.equippedByCharacterId.trim();const hasSlot=typeof item.equippedSlot==="string"&&item.equippedSlot.trim();if(Boolean(hasInventory)===Boolean(hasOwner))errors.push(error("Item `"+id+"` must start either in an inventory or equipped on a character."));else if(hasInventory){if(hasSlot)errors.push(error("Item `"+id+"` cannot define equippedSlot while starting in inventory."));if(!inventories.has(item.inventoryId))errors.push(error("Item `"+id+"` references missing inventory `"+item.inventoryId+"`."));}else{if(!hasSlot||!doc.characters[item.equippedByCharacterId]||!definition||!Array.isArray(definition.equipSlots)||!definition.equipSlots.includes(item.equippedSlot))errors.push(error("Item `"+id+"` has invalid equipped starting placement."));const key=item.equippedByCharacterId+":"+item.equippedSlot;if(occupiedEquipment.has(key))errors.push(error("Item `"+id+"` conflicts with another item in equipment slot `"+key+"`."));occupiedEquipment.add(key);}}
-if(humans!==1)errors.push(error("Exactly one initial human-controlled character is required; found "+humans+"."));return errors;}
-function validateMind(mind,id,doc,errors){if(!mind){errors.push(error("Character `"+id+"` needs initial mind data."));return;}for(const name of ["knownFacts","beliefs","relationships","recentMemories","longTermMemories"]){if(!Array.isArray(mind[name])){errors.push(error("Character `"+id+"` mind "+name+" must be a list."));continue;}const seen=new Set();for(const record of mind[name]){if(name!=="relationships"){if(!record.id||seen.has(record.id))errors.push(error("Character `"+id+"` has a missing or duplicate ID in "+name+"."));seen.add(record.id);}if(name==="beliefs"&&!['low','medium','high'].includes(record.confidence))errors.push(error("Character `"+id+"` has an invalid belief confidence."));if((name==="recentMemories"||name==="longTermMemories")&&(!(Number.isFinite(record.importance)&&record.importance>=0&&record.importance<=1)||typeof record.protected!=="boolean"))errors.push(error("Character `"+id+"` has an invalid memory record."));if(name==="relationships"&&(!doc.characters[record.targetCharacterId]||record.targetCharacterId===id))errors.push(error("Character `"+id+"` has an invalid relationship target."));}}if(Object.prototype.hasOwnProperty.call(mind,"pendingObservations"))errors.push(error("pendingObservations is runtime-only and cannot be authored."));}
+function createEmptyWorld(){return clone(SharedValidator.createEmptyWorld());}
+function exitTarget(value){return SharedValidator.exitTarget(value);}
+function exitRecord(value){return SharedValidator.exitRecord(value);}
+function validateWorldDocument(doc){return SharedValidator.validateWorldDocument(doc);}
 function itemsInInventory(doc,inventoryId){return Object.values(doc.items||{}).filter(item=>item.inventoryId===inventoryId);}
 function inventoryRemovalReferences(doc,inventoryId){return itemsInInventory(doc,inventoryId).map(item=>"Contains item "+item.id);}
 function generateItemInstanceId(doc,definitionId){let base=String(definitionId||"item").replace(/[^A-Za-z0-9_-]/g,"");if(!/^[A-Za-z]/.test(base))base="item"+(base?"_"+base:"");if(!ID_PATTERN.test(base))base="item";let n=1,id=base+"_"+n;while(doc.items&&doc.items[id]){n++;id=base+"_"+n;}return id;}
@@ -135,7 +577,7 @@ function repeatRows(parent,title,list,shape){const head=el("div",undefined,"row"
 function renderTravelerProfilePanel(){const panel=$("editor-panel");panel.replaceChildren();const profile=doc.travelerProfiles?.[selectedLocationId];if(!profile){panel.appendChild(el("div","Add or select a Traveler profile to begin.","empty"));return;}const card=el("section",undefined,"card"),head=el("div",undefined,"row");head.appendChild(el("h2",profile.name||profile.id));const del=el("button","Delete profile","danger");del.onclick=()=>deleteTravelerProfile(profile.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",profile.id,()=>{},{readonly:true,help:"Stable authoring-template ID."});field(grid,"Display name",profile.name,v=>{profile.name=v;changed();});field(grid,"Player-facing description",profile.playerDescription,v=>{profile.playerDescription=v;changed();},{textarea:true,help:"Externally observable Traveler identity; max 2000 characters."});field(grid,"AI-facing authoring",profile.aiDescription,v=>{profile.aiDescription=v;changed();},{textarea:true,help:"Private identity/personality baseline; max 4000 characters."});card.appendChild(grid);card.appendChild(el("p","Traveler profiles are identity overlays only. Aura, inventory, location, controller, abilities, equipment, wallet, and starting mind remain properties of the canonical player shell.","help"));panel.appendChild(card);}
 function addTravelerProfile(){doc.travelerProfiles=doc.travelerProfiles&&typeof doc.travelerProfiles==="object"&&!Array.isArray(doc.travelerProfiles)?doc.travelerProfiles:{};const name=prompt("Display name for the Traveler profile:");if(!name)return;const id=prompt("Stable technical ID:","newTraveler");if(!id||!C.ID_PATTERN.test(id)||doc.travelerProfiles[id])return alert("That Traveler profile ID is invalid or already used.");doc.travelerProfiles[id]={id,name,playerDescription:"Describe how this Traveler appears to others.",aiDescription:"Describe this Traveler's private identity, history, personality, and motives."};selectedLocationId=id;changed();render();}
 function deleteTravelerProfile(id){if(confirm("Delete Traveler profile `"+id+"`?")){delete doc.travelerProfiles[id];selectedLocationId=Object.keys(doc.travelerProfiles)[0]||"";changed();render();}}
-function renderCharacterPanel(){const panel=$("editor-panel");panel.replaceChildren();const ch=doc.characters?.[selectedLocationId];if(!ch){panel.appendChild(el("div","Add or select a character to begin.","empty"));return;}const card=el("section",undefined,"card"),head=el("div",undefined,"row");head.appendChild(el("h2",ch.name||ch.id));const del=el("button","Delete character","danger");del.onclick=()=>deleteCharacter(ch.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",ch.id,()=>{},{readonly:true});field(grid,"Display name",ch.name,v=>{ch.name=v;changed();});field(grid,"Player-facing description",ch.playerDescription,v=>{ch.playerDescription=v;changed();},{textarea:true});field(grid,"Interaction label",ch.interactionLabel,v=>{ch.interactionLabel=v;changed();});field(grid,"AI-facing description",ch.aiDescription,v=>{ch.aiDescription=v;changed();},{textarea:true});field(grid,"Inventory ID",ch.inventoryId,()=>{},{readonly:true,help:"Stable while the character exists; embedded items reference this ID."});field(grid,"Wallet",ch.wallet,v=>{ch.wallet=v;changed();},{type:"number"});field(grid,"Hidden aura",ch.engineFacts?.aura||"",v=>{ch.engineFacts=ch.engineFacts||{};ch.engineFacts.aura=v;changed();},{textarea:true});selectField(grid,"Starting location",ch.locationId,Object.values(doc.locations),v=>{ch.locationId=v;ch.sublocationId=doc.locations[v]?.defaultSublocationId||"";changed();render();});selectField(grid,"Starting position",ch.sublocationId,Object.values(doc.locations[ch.locationId]?.sublocations||{}),v=>{ch.sublocationId=v;changed();});selectField(grid,"Initial controller",ch.initialControllerId,["human","dummy","ai"],v=>{ch.initialControllerId=v;changed();});selectField(grid,"Fallback controller",ch.defaultControllerId,["dummy","ai"],v=>{ch.defaultControllerId=v;changed();});card.appendChild(grid);card.appendChild(el("h3","Assigned abilities"));const checks=el("div",undefined,"checks");for(const ability of Object.values(doc.abilities||{})){const label=el("label"),input=el("input");input.type="checkbox";input.checked=(ch.abilityIds||[]).includes(ability.id);input.onchange=()=>{ch.abilityIds=ch.abilityIds||[];ch.abilityIds=input.checked?[...new Set([...ch.abilityIds,ability.id])]:ch.abilityIds.filter(x=>x!==ability.id);changed();};label.append(input,document.createTextNode(" "+ability.name));checks.appendChild(label);}card.appendChild(checks);renderEmbeddedInventory(card,ch.inventoryId,"Inventory");const mind=ch.initialMind;repeatRows(card,"Known facts",mind.knownFacts,{fields:[{key:"id",label:"ID"},{key:"text",label:"Text"}],call:null});repeatRows(card,"Beliefs",mind.beliefs,{fields:[{key:"id",label:"ID"},{key:"text",label:"Text"},{key:"confidence",label:"Confidence",values:()=>["low","medium","high"]}]});repeatRows(card,"Relationships",mind.relationships,{fields:[{key:"targetCharacterId",label:"Character",values:()=>Object.values(doc.characters).filter(x=>x.id!==ch.id)},{key:"summary",label:"Summary"}]});const memoryShape={fields:[{key:"id",label:"ID"},{key:"summary",label:"Summary"},{key:"importance",label:"Importance",number:true},{key:"protected",label:"Protected",values:()=>[{value:"true",label:"Yes"},{value:"false",label:"No"}]}]};repeatRows(card,"Recent memories",mind.recentMemories,memoryShape);repeatRows(card,"Long-term memories",mind.longTermMemories,memoryShape);panel.appendChild(card);}
+function renderCharacterPanel(){const panel=$("editor-panel");panel.replaceChildren();const ch=doc.characters?.[selectedLocationId];if(!ch){panel.appendChild(el("div","Add or select a character to begin.","empty"));return;}const card=el("section",undefined,"card"),head=el("div",undefined,"row");head.appendChild(el("h2",ch.name||ch.id));const del=el("button","Delete character","danger");del.onclick=()=>deleteCharacter(ch.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",ch.id,()=>{},{readonly:true});field(grid,"Display name",ch.name,v=>{ch.name=v;changed();});field(grid,"Player-facing description",ch.playerDescription,v=>{ch.playerDescription=v;changed();},{textarea:true});field(grid,"Interaction label",ch.interactionLabel,v=>{ch.interactionLabel=v;changed();});field(grid,"AI-facing description",ch.aiDescription,v=>{ch.aiDescription=v;changed();},{textarea:true});field(grid,"Inventory ID",ch.inventoryId,()=>{},{readonly:true,help:"Stable while the character exists; embedded items reference this ID."});field(grid,"Wallet",ch.wallet,v=>{ch.wallet=v;changed();},{type:"number"});field(grid,"Hidden aura",ch.engineFacts?.aura||"",v=>{ch.engineFacts=ch.engineFacts||{};ch.engineFacts.aura=v;changed();},{textarea:true});selectField(grid,"Starting location",ch.locationId,Object.values(doc.locations),v=>{ch.locationId=v;ch.sublocationId=doc.locations[v]?.defaultSublocationId||"";changed();render();});selectField(grid,"Starting position",ch.sublocationId,Object.values(doc.locations[ch.locationId]?.sublocations||{}),v=>{ch.sublocationId=v;changed();});selectField(grid,"Initial controller",ch.initialControllerId,["human","dummy","ai"],v=>{ch.initialControllerId=v;changed();});selectField(grid,"Fallback controller",ch.defaultControllerId,["dummy","ai"],v=>{ch.defaultControllerId=v;changed();});card.appendChild(grid);card.appendChild(el("h3","Assigned abilities"));const checks=el("div",undefined,"checks");for(const ability of Object.values(doc.abilities||{})){const label=el("label"),input=el("input");input.type="checkbox";input.checked=(ch.abilityIds||[]).includes(ability.id);input.onchange=()=>{ch.abilityIds=ch.abilityIds||[];ch.abilityIds=input.checked?[...new Set([...ch.abilityIds,ability.id])]:ch.abilityIds.filter(x=>x!==ability.id);changed();};label.append(input,document.createTextNode(" "+ability.name));checks.appendChild(label);}card.appendChild(checks);renderEmbeddedInventory(card,ch.inventoryId,"Inventory");const mind=ch.initialMind;repeatRows(card,"Known facts",mind.knownFacts,{fields:[{key:"id",label:"ID"},{key:"text",label:"Text"}]});repeatRows(card,"Beliefs",mind.beliefs,{fields:[{key:"id",label:"ID"},{key:"text",label:"Text"},{key:"confidence",label:"Confidence",number:true},{key:"activation",label:"Activation",number:true}]});repeatRows(card,"Relationships",mind.relationships,{fields:[{key:"targetCharacterId",label:"Character",values:()=>Object.values(doc.characters).filter(x=>x.id!==ch.id)},{key:"summary",label:"Summary"}]});const memoryShape={fields:[{key:"id",label:"ID"},{key:"topic",label:"Topic"},{key:"summary",label:"Summary"},{key:"retrievalBrief",label:"Retrieval brief"},{key:"importance",label:"Importance",number:true},{key:"protected",label:"Protected",values:()=>[{value:"true",label:"Yes"},{value:"false",label:"No"}]}]};repeatRows(card,"Short-term memories",mind.shortTermMemories,memoryShape);repeatRows(card,"Long-term memories",mind.longTermMemories,memoryShape);const verbatimShape={fields:[{key:"id",label:"ID"},{key:"turn",label:"Turn",number:true},{key:"kind",label:"Kind"},{key:"text",label:"Text"}]};repeatRows(card,"Verbatim observations",mind.verbatimObservations,verbatimShape);panel.appendChild(card);}
 function renderAbilityPanel(){const panel=$("editor-panel");panel.replaceChildren();const ability=doc.abilities?.[selectedLocationId];if(!ability){panel.appendChild(el("div","Add or select an ability to begin.","empty"));return;}const card=el("section",undefined,"card"),head=el("div",undefined,"row");head.appendChild(el("h2",ability.name||ability.id));const del=el("button","Delete ability","danger");del.onclick=()=>deleteAbility(ability.id);head.appendChild(del);card.appendChild(head);const grid=el("div",undefined,"grid");field(grid,"Technical ID",ability.id,()=>{},{readonly:true});field(grid,"Display name",ability.name,v=>{ability.name=v;changed();});field(grid,"Player-facing description",ability.playerDescription,v=>{ability.playerDescription=v;changed();},{textarea:true});field(grid,"AI-facing usage description",ability.aiDescription,v=>{ability.aiDescription=v;changed();},{textarea:true});selectField(grid,"Engine action type",ability.actionType,C.KNOWN_ACTIONS,v=>{ability.actionType=v;changed();});card.appendChild(grid);panel.appendChild(card);}
 function allInventoryOptions(){const result=[];for(const location of Object.values(doc.locations||{})){result.push({id:location.inventoryId,name:(location.name||location.id)+" — location"});for(const sub of Object.values(location.sublocations||{}))if(sub.inventoryId)result.push({id:sub.inventoryId,name:(sub.inventoryName||sub.name||sub.id)+" — position"});}for(const ch of Object.values(doc.characters||{}))result.push({id:ch.inventoryId,name:(ch.name||ch.id)+" — character"});return result;}
 function addEmbeddedItem(inventoryId,definitionId){if(!definitionId||!doc.itemDefinitions?.[definitionId])return;const id=C.generateItemInstanceId(doc,definitionId);doc.items[id]={id,definitionId,inventoryId};changed();render();}
@@ -168,7 +610,7 @@ function addLocation(){const name=prompt("Display name for the new location:");i
 function addSublocation(location){const name=prompt("Display name for the new position:");if(!name)return;const id=prompt("Stable technical ID:",location.id+"Position");if(!id)return;if(!C.ID_PATTERN.test(id)||location.sublocations[id]||Object.values(doc.locations).some(l=>l.id===id||l.sublocations?.[id])){alert("That ID is invalid or already used.");return;}location.sublocations[id]={id,type:"sublocation",locationId:location.id,name,enterLabel:"Move to "+name,selfText:"You are at "+name+".",occupantTemplate:"{name} is at "+name+".",capacity:1,reachableSublocationIds:[id]};if(!location.defaultSublocationId)location.defaultSublocationId=id;selectedSublocationId=id;changed();render();}
 function deleteLocation(id){const refs=C.locationDeletionReferences(doc,id);if(refs.length){alert("Cannot delete this location. Remove these references first:\n"+refs.join("\n"));return;}if(!confirm("Delete location `"+id+"`?"))return;delete doc.locations[id];selectedLocationId=Object.keys(doc.locations)[0]||"";selectedSublocationId="";changed();render();}
 function deleteSublocation(location,id){const refs=C.sublocationDeletionReferences(location,id,doc);if(refs.length){alert("Cannot delete this position. Remove these references first:\n"+refs.join("\n"));return;}if(!confirm("Delete position `"+id+"`?"))return;delete location.sublocations[id];selectedSublocationId="";changed();render();}
-function addCharacter(){const name=prompt("Display name for the new character:");if(!name)return;const id=prompt("Stable technical ID:","newCharacter");if(!id||!C.ID_PATTERN.test(id)||doc.characters[id])return alert("That character ID is invalid or already used.");const location=Object.values(doc.locations)[0];doc.characters[id]={id,name,playerDescription:"Describe how this character appears.",interactionLabel:"Speak with "+name,aiDescription:"Describe this character's private identity.",locationId:location?.id||"",sublocationId:location?.defaultSublocationId||"",inventoryId:"inventory_"+id,wallet:0,initialControllerId:"dummy",defaultControllerId:"dummy",abilityIds:[],engineFacts:{},initialMind:{knownFacts:[],beliefs:[],relationships:[],recentMemories:[],longTermMemories:[]}};selectedLocationId=id;changed();render();}
+function addCharacter(){const name=prompt("Display name for the new character:");if(!name)return;const id=prompt("Stable technical ID:","newCharacter");if(!id||!C.ID_PATTERN.test(id)||doc.characters[id])return alert("That character ID is invalid or already used.");const location=Object.values(doc.locations)[0];doc.characters[id]={id,name,playerDescription:"Describe how this character appears.",interactionLabel:"Speak with "+name,aiDescription:"Describe this character's private identity.",locationId:location?.id||"",sublocationId:location?.defaultSublocationId||"",inventoryId:"inventory_"+id,wallet:0,initialControllerId:"dummy",defaultControllerId:"dummy",abilityIds:[],engineFacts:{},initialMind:{schemaVersion:3,knownFacts:[],beliefs:[],relationships:[],verbatimObservations:[],shortTermMemories:[],longTermMemories:[]}};selectedLocationId=id;changed();render();}
 function addAbility(){const name=prompt("Display name for the new ability:");if(!name)return;const id=prompt("Stable technical ID:","newAbility");if(!id||!C.ID_PATTERN.test(id)||doc.abilities[id])return alert("That ability ID is invalid or already used.");doc.abilities[id]={id,name,actionType:"read_aura",playerDescription:"Describe this ability.",aiDescription:"Describe when the character should request this formal action."};selectedLocationId=id;changed();render();}
 function addItemDefinition(){const name=prompt("Display name for the new item type:");if(!name)return;const id=prompt("Stable technical ID:","newItemType");if(!id||!C.ID_PATTERN.test(id)||doc.itemDefinitions[id])return alert("That item type ID is invalid or already used.");doc.itemDefinitions[id]={id,name,familyId:id,tags:[],consumable:false,fillable:false,equipSlots:[]};selectedLocationId=id;changed();render();}
 function addItem(){const id=prompt("Stable technical ID for the item instance:","newItem_1");if(!id||!C.ID_PATTERN.test(id)||doc.items[id])return alert("That item ID is invalid or already used.");const definitionId=Object.keys(doc.itemDefinitions||{})[0]||"";const inventoryId=allInventoryOptions()[0]?.id||"";doc.items[id]={id,definitionId,inventoryId};selectedLocationId=id;changed();render();}

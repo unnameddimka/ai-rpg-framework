@@ -203,8 +203,26 @@ function main() {
 
     const source = readSource();
     let prefix = template.slice(0, start);
-    const suffix = template.slice(end + endMarker.length);
+    let suffix = template.slice(end + endMarker.length);
     prefix = prefix.replace(/<title>[\s\S]*?<\/title>/i, `<title>${htmlEscape(source.title)}</title>`);
+
+    // SugarCube's compiled Story.init() embeds the story name directly in the
+    // runtime bootstrap. Reusing an existing runtime after a StoryTitle rename
+    // must update that embedded name too; replacing <tw-storydata name> alone
+    // leaves Story.id / Config.saves.id on the previous build identity.
+    const embeddedStoryNamePattern = /_name=generateName\((?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\)/;
+    const prefixMatches = prefix.match(new RegExp(embeddedStoryNamePattern.source, "g")) || [];
+    const suffixMatches = suffix.match(new RegExp(embeddedStoryNamePattern.source, "g")) || [];
+    const embeddedStoryNameCount = prefixMatches.length + suffixMatches.length;
+    if (embeddedStoryNameCount !== 1) {
+        fail(`Fallback SugarCube runtime must contain exactly one embedded story-name bootstrap; found ${embeddedStoryNameCount}.`);
+    }
+    if (prefixMatches.length === 1) {
+        prefix = prefix.replace(embeddedStoryNamePattern, `_name=generateName(${JSON.stringify(source.title)})`);
+    } else {
+        suffix = suffix.replace(embeddedStoryNamePattern, `_name=generateName(${JSON.stringify(source.title)})`);
+    }
+
     const output = prefix + buildStoryData(source) + suffix;
 
     const temporary = `${outputPath}.tmp`;

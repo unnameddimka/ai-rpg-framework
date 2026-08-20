@@ -15,6 +15,7 @@ fi
 
 "$NODE_EXE" tools/generate-model-list.js
 "$NODE_EXE" tools/generate-world-data.js
+"$NODE_EXE" tools/generate-world-editor.js
 
 TEST_FILES=(
     tests/run-tests.js
@@ -28,6 +29,7 @@ TEST_FILES=(
     tests/run-generator-tests.js
     tests/run-narrator-tests.js
     tests/run-memory-consolidation-tests.js
+    tests/run-mind-retrieval-tests.js
     tests/run-night-timelapse-tests.js
     tests/run-daytime-tests.js
 )

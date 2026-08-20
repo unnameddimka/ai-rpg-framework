@@ -75,21 +75,6 @@
         actor.mindDiagnostics.beliefHistoryById[beliefId] = history.slice(-M.CONFIG.BELIEF_DIAGNOSTIC_LIMIT);
     }
 
-    function recordMaintenanceSnapshot(actorId, trigger) {
-        const pair = worldAndActor(actorId);
-        if (!pair.actor || !pair.actor.mind) return fail("MEMORY_SNAPSHOT_INVALID", "Character mind state is unavailable for a maintenance snapshot.");
-        const normalizedTrigger = ["automatic", "timelapse"].includes(trigger) ? trigger : "manual";
-        const existing = sanitizeMaintenanceSnapshots(pair.actor.mindMaintenanceSnapshots);
-        existing.push({
-            createdAt: new Date().toISOString(),
-            turn: Number.isInteger(pair.world.nextEventId) && pair.world.nextEventId > 0 ? pair.world.nextEventId : 1,
-            trigger: normalizedTrigger,
-            mind: clone(pair.actor.mind)
-        });
-        pair.actor.mindMaintenanceSnapshots = existing.slice(-MAINTENANCE_SNAPSHOT_LIMIT);
-        return ok({ actorId: actorId, snapshotCount: pair.actor.mindMaintenanceSnapshots.length });
-    }
-
     function setContinuation(actorId, continuation) {
         const pair = worldAndActor(actorId);
         if (!pair.actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
@@ -217,7 +202,8 @@
             topic: M.stableLegacyTopic(kind === "stm" ? "Legacy recent memory" : "Legacy long-term memory", memory.id),
             summary: String(memory.summary || "").trim(),
             importance: typeof memory.importance === "number" ? memory.importance : 0.5,
-            protected: memory.protected === true
+            protected: memory.protected === true,
+            retrievalBrief: ""
         };
     }
 
@@ -268,7 +254,8 @@
             }
             const memoryIds = new Set();
             for (const key of ["shortTermMemories", "longTermMemories"]) for (const memory of document.mind[key]) {
-                if (!V.validateMemoryRecord(memory, { maxSummaryLength: 2000 }).ok || memoryIds.has(memory.id)) return fail("CHARACTER_MIND_IMPORT_INVALID", "Mind v3 contains an invalid or duplicate memory.");
+                const maxSummaryLength = key === "shortTermMemories" ? M.CONFIG.STM_SUMMARY_MAX_CHARS : M.CONFIG.LTM_SUMMARY_MAX_CHARS;
+                if (!V.validateMemoryRecord(memory, { maxSummaryLength: maxSummaryLength }).ok || memoryIds.has(memory.id)) return fail("CHARACTER_MIND_IMPORT_INVALID", "Mind v3 contains an invalid or duplicate memory.");
                 memoryIds.add(memory.id);
             }
             const verbatimIds = new Set();
@@ -287,8 +274,19 @@
         return ok();
     }
 
+    function normalizePortableRetrievalBriefs(document) {
+        const normalized = clone(document);
+        if (!normalized || !normalized.mind) return normalized;
+        ["shortTermMemories", "longTermMemories"].forEach(function (partition) {
+            (normalized.mind[partition] || []).forEach(function (memory) {
+                if (typeof memory.retrievalBrief !== "string") memory.retrievalBrief = "";
+            });
+        });
+        return normalized;
+    }
+
     function toV3PortableDocument(document) {
-        if (document.version === 3) return clone(document);
+        if (document.version === 3) return normalizePortableRetrievalBriefs(document);
         return {
             schema: PORTABLE_MIND_SCHEMA,
             version: PORTABLE_MIND_VERSION,
@@ -394,7 +392,6 @@
         sanitizeMaintenanceSnapshots: sanitizeMaintenanceSnapshots,
         sanitizeMaintenanceArchive: sanitizeMaintenanceArchive,
         sanitizeMindMaintenanceState: sanitizeMindMaintenanceState,
-        recordMaintenanceSnapshot: recordMaintenanceSnapshot,
         ensureRuntimeMindFields: ensureRuntimeMindFields,
         incrementMindRevision: incrementMindRevision,
         addBeliefDiagnostic: addBeliefDiagnostic,

@@ -109,6 +109,8 @@ Exactly one character must be HumanController-controlled. Switching is atomic an
 
 Authored `defaultControllerId` is not the same as current runtime control assignment.
 
+`mind.pendingObservations` is strictly an AI-controller scheduler inbox. Human/Dummy characters still receive committed experience into verbatim memory, but do not retain scheduler pending records. Switching away from AI clears the inbox; switching a former Human character back to AI starts with a clean inbox plus any newly generated controller-transition observation. Migration repairs legacy non-AI backlogs away rather than replaying old Human experience.
+
 ## 5. Character mind
 
 Mind v3 separates runtime stimuli, experienced history, autobiographical memory, and interpretation. The canonical design specification is `docs/engine/ai-rpg-mind-v3.md`.
@@ -116,10 +118,11 @@ Mind v3 separates runtime stimuli, experienced history, autobiographical memory,
 A character mind contains:
 
 - `knownFacts`: authored baseline, refreshed from current authoring during migration;
-- `pendingObservations`: authoritative unprocessed scheduler/reaction inbox;
+- `pendingObservations`: authoritative unprocessed **AI scheduler** reaction inbox; non-AI controllers do not retain this backlog;
 - `verbatimObservations`: persistent compact records of actually committed/delivered recent experience;
 - `shortTermMemories`: thematic, relatively detailed autobiographical memory;
 - `longTermMemories`: thematic, intentionally more lossy durable autobiographical memory;
+- STM/LTM also persist derived `retrievalBrief` index metadata used only for semantic recall;
 - `beliefs`: subjective inductive interpretations with stable `id`, `text`, numeric `confidence`, and numeric `activation`;
 - `relationships`: runtime durable social summaries.
 
@@ -127,13 +130,15 @@ A character mind contains:
 
 Experience enters `verbatimObservations` only after canonical commit/delivery. Raw scheduler envelopes, provider diagnostics, failed intentions, speculative model output, hidden information, and timelapse summaries are not memory. Normal STM consolidation is eligible strictly above 40 verbatim records. It snapshots the complete current buffer, marks every record older than the newest 20 as the exact eviction set, gives the retained 20 as interpretive context, and removes only the captured eviction IDs after a validated atomic commit. Newly arriving observations survive an older in-flight job. Direct belief reinforcement/contradiction may use only the current eviction set as fresh evidence, preventing rolling-window double reinforcement.
 
-STM and LTM are topic-oriented records with stable engine-owned IDs; topics are labels, never identity. STM favors minimal information loss and topic upsert. LTM preserves durable relationship history, discoveries, conflict, commitments, identity-relevant episodes and recurring patterns while intentionally discarding routine detail. Protected-memory semantics remain authoritative: protected STM/LTM cannot be silently rewritten or retired. LTM consolidation is an evidence-driven delta with no arbitrary operation-count cap: the model may make as many material durable-memory and higher-order belief changes as the supplied autobiographical material justifies. Every material LTM write names its source STM/LTM provenance. Any number of unprotected STM records may retire in one atomic pass only through explicit coverage groups marking them either `represented` by resulting LTM or `safe_to_forget` with a compact `routine`/`redundant`/`transient` reason; omitted STM remains available for later consolidation.
+STM and LTM are topic-oriented records with stable engine-owned IDs; topics are labels, never identity. Both use a 4000-character summary hard boundary and the same <=600 `retrievalBrief` semantic-index contract; their difference is function rather than container size. STM favors minimal information loss and bounded coherent topic upsert. Its 4000-character limit is per record, not a forgetting target: when a broad STM can no longer absorb relevant evidence without losing useful detail, the model may explicitly semantically repartition one or more unprotected source STM records into multiple coherent replacement records. Repartition is atomic, source-owned and stale-checked; source STM cannot simultaneously be normally upserted, overlapping source sets are invalid, every replacement counts toward the existing eight-write STM budget, and at most one replacement may retain one source ID while all new IDs are allocated by the engine from the live global counter at commit. A retained-ID replacement must itself materially change normalized model-writable memory state; an unchanged source plus genuinely new material should use ordinary creation rather than a fake repartition echo. Failed repartition preserves both source STM and verbatim evidence. Protected-memory semantics remain authoritative: protected STM/LTM cannot be silently rewritten, repartitioned, or retired. LTM is a subtractive transformation: after asking what the character should still know once source STM is gone, it intentionally discards minor/repetitive/transient detail while preserving significant durable facts. There is no fixed compression ratio and no goal to minimize LTM record count; if several distinct durable themes deserve preservation, multiple semantically coherent LTM records are preferred over deleting significant facts merely to fit one record. LTM consolidation is an evidence-driven delta with no arbitrary operation-count cap on genuinely required durable-memory writes/STM retirement. Higher-order belief output follows a separate fresh-evidence semantic contract rather than a quantity target: supplied STM/LTM/relationships/beliefs are context, consistency is not new evidence, and `higherOrderBeliefEffects` is a sparse (usually empty) channel only for genuinely new cross-memory inference rather than a scan of compatible existing beliefs. Relevance alone never requires an LTM upsert; every upsert must materially change normalized topic/summary/importance/retrievalBrief, while unmentioned LTM remains intact automatically. Every material LTM write names its source STM/LTM provenance; provenance supports an actual transformation but is not itself an effect, and for an upsert citing only the target LTM itself is insufficient evidence for a rewrite. Any number of unprotected STM records may retire in one atomic pass only through explicit coverage groups marking them either `represented` by resulting LTM or `safe_to_forget` with a compact `routine`/`redundant`/`transient` reason; omitted STM remains available for later consolidation. Existing-belief higher-order effects remain semantic `{beliefId,effect,strength}` evidence and never assign replacement confidence/activation directly.
 
 Beliefs answer what remembered experience means rather than what happened. Every model request in which beliefs influence interpretation receives one centralized belief-semantics block. Existing belief confidence is changed only by engine-owned bounded log-odds math from model-reported `supports | contradicts | ambiguous` evidence and strength. Activation independently represents salience; relevant evidence/use raises it with a saturating update and timelapse maintenance decays it exponentially. Time alone does not lower confidence. Ordinary character turns/reflection may update relationship summaries and explicitly activate supplied beliefs, but may not directly author autobiographical memory, belief text/confidence, or belief deletion.
 
 Belief reconciliation replaces the v2 contradiction scanner. Candidate clusters favor activated/recently changed or tension-bearing beliefs and receive relevant STM/LTM evidence. Outcomes may revise, merge, weaken, reinforce, contextualize, supersede, remove, or deliberately leave dissonance unresolved. Reconciliation never mutates autobiographical memory merely to make belief text coherent.
 
-All model-produced mind changes use snapshot -> asynchronous computation -> schema/source validation -> stale check -> candidate-clone validation -> atomic commit. Normal STM jobs run in a transient non-blocking Utility-model lane with at most one queued/active job per character; canonical decisions/reaction waves have priority. Appended verbatim records do not by themselves stale an otherwise compatible job, but changes to the maintained mind revision/source snapshot do. In-flight auxiliary jobs are not persisted. Multi-character timelapse mind work may prepare concurrently while commits allocate IDs from the then-current global counter, so unrelated global allocator advancement is not a stale-mind condition.
+All model-produced mind changes use snapshot -> asynchronous computation -> schema/source validation -> stale check -> candidate-clone validation -> atomic commit. Normal STM jobs run in a transient non-blocking Utility-model lane with at most one queued/active job per character; canonical decisions/reaction waves have priority. Appended verbatim records do not by themselves stale an otherwise compatible job, but incompatible changes to the maintained source state do. In-flight auxiliary jobs are not persisted. Multi-character timelapse mind work may prepare concurrently while commits allocate IDs from the then-current global counter, so unrelated global allocator advancement is not a stale-mind condition. Persistent developer recovery history stores at most one full pre-run mind snapshot per logical maintenance run rather than near-identical per-stage copies. Independent retrieval-brief backfill is derived metadata recovery, writes only still-empty briefs whose topic/summary remain unchanged, and creates no full recovery snapshot.
+
+Ordinary `game-decision` uses a cheap Utility-model semantic preflight to choose bounded autobiographical context. The selector sees current compact runtime context plus a catalog of `STM/LTM: id + topic + retrievalBrief` and `beliefs: id + text + confidence + activation`; it never receives full STM/LTM summaries or the formal-action catalog. It returns IDs only, up to the configurable 12 STM / 8 LTM / 16 belief budgets. This read-only ingress is deliberately tolerant: unknown/wrong-layer/duplicate IDs are dropped and over-budget results are truncated in model order, while a valid empty result remains valid. The Character-model decision then receives the full canonical records for the sanitized selected IDs. Empty briefs remain usable through `topic` alone. Only genuine selector transport/parse/required-structure failure uses the previous deterministic bounded selector as fallback; malformed/truncated selector JSON is not repaired with another model call. Semantic retrieval is Phase 1 for ordinary `game-decision` only; timelapse planning/reflection continue their existing context paths.
 
 Timelapse is a cognitive boundary. Before planning, all current character verbatim buffers are force-consolidated with the entire snapshot marked for eviction; failure preserves source records and is diagnostic rather than destructive. Committed timelapse actions/interactions/settlement append actual experienced records at commit time. After the period, eligible STM/LTM consolidation, higher-order belief reappraisal/reconciliation, and activation decay run; after lived rounds/settlement have committed, auxiliary/reflection failure does not roll back the period.
 
@@ -214,7 +219,7 @@ character_moved { actorId, fromLocationId, toLocationId, ... }
 
 The same event is delivered to the union of recipients who can perceive the actor from source or destination. It is not split into separate departure/arrival canonical events.
 
-Events generate recipient-specific pending observations. `character.mind.pendingObservations` is the authoritative reaction inbox. Event-journal recipient/processed metadata is retained only for diagnostics/history and must not drive a second independent pending queue. Pending observations are already perception-filtered; the model must treat a delivered observation as perceived.
+Events generate recipient-specific experienced observations. For AI-controlled recipients, `character.mind.pendingObservations` is the authoritative reaction inbox until scheduler processing. Human/Dummy recipients do not retain scheduler pending records; their delivered committed experience still reaches verbatim memory. Event-journal recipient/processed metadata is retained only for diagnostics/history and must not drive a second independent pending queue. Pending AI observations are already perception-filtered; the model must treat a delivered observation as perceived.
 
 Model context receives a compact recipient-safe observation projection rather than a cloned event envelope. Routing/scheduler/provider bookkeeping (`recipients`, legacy `pendingFor`, `processedBy`, controller/provider metadata) is excluded.
 
@@ -343,19 +348,27 @@ Gameplay response caching is not enabled.
 
 ## 15. Shared request executor
 
-The shared executor provides:
+The low-level shared executor provides:
 
 - serialized causal request execution by default;
 - an explicit concurrent path used only by workflows that prove requests independent;
 - at least one second between live transport calls;
 - `Retry-After` aware shared provider cooldown after 429;
-- a hard per-transport liveness timeout (default 180 seconds) covering both fetch and complete response-body read;
+- a hard per-transport liveness timeout (default 180 seconds) covering both fetch and complete response-body read; the Stage 2 `mind-v3-ltm` profile may use its targeted 300-second override while preflight and ordinary gameplay retain the default;
 - optional presentation-request suppression while provider rate-limit cooldown is active;
 - no automatic rate-limit retry loop;
 - sanitized exchange logging (latest 100 exchanges);
 - request purpose/stage/model/options and provider diagnostics.
 
 The one-second pacing guard remains intentional even when timelapse permits safe parallel work.
+
+Above the transport executor, `StructuredAIRequest` centralizes the repeated structured-output lifecycle: transport call, JSON extraction/parsing, truncation detection, protocol-specific normalization/validation callbacks, configurable repair/retry policy, and attempt diagnostics. Domain protocols still own their schemas and semantic validators. Ordinary AI decisions, timelapse structured work, Mind v3 maintenance, semantic retrieval and brief backfill reuse this lifecycle rather than maintaining separate repair engines.
+
+### Model Output Must Have Effect
+
+Structured model→engine mutation protocols follow a project-wide **Model Output Must Have Effect** invariant. The model may inspect far more state than it returns: relevance, retrieval, contextual use, or continued importance do not justify echoing an existing record. Every upsert must materially change model-writable state after protocol normalization; unchanged normalized records are omitted before generation whenever the model follows the prompt and are rejected deterministically where comparison is available. Unmentioned persistent records remain unchanged automatically. Engine-owned fields, provenance/debug metadata, or cosmetic paraphrase do not manufacture an effect. Prompt prevention is the primary token-efficiency mechanism; validator rejection/repair is defense in depth. Explicit protocol-level negative/null decisions such as `action:null`, intentional no-reaction, `safe_to_forget`, or an empty mutation set remain valid when the decision itself is the semantic result of the invocation.
+
+Current model-facing upsert channels applying this rule are STM, LTM, retained-ID STM repartition replacements, and relationship summaries in ordinary decisions/results and post-timelapse reflection. LTM provenance supports an actual transformation but is not itself a reason to emit an unchanged memory. No arbitrary LTM write cap is introduced: high-volume **meaningful** consolidation remains valid; useless echoed work is forbidden.
 
 ## 16. AI protocol
 
@@ -391,7 +404,7 @@ This synchronization is bookkeeping only: it does not create a gameplay turn, ev
 
 The standalone editor is a browser-only authoring tool for `data/world.json`. It does not write directly into repository files; Save downloads a new JSON file.
 
-The editor mirrors authored data but is not a runtime/save editor. It also exposes top-level `travelerProfiles` as authored identity templates containing only stable ID, name, player-facing description and AI-facing authoring; Traveler mechanics and aura are deliberately not profile-authorable.
+The editor mirrors authored data but is not a runtime/save editor. Authored validation has one shared JavaScript implementation used by both `tools/generate-world-data.js` and the editor; the build embeds that validator into the single offline HTML artifact. The editor therefore validates the same current contracts as the generator, including Mind v3 numeric beliefs/activation, STM/LTM/verbatim/retrieval briefs, day activities and timelapse actions. It also exposes top-level `travelerProfiles` as authored identity templates containing only stable ID, name, player-facing description and AI-facing authoring; Traveler mechanics and aura are deliberately not profile-authorable.
 
 Fresh-world initialization uses the stable canonical `player` shell. Before gameplay, the user acknowledges the project AI-interaction disclaimer and then chooses Generic Traveler, one authored Traveler profile, or Custom per-save authoring. Identity overlays may change only name/playerDescription/aiDescription plus derived presentation labels; all mechanical shell state and the shared otherworldly aura remain canonical.
 
@@ -401,7 +414,8 @@ The crystal sphere/prompt lab exposes scheduler/request state, dry runs, exchang
 
 Normal sidebar may expose read-only scheduler information, but there is no manual gameplay “process pending AI request” button. Admin/debug controls may safely dismiss pending reactions, clear continuation, or clear both (including a global keep-list operation) only when no AI/executor/wave/migration work is live. Such cleanup is runtime administration, emits no story event, and never implicitly sleeps/wakes a character.
 
-A red **Emergency dump** control exports one best-effort ZIP without requiring world validation. It is also exposed as a top-level fixed control above blocking overlays so diagnostics remain reachable regardless of gameplay lock, pending day-work offer, AI/timelapse work, or migration UI. Independent JSON files capture live game/SugarCube state, full minds (including Mind v3 verbatim/STM/LTM/beliefs with confidence+activation, recent dialogue, maintenance snapshots, and belief diagnostic history), scheduler/request diagnostics, the same portable Sphere/AI exchange-log representation used by Prompt Lab export, bounded low-level OpenRouter transport history, bounded framework-owned external network history, latest weather-pipeline diagnostics, the most recent handled timelapse result/failure stage, narrator/UI state, and recent uncaught browser errors while defensively redacting API/authentication secrets. `manifest.json` records per-section success/failure; failure to capture one section must not prevent the remaining files from being downloaded.
+A red **Emergency dump** control exports one best-effort ZIP without requiring world validation. It is also exposed as a top-level fixed control above blocking overlays so diagnostics remain reachable regardless of gameplay lock, pending day-work offer, AI/timelapse work, or migration UI. The dump preserves canonical world/SugarCube state, full minds and recovery snapshots needed to reconstruct represented recovery points, scheduler/aux state, event/history data, current retrieval diagnostics, latest handled timelapse state, weather/network/runtime errors, and one complete high-level request/response record per semantic AI exchange. Low-level transport diagnostics remain separate for network/provider failure analysis. Full request/response payloads are not duplicated into parallel exchange files/traces; structured traces retain repair/retry metadata and only attempt-specific message deltas where needed. `recovery-points.json` indexes current state and persisted mind-recovery boundaries. `manifest.json` records per-section success/failure; failure to capture one section must not prevent the remaining files from being downloaded. API/authentication secrets are defensively redacted.
+
 
 `frameworkUI.turnBusy` is obsolete as persisted state. Busy UI derives only from live runtime operations. Save/load strips or ignores stale serialized busy flags; rendering (`Engine.show()`) is not recovery logic because passage rendering may itself request optional narration.
 
@@ -423,9 +437,19 @@ Explicitly deferred:
 
 - professional NPC daily schedules/travel-to-work;
 - broader village economy, prices, barter/shop abstractions, and additional production chains;
-- retrieval-based hybrid memory/embeddings;
+- embeddings/vector indexing if the future compact semantic-retrieval catalog itself becomes too large;
 - large-crowd optimization beyond current emergency limits;
 - expanded loudness propagation/shouts;
 - equipment stacking/layering/concealment controls;
 - combat/quest systems;
 - narrator grounding redesign.
+
+## LTM maintenance semantic preflight
+
+STM→LTM consolidation uses a two-stage archive lookup. The read-only preflight receives every source STM in full, the complete compact belief/relationship significance context, and every historical LTM only as `id/topic/retrievalBrief/importance/protected`; it returns only a high-recall `relevantLtmIds` set with no arbitrary count cap. The main consolidation request then receives every source STM in full again plus only those selected historical LTM bodies in full. Unselected LTM remains canonical and unchanged and cannot be upserted or cited as LTM provenance by that prepared Stage-2 proposal. New durable-memory creation remains unconstrained by the selected historical set. Preflight failure or stale mind state before Stage 2 aborts safely without retiring STM or mutating LTM.
+
+Timelapse reflection uses fresh event-driven belief salience: seeing, rereading, or finding an existing belief compatible with context is not activation evidence. `activatedBeliefIds` should be sparse and may be empty; existing deterministic reflection bounds remain a safety layer.
+
+The active project/product baseline is **MVP** rather than POC.
+
+**Persistence identity invariant:** the current SugarCube `StoryTitle` is `AI RPG Framework MVP`, producing current save ID `ai-rpg-framework-mvp`. The MVP build accepts both its current save ID and the legacy `ai-rpg-framework-poc` ID when loading, but newly created saves always use MVP identity. Legacy POC browser-save slots are copied forward non-destructively into the MVP storage namespace when the corresponding MVP entry is absent; unrelated legacy settings/runtime storage is not copied. Persisted OpenRouter keys use a seven-day (`7 * 24h`) TTL; credential-storage architecture is otherwise unchanged.

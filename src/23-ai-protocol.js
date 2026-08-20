@@ -48,19 +48,26 @@
         return [];
     }
 
-    function validateUpdatesDetailed(updates, path, existingBeliefIds) {
+    function validateUpdatesDetailed(updates, path, existingBeliefIds, existingRelationships) {
         const errors = exactKeyErrors(updates, UPDATE_KEYS, path);
         if (!isPlainObject(updates)) return errors;
         if (!Array.isArray(updates.relationshipsToUpsert)) errors.push(`${path}.relationshipsToUpsert must be an array.`);
         else if (updates.relationshipsToUpsert.length > 5) errors.push(`${path}.relationshipsToUpsert may contain at most 5 records.`);
         if (!Array.isArray(updates.activatedBeliefIds)) errors.push(`${path}.activatedBeliefIds must be an array.`);
         else if (updates.activatedBeliefIds.length > 12) errors.push(`${path}.activatedBeliefIds may contain at most 12 IDs.`);
+        const existingRelationshipByTarget = new Map((Array.isArray(existingRelationships) ? existingRelationships : []).filter(function (relationship) {
+            return isPlainObject(relationship) && typeof relationship.targetCharacterId === "string";
+        }).map(function (relationship) { return [relationship.targetCharacterId, relationship]; }));
         (Array.isArray(updates.relationshipsToUpsert) ? updates.relationshipsToUpsert : []).forEach(function (relationship, index) {
             const recordPath = `${path}.relationshipsToUpsert[${index}]`;
             errors.push.apply(errors, exactKeyErrors(relationship, ["targetCharacterId", "summary"], recordPath));
             if (!isPlainObject(relationship)) return;
             errors.push.apply(errors, requiredTextErrors(relationship.targetCharacterId, `${recordPath}.targetCharacterId`, 200));
             errors.push.apply(errors, requiredTextErrors(relationship.summary, `${recordPath}.summary`, 500));
+            const existing = existingRelationshipByTarget.get(relationship.targetCharacterId);
+            if (existing && typeof relationship.summary === "string" && relationship.summary.trim() === String(existing.summary || "").trim()) {
+                errors.push(`${recordPath} has no effect after normalization. Omit an unchanged relationship upsert entirely; relevance or continued importance does not justify echoing it.`);
+            }
         });
         const seen = new Set();
         (Array.isArray(updates.activatedBeliefIds) ? updates.activatedBeliefIds : []).forEach(function (id, index) {
@@ -157,7 +164,7 @@
         return [];
     }
 
-    function validateDecision(value, actionCatalog, spokenTargetIds, existingBeliefIds) {
+    function validateDecision(value, actionCatalog, spokenTargetIds, existingBeliefIds, existingRelationships) {
         const errors = exactKeyErrors(value, DECISION_KEYS, "response");
         if (!isPlainObject(value)) return finishValidation(value, errors);
         errors.push.apply(errors, nullableTextErrors(value.publicNarrative, "response.publicNarrative"));
@@ -178,7 +185,7 @@
         } else if (!loudnessValues.includes(value.spokenLoudness)) {
             errors.push(`response.spokenLoudness must be one of ${loudnessValues.join(", ")} when spokenText is present.`);
         }
-        errors.push.apply(errors, validateUpdatesDetailed(value.memoryUpdates, "response.memoryUpdates", existingBeliefIds));
+        errors.push.apply(errors, validateUpdatesDetailed(value.memoryUpdates, "response.memoryUpdates", existingBeliefIds, existingRelationships));
 
         if (value.action !== null) {
             if (!isPlainObject(value.action) || typeof value.action.type !== "string") {
@@ -195,184 +202,20 @@
         return finishValidation(value, errors);
     }
 
-    function validateResult(value, existingBeliefIds) {
+    function validateResult(value, existingBeliefIds, existingRelationships) {
         const errors = exactKeyErrors(value, RESULT_KEYS, "response");
         if (!isPlainObject(value)) return finishValidation(value, errors);
         errors.push.apply(errors, nullableTextErrors(value.publicNarrative, "response.publicNarrative"));
         errors.push.apply(errors, nullableTextErrors(value.spokenText, "response.spokenText"));
-        errors.push.apply(errors, validateUpdatesDetailed(value.memoryUpdates, "response.memoryUpdates", existingBeliefIds));
+        errors.push.apply(errors, validateUpdatesDetailed(value.memoryUpdates, "response.memoryUpdates", existingBeliefIds, existingRelationships));
         return finishValidation(value, errors);
     }
 
 
-    function validateRecentMaintenance(value, context) {
-        const keys = ["groups", "archiveOnlyRecentMemoryIds", "keepActiveRecentMemoryIds"];
-        const errors = exactKeyErrors(value, keys, "response");
-        if (!isPlainObject(value)) return finishValidation(value, errors);
-        keys.forEach(function (key) { if (!Array.isArray(value[key])) errors.push(`response.${key} must be an array.`); });
-        const source = Array.isArray(context && context.sourceRecentMemories) ? context.sourceRecentMemories : [];
-        const allowed = new Set(source.map(function (memory) { return memory && memory.id; }).filter(Boolean));
-        const protectedIds = new Set(source.filter(function (memory) { return memory && memory.protected; }).map(function (memory) { return memory.id; }));
-        const seen = new Set();
-        if (Array.isArray(value.groups) && value.groups.length > 12) errors.push("response.groups may contain at most 12 groups.");
-        (Array.isArray(value.groups) ? value.groups : []).forEach(function (group, index) {
-            const path = `response.groups[${index}]`;
-            errors.push.apply(errors, exactKeyErrors(group, ["sourceRecentMemoryIds", "replacement"], path));
-            if (!isPlainObject(group)) return;
-            if (!Array.isArray(group.sourceRecentMemoryIds) || group.sourceRecentMemoryIds.length < 1 || group.sourceRecentMemoryIds.length > 12) {
-                errors.push(`${path}.sourceRecentMemoryIds must contain 1-12 source IDs.`);
-            } else {
-                group.sourceRecentMemoryIds.forEach(function (id, sourceIndex) {
-                    if (!allowed.has(id)) errors.push(`${path}.sourceRecentMemoryIds[${sourceIndex}] is not in this batch.`);
-                    else if (protectedIds.has(id)) errors.push(`${path}.sourceRecentMemoryIds[${sourceIndex}] cannot use a protected memory.`);
-                    else if (seen.has(id)) errors.push(`${path}.sourceRecentMemoryIds[${sourceIndex}] is assigned more than once.`);
-                    else seen.add(id);
-                });
-            }
-            errors.push.apply(errors, exactKeyErrors(group.replacement, ["summary", "importance"], `${path}.replacement`));
-            if (isPlainObject(group.replacement)) {
-                errors.push.apply(errors, requiredTextErrors(group.replacement.summary, `${path}.replacement.summary`, 2000));
-                if (typeof group.replacement.importance !== "number" || !Number.isFinite(group.replacement.importance) || group.replacement.importance < 0 || group.replacement.importance > 1) {
-                    errors.push(`${path}.replacement.importance must be a finite number from 0 to 1.`);
-                }
-            }
-        });
-        ["archiveOnlyRecentMemoryIds", "keepActiveRecentMemoryIds"].forEach(function (key) {
-            (Array.isArray(value[key]) ? value[key] : []).forEach(function (id, index) {
-                if (!allowed.has(id)) errors.push(`response.${key}[${index}] is not in this batch.`);
-                else if (protectedIds.has(id) && key !== "keepActiveRecentMemoryIds") errors.push(`response.${key}[${index}] cannot remove a protected memory.`);
-                else if (seen.has(id)) errors.push(`response.${key}[${index}] is assigned more than once.`);
-                else seen.add(id);
-            });
-        });
-        allowed.forEach(function (id) { if (!seen.has(id)) errors.push(`source recent memory ${id} must be assigned exactly once.`); });
-        return finishValidation(value, errors);
-    }
-
-    function validateBeliefMaintenance(value, context) {
-        const errors = exactKeyErrors(value, ["groups"], "response");
-        if (!isPlainObject(value)) return finishValidation(value, errors);
-        if (!Array.isArray(value.groups)) errors.push("response.groups must be an array.");
-        if (Array.isArray(value.groups) && value.groups.length > 4) errors.push("response.groups may contain at most 4 merge groups.");
-        const beliefs = new Set((context && context.activeBeliefs || []).map(function (belief) { return belief && belief.id; }).filter(Boolean));
-        const usedIds = new Set();
-        (Array.isArray(value.groups) ? value.groups : []).forEach(function (group, index) {
-            const path = `response.groups[${index}]`;
-            errors.push.apply(errors, exactKeyErrors(group, ["sourceBeliefIds", "replacement"], path));
-            if (!isPlainObject(group)) return;
-            const ids = group.sourceBeliefIds;
-            if (!Array.isArray(ids) || ids.length < 2 || ids.length > 4) {
-                errors.push(`${path}.sourceBeliefIds must contain 2-4 IDs.`);
-            } else {
-                const localIds = new Set();
-                ids.forEach(function (id, idIndex) {
-                    if (!beliefs.has(id)) errors.push(`${path}.sourceBeliefIds[${idIndex}] is not an active supplied belief.`);
-                    if (localIds.has(id)) errors.push(`${path}.sourceBeliefIds[${idIndex}] is duplicated within the group.`);
-                    else localIds.add(id);
-                    if (usedIds.has(id)) errors.push(`${path}.sourceBeliefIds[${idIndex}] is reused by another merge group.`);
-                    else usedIds.add(id);
-                });
-            }
-            errors.push.apply(errors, exactKeyErrors(group.replacement, ["text", "confidence"], `${path}.replacement`));
-            if (isPlainObject(group.replacement)) {
-                errors.push.apply(errors, requiredTextErrors(group.replacement.text, `${path}.replacement.text`, 500));
-                if (!["low", "medium", "high"].includes(group.replacement.confidence)) {
-                    errors.push(`${path}.replacement.confidence must be low, medium, or high.`);
-                }
-            }
-        });
-        return finishValidation(value, errors);
-    }
-
-    function validateReconciliationDiscovery(value, context) {
-        const errors = exactKeyErrors(value, ["conflicts"], "response");
-        if (!isPlainObject(value)) return finishValidation(value, errors);
-        if (!Array.isArray(value.conflicts)) errors.push("response.conflicts must be an array.");
-        if (Array.isArray(value.conflicts) && value.conflicts.length > 8) errors.push("response.conflicts may contain at most 8 candidates.");
-        const beliefs = new Set((context && context.currentBeliefs || []).map(function (belief) { return belief && belief.id; }).filter(Boolean));
-        const memories = new Set((context && context.activeLongTermMemories || []).map(function (memory) { return memory && memory.id; }).filter(Boolean));
-        const seenPairs = new Set();
-        (Array.isArray(value.conflicts) ? value.conflicts : []).forEach(function (conflict, index) {
-            const path = `response.conflicts[${index}]`;
-            errors.push.apply(errors, exactKeyErrors(conflict, ["beliefId", "longTermMemoryId", "strength"], path));
-            if (!isPlainObject(conflict)) return;
-            if (!beliefs.has(conflict.beliefId)) errors.push(`${path}.beliefId is not in the current reconciliation belief batch.`);
-            if (!memories.has(conflict.longTermMemoryId)) errors.push(`${path}.longTermMemoryId is not an active supplied long-term memory.`);
-            if (!["direct", "strong", "possible"].includes(conflict.strength)) errors.push(`${path}.strength must be direct, strong, or possible.`);
-            const pairKey = `${String(conflict.beliefId)}\u0000${String(conflict.longTermMemoryId)}`;
-            if (seenPairs.has(pairKey)) errors.push(`${path} duplicates an earlier conflict pair.`);
-            else seenPairs.add(pairKey);
-        });
-        return finishValidation(value, errors);
-    }
-
-    function validateReconciliationResolution(value, context) {
-        const errors = exactKeyErrors(value, ["resolution", "beliefReplacement", "memoryReplacement"], "response");
-        if (!isPlainObject(value)) return finishValidation(value, errors);
-        if (!["revise_belief", "revise_memory", "revise_both", "keep_conflict"].includes(value.resolution)) {
-            errors.push("response.resolution must be revise_belief, revise_memory, revise_both, or keep_conflict.");
-        }
-        const selectedBelief = context && context.selectedBelief;
-        const selectedMemory = context && context.selectedLongTermMemory;
-        if (!selectedBelief || !selectedMemory) errors.push("reconciliation resolution context is missing the selected pair.");
-        const wantsBelief = value.resolution === "revise_belief" || value.resolution === "revise_both";
-        const wantsMemory = value.resolution === "revise_memory" || value.resolution === "revise_both";
-        if (wantsBelief) {
-            errors.push.apply(errors, exactKeyErrors(value.beliefReplacement, ["text", "confidence"], "response.beliefReplacement"));
-            if (isPlainObject(value.beliefReplacement)) {
-                errors.push.apply(errors, requiredTextErrors(value.beliefReplacement.text, "response.beliefReplacement.text", 500));
-                if (!["low", "medium", "high"].includes(value.beliefReplacement.confidence)) errors.push("response.beliefReplacement.confidence must be low, medium, or high.");
-            }
-        } else if (value.beliefReplacement !== null) {
-            errors.push("response.beliefReplacement must be null for this resolution.");
-        }
-        if (wantsMemory) {
-            if (selectedMemory && selectedMemory.protected === true) errors.push("A protected long-term memory cannot be revised by reconciliation.");
-            errors.push.apply(errors, exactKeyErrors(value.memoryReplacement, ["summary", "importance"], "response.memoryReplacement"));
-            if (isPlainObject(value.memoryReplacement)) {
-                errors.push.apply(errors, requiredTextErrors(value.memoryReplacement.summary, "response.memoryReplacement.summary", 2000));
-                if (typeof value.memoryReplacement.importance !== "number" || !Number.isFinite(value.memoryReplacement.importance) || value.memoryReplacement.importance < 0 || value.memoryReplacement.importance > 1) {
-                    errors.push("response.memoryReplacement.importance must be a finite number from 0 to 1.");
-                }
-            }
-        } else if (value.memoryReplacement !== null) {
-            errors.push("response.memoryReplacement must be null for this resolution.");
-        }
-        return finishValidation(value, errors);
-    }
-
-    function validateLongTermMaintenance(value, context) {
-        const errors = exactKeyErrors(value, ["merge"], "response");
-        if (!isPlainObject(value)) return finishValidation(value, errors);
-        if (value.merge === null) return finishValidation(value, errors);
-        errors.push.apply(errors, exactKeyErrors(value.merge, ["sourceLongTermMemoryIds", "replacement"], "response.merge"));
-        if (!isPlainObject(value.merge)) return finishValidation(value, errors);
-        const memories = new Map((context && context.longTermMemories || []).map(function (memory) { return [memory.id, memory]; }));
-        const ids = value.merge.sourceLongTermMemoryIds;
-        if (!Array.isArray(ids) || ids.length < 2 || ids.length > 3) errors.push("response.merge.sourceLongTermMemoryIds must contain 2-3 IDs.");
-        else {
-            const seen = new Set();
-            ids.forEach(function (id, index) {
-                const memory = memories.get(id);
-                if (!memory) errors.push(`response.merge.sourceLongTermMemoryIds[${index}] is not an active supplied long-term memory.`);
-                else if (memory.protected) errors.push(`response.merge.sourceLongTermMemoryIds[${index}] cannot use a protected memory.`);
-                else if (seen.has(id)) errors.push(`response.merge.sourceLongTermMemoryIds[${index}] is duplicated.`);
-                else seen.add(id);
-            });
-        }
-        errors.push.apply(errors, exactKeyErrors(value.merge.replacement, ["summary", "importance"], "response.merge.replacement"));
-        if (isPlainObject(value.merge.replacement)) {
-            errors.push.apply(errors, requiredTextErrors(value.merge.replacement.summary, "response.merge.replacement.summary", 2000));
-            if (typeof value.merge.replacement.importance !== "number" || !Number.isFinite(value.merge.replacement.importance) || value.merge.replacement.importance < 0 || value.merge.replacement.importance > 1) {
-                errors.push("response.merge.replacement.importance must be a finite number from 0 to 1.");
-            }
-        }
-        return finishValidation(value, errors);
-    }
 
     function baseSystem(stage) {
         if (stage !== "decision") {
-            return "You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else. Return exactly the keys publicNarrative, spokenText, and memoryUpdates. Do not choose another action; react only to the supplied grounded action result. memoryUpdates contains exactly relationshipsToUpsert and activatedBeliefIds. Relationships summarize durable social state. activatedBeliefIds lists only supplied beliefs that were genuinely salient in this response; listing a belief raises activation but does not make it evidence or change confidence. " + setup.MindV3.BELIEF_SEMANTICS;
+            return "You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else. Return exactly the keys publicNarrative, spokenText, and memoryUpdates. Do not choose another action; react only to the supplied grounded action result. memoryUpdates contains exactly relationshipsToUpsert and activatedBeliefIds. Relationships summarize durable social state. Only include a relationship in relationshipsToUpsert when its summary materially changes; if the current relationship already says the same thing after normalization, omit that upsert. Unmentioned relationships remain unchanged automatically. activatedBeliefIds lists only supplied beliefs that were genuinely salient in this response; listing a belief raises activation but does not make it evidence or change confidence. " + setup.MindV3.MODEL_OUTPUT_EFFECT_INVARIANT + " " + setup.MindV3.BELIEF_SEMANTICS;
         }
 
         const loudness = speechLoudnessValues().map(function (value) { return JSON.stringify(value); }).join(" or ");
@@ -382,24 +225,23 @@
         const continuation = "continuation is your nullable, free-form, private working intention. It records an unfinished purpose, never an action queue or predetermined sequence, and the framework does not interpret it. continuation never overrides the current canonical view: before following it, re-check possession, item state, money, current location/position, visible characters, grounded results or failures, and any other mechanical facts it depends on. If those facts changed, adapt, recover, revise, abandon, or clear the purpose instead of narrating stale assumptions as true. If you choose an atomic action as one step toward a purpose that remains unfinished after this response, keep that purpose in continuation; do not start a purposive movement or task and immediately discard why you are doing it. A complete local action may leave continuation null. On every later reaction reevaluate the current view, available actions, new observations, engine-confirmed results or failures, priorities, and continuation. If a still-relevant continuation has an obvious available step and nothing more important overrides it, normally make progress rather than return an accidental no-op. After failure, use the grounded feedback and do not blindly repeat the same action.";
         const speech = `Use spokenText for dialogue in the character's own voice. Choose spokenLoudness structurally for this utterance using ${loudness}; writing *whispers*, *in a low voice*, or similar prose does not change mechanical loudness. The framework owns who receives the resulting observation. spokenTargetId and a formal-action target may differ. publicNarrative is brief visible behavior or atmosphere and is already narration. Scene text uses one RP convention: ordinary text is spoken dialogue, while text inside paired single asterisks is visible narration or behavior and is not spoken; spokenText may include short *inline narration* between spoken phrases. Small visible behavior that does not change canonical state may stay narrative, such as a glance, smile, sigh, gesture, wiping part of a counter, adjusting clothing, hesitation, or a small sip that does not mechanically consume the whole drink. Narrated behavior never mutates canonical state.`;
         const grounding = "A formal action in this response is only an attempt. The engine executes it after this response and later supplies a grounded result. EPISTEMIC GROUNDING: the character may lie deliberately, mislead, misunderstand, and draw wrong conclusions. But do not invent an unobserved event, statement, permission, intention, request, promise, belief, or other occurrence merely to make dialogue connect smoothly. If the character presents an unsupported claim as true, it must be a deliberate in-character deception with a concrete motivation; if it is an uncertain conclusion, frame and remember it as an inference or belief rather than an observed fact. Narrative is not an alternate execution channel for canonical state transitions. Do not use publicNarrative or spokenText to establish taking, dropping, transferring, placing, filling, transforming, fully consuming an item, transferring money, moving between canonical locations or sublocations, equipping or unequipping an item, or a formal ability result when the required state change has not been grounded by the engine. If an equip/unequip/take/drop/move/transfer or other tracked mechanic exists but its required action is not currently available because constraints are unmet, narrative must not bypass those constraints. Conversely, when the engine provides no grounded mechanic at all for an action class, that unsupported physical behavior may be described narratively as fiction; for example a character may narratively lie across an ordinary work table if no posture/position action models doing so. Before confirmation, publicNarrative, spokenText, beliefs, relationships, and memories may express intent, effort, preparation, or anticipation but must not claim that the formal action or a multi-step mechanical task successfully changed the world or is complete. A response performing one formal action must not narratively claim that a second available grounded action also completed. Do not record an unconfirmed mechanical completion in memory or belief. If narration and a later engine result disagree, the engine wins. Before output, silently verify the current view against continuation, verify that the chosen action type and every parameter come from the matching current action definition, and verify that narrative and memory updates do not jump ahead of grounded results. Do not output this verification or any hidden reasoning.";
-        const memory = "Autobiographical memory and belief confidence are maintained by Mind v3 consolidation from committed experienced observations. Do not fabricate persistent memory updates inside an ordinary decision. Relationship updates may summarize genuinely changed social understanding, and activatedBeliefIds may mark beliefs that were actually salient.";
+        const memory = "Autobiographical memory and belief confidence are maintained by Mind v3 consolidation from committed experienced observations. Do not fabricate persistent memory updates inside an ordinary decision. Relationship updates may summarize genuinely changed social understanding, but relationshipsToUpsert is delta-only: return a relationship only when its normalized summary actually changes. Do not echo an unchanged relationship merely because that person or relationship was relevant; unmentioned relationships remain unchanged automatically. activatedBeliefIds may mark beliefs that were actually salient.";
         const style = "Treat the response as a moment in an ongoing role-playing scene. Let character description, mind state, relationships, continuation, and current situation shape the voice. Prefer concise, concrete, characterful behavior over generic assistant-like NPC replies. Do not force speech or narration into every response and do not repeat information just to make the response longer.";
         const schema = 'memoryUpdates must always contain exactly relationshipsToUpsert and activatedBeliefIds, even when both are empty arrays. A relationship record is {"targetCharacterId":"character_id","summary":"..."}. activatedBeliefIds contains only IDs of beliefs supplied in context.mind.beliefs.';
-        return `You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else: no markdown fence, prose, chain-of-thought, hidden reasoning, patches, or extra fields. ${contract} ${state} ${decision} ${continuation} ${speech} ${grounding} ${memory} ${style} ${schema} ${setup.MindV3.BELIEF_SEMANTICS}`;
+        return `You control exactly the supplied character. Objective facts come only from supplied context and grounded engine results. Narrative cannot mutate the world. Return exactly one JSON object and nothing else: no markdown fence, prose, chain-of-thought, hidden reasoning, patches, or extra fields. ${contract} ${setup.MindV3.MODEL_OUTPUT_EFFECT_INVARIANT} ${state} ${decision} ${continuation} ${speech} ${grounding} ${memory} ${style} ${schema} ${setup.MindV3.BELIEF_SEMANTICS}`;
     }
 
+
     function requestPayloadFromMessages(messages) {
-        for (let index = (messages || []).length - 1; index >= 0; index--) {
-            const message = messages[index];
-            if (!message || message.role !== "user" || typeof message.content !== "string") continue;
-            try {
-                const payload = JSON.parse(message.content);
-                if (isPlainObject(payload) && isPlainObject(payload.context)) return payload;
-            } catch (error) {
-                // Repair instructions and other user prose are not request payloads.
-            }
+        if (!Array.isArray(messages)) return null;
+        const user = messages.find(function (message) { return message && message.role === "user"; });
+        if (!user || typeof user.content !== "string") return null;
+        try {
+            const parsed = JSON.parse(user.content);
+            return isPlainObject(parsed) ? parsed : null;
+        } catch (error) {
+            return null;
         }
-        return null;
     }
 
     function actionCatalogFromMessages(messages) {
@@ -420,21 +262,6 @@
     }
 
 
-    function existingLongTermIdsFromMessages(messages) {
-        const payload = requestPayloadFromMessages(messages);
-        const records = payload && payload.context && payload.context.existingLongTermMemories;
-        return Array.isArray(records)
-            ? records.map(function (memory) { return memory && memory.id; }).filter(function (id) { return typeof id === "string"; })
-            : [];
-    }
-
-    function protectedLongTermIdsFromMessages(messages) {
-        const payload = requestPayloadFromMessages(messages);
-        const records = payload && payload.context && payload.context.existingLongTermMemories;
-        return Array.isArray(records)
-            ? records.filter(function (memory) { return memory && memory.protected === true; }).map(function (memory) { return memory.id; }).filter(Boolean)
-            : [];
-    }
 
     function existingBeliefIdsFromMessages(messages) {
         const payload = requestPayloadFromMessages(messages);
@@ -443,6 +270,13 @@
         return Array.isArray(records)
             ? records.map(function (belief) { return belief && belief.id; }).filter(function (id) { return typeof id === "string"; })
             : [];
+    }
+
+    function existingRelationshipsFromMessages(messages) {
+        const payload = requestPayloadFromMessages(messages);
+        const context = payload && payload.context;
+        const records = context && context.mindContext && context.mindContext.relationships || context && context.mind && context.mind.relationships;
+        return Array.isArray(records) ? clone(records) : [];
     }
 
     function decisionMessages(context) {
@@ -454,145 +288,6 @@
     }
 
 
-    function memoryMaintenanceContract(stage) {
-        if (stage === "memory-consolidation-recent") {
-            return {
-                requiredResponseShape: {
-                    groups: [{
-                        sourceRecentMemoryIds: ["<sourceRecentMemoryId>"],
-                        replacement: { summary: "<consolidated autobiographical memory>", importance: 0.7 }
-                    }],
-                    archiveOnlyRecentMemoryIds: ["<sourceRecentMemoryId>"],
-                    keepActiveRecentMemoryIds: ["<sourceRecentMemoryId>"]
-                },
-                responseRules: [
-                    "The angle-bracket values in requiredResponseShape are schema placeholders only. Never copy them literally. Use real supplied IDs/content. Individual arrays may be empty when their operation is not used.",
-                    "Every ID from context.sourceRecentMemories must appear exactly once across groups, archiveOnlyRecentMemoryIds, or keepActiveRecentMemoryIds.",
-                    "Only IDs from context.sourceRecentMemories are actionable. IDs from context.newerReadOnlyRecentMemories are evidence only and must never appear in any output ID array.",
-                    "Each groups[].replacement may contain exactly summary and importance. Do not return id, protected, createdAt, source, type, metadata, or any other field.",
-                    "Newer read-only memories may correct or supersede factual claims in older source memories. Reflect clear later corrections instead of perpetuating an older mistake.",
-                    "Do not invent new autobiographical facts to reconcile records. Compress and reconcile only information supported by supplied source and read-only correction records."
-                ]
-            };
-        }
-        if (stage === "memory-consolidation-beliefs") {
-            return {
-                requiredResponseShape: {
-                    groups: [{
-                        sourceBeliefIds: ["<activeBeliefIdA>", "<activeBeliefIdB>"],
-                        replacement: { text: "<faithful current belief>", confidence: "medium" }
-                    }]
-                },
-                responseRules: [
-                    "The angle-bracket values in requiredResponseShape are schema placeholders only. Never copy them literally. Use real supplied IDs/content.",
-                    "Return zero or more clearly safe semantic merge groups, at most 4. Prefer groups:[] whenever no clearly redundant beliefs exist.",
-                    "Each group must contain exactly 2-4 unique IDs from context.activeBeliefs. A source belief ID may appear in at most one group.",
-                    "Merge only redundant or successive formulations of substantially the same underlying proposition. Sharing a person, topic, emotion, fear, desire, or relationship is not enough.",
-                    "Do not merge conflicting beliefs. Do not use this stage to resolve contradictions, choose which belief is true, strengthen certainty, invent a broader personality trait, or summarize the character's personality.",
-                    "replacement may contain exactly text and confidence. Do not return id or any other engine-owned field.",
-                    "Faithfully preserve meaningful qualifiers, uncertainty, and nuance from all selected sources. When uncertain whether a merge is lossless, do not merge."
-                ]
-            };
-        }
-        if (stage === "memory-consolidation-reconciliation-discovery") {
-            return {
-                requiredResponseShape: {
-                    conflicts: [{ beliefId: "<currentBatchBeliefId>", longTermMemoryId: "<activeLongTermMemoryId>", strength: "direct" }]
-                },
-                responseRules: [
-                    "Return zero or more genuine contradiction candidates, at most 8. Do not rewrite any record in this stage.",
-                    "beliefId must come only from context.currentBeliefs. longTermMemoryId must come only from context.activeLongTermMemories.",
-                    "strength must be direct, strong, or possible. direct means the claims cannot reasonably both be true in the same interpretation; strong means substantially incompatible but context may reconcile them; possible means tension worth noticing but not necessarily an error.",
-                    "Do not call differences in tone, emotion, or incomplete perspective contradictions. Prefer returning no conflict over manufacturing one."
-                ]
-            };
-        }
-        if (stage === "memory-consolidation-reconciliation-resolution") {
-            return {
-                requiredResponseShape: {
-                    resolution: "keep_conflict",
-                    beliefReplacement: null,
-                    memoryReplacement: null
-                },
-                responseRules: [
-                    "resolution must be exactly one of revise_belief, revise_memory, revise_both, keep_conflict.",
-                    "Always return exactly the three keys resolution, beliefReplacement, memoryReplacement.",
-                    "For keep_conflict: both replacements must be null.",
-                    "For revise_belief: beliefReplacement must be exactly {text, confidence}; memoryReplacement must be null.",
-                    "For revise_memory: memoryReplacement must be exactly {summary, importance}; beliefReplacement must be null.",
-                    "For revise_both: supply both exact replacement objects.",
-                    "Do not return ids or protected flags. The engine retains the selected record IDs and controls protection state.",
-                    "The selected belief and selected memory are equally fallible. Record type, recency, or confidence alone does not establish truth.",
-                    "Use supplied evidence to produce the most justified internal state, not necessarily one definitive fact. If evidence is insufficient, use keep_conflict; a revised belief may explicitly express uncertainty, conflicting accounts, suspected deception, or unreliable recollection.",
-                    "Do not invent new autobiographical facts and do not rewrite merely for style."
-                ]
-            };
-        }
-        if (stage === "memory-consolidation-longterm") {
-            return {
-                requiredResponseShape: {
-                    merge: {
-                        sourceLongTermMemoryIds: ["<existingLongTermMemoryIdA>", "<existingLongTermMemoryIdB>"],
-                        replacement: { summary: "<faithful merged autobiographical memory>", importance: 0.8 }
-                    }
-                },
-                responseRules: [
-                    "The angle-bracket values in requiredResponseShape are schema placeholders only. Never copy them literally. Use real supplied IDs/content.",
-                    "response.merge may be null. Prefer merge:null whenever no clearly safe merge exists.",
-                    "When merge is non-null, sourceLongTermMemoryIds must contain exactly 2-3 supplied unprotected long-term IDs.",
-                    "merge.replacement may contain exactly summary and importance. Do not return id, protected, or any other engine-owned field.",
-                    "Do not invent new autobiographical facts; faithfully preserve meaningful information from the selected sources."
-                ]
-            };
-        }
-        throw new Error(`Unknown memory maintenance stage ${stage}.`);
-    }
-
-    function memoryMaintenanceSystem(stage) {
-        const common = [
-            "You are maintaining one character's autobiographical mind state, not taking a game turn.",
-            "Character continuity and semantic preservation are more important than compactness or token savings.",
-            "Maintenance reduces active context; it must not erase meaningful autobiographical information.",
-            "Use only supplied records. Maintenance may compress and reconcile supplied information, but it must not infer novel autobiographical facts that are not supported by those records.",
-            "Never invent or return engine-owned record fields. Return only fields explicitly present in requiredResponseShape. New memory IDs are assigned by the engine, and protection state is controlled exclusively by the engine.",
-            "Return exactly the required JSON shape with no prose, markdown, or extra fields."
-        ];
-        if (stage === "memory-consolidation-recent") common.push(
-            "Process only context.sourceRecentMemories as the actionable old recent-memory batch. Every actionable source must be assigned exactly once: consolidate into durable long-term meaning, archive-only if truly routine, or keep active if safe consolidation would lose meaning.",
-            "context.newerReadOnlyRecentMemories is correction evidence only. You may use it to correct older mistaken claims, but you may not select, archive, keep, or otherwise operate on those read-only IDs.",
-            "Never remove protected memories. A replacement must preserve all still-meaningful details from its source records. It is acceptable to keep material active."
-        );
-        if (stage === "memory-consolidation-beliefs") common.push(
-            "This is a conservative belief-deduplication pass. Active beliefs describe the character's current understanding; archived beliefs preserve historical formulations.",
-            "Merge only clearly redundant or successive versions of the same proposition. Do not resolve contradictions here and do not create personality summaries or new psychological interpretations. False negatives are preferable to destructive over-consolidation."
-        );
-        if (stage === "memory-consolidation-reconciliation-discovery") common.push(
-            "This is a read-only cognitive-dissonance discovery pass. Compare only context.currentBeliefs against context.activeLongTermMemories and identify genuine conflicting pairs.",
-            "Beliefs and memories are both fallible. Do not assume either record type is authoritative. Rank only the contradiction strength; do not resolve or rewrite anything yet."
-        );
-        if (stage === "memory-consolidation-reconciliation-resolution") common.push(
-            "Resolve only the single selected belief/long-term-memory pair. All other supplied mind records are read-only evidence.",
-            "A belief is not automatically more authoritative than a memory, and a memory is not automatically more authoritative than a belief. Grounded known information, explicit later corrections, direct observations, and mutually supporting records may provide stronger evidence, but recency/confidence alone do not prove truth.",
-            "The correct result may be revise_belief, revise_memory, revise_both, or keep_conflict. If certainty is not justified, preserve the conflict or express uncertainty rather than inventing a winner."
-        );
-        if (stage === "memory-consolidation-longterm") common.push(
-            "Optionally merge only 2-3 clearly overlapping unprotected long-term memories when one replacement can faithfully preserve every meaningful detail. If uncertain, return merge:null."
-        );
-        return common.join(" ");
-    }
-
-    function memoryMaintenanceMessages(stage, context) {
-        const contract = memoryMaintenanceContract(stage);
-        return [
-            { role: "system", content: memoryMaintenanceSystem(stage) },
-            { role: "user", content: JSON.stringify({
-                stage: stage,
-                context: clone(context || {}),
-                requiredResponseShape: clone(contract.requiredResponseShape),
-                responseRules: clone(contract.responseRules)
-            }) }
-        ];
-    }
 
     function resultMessages(context, action, actionResult) {
         return [{ role: "system", content: baseSystem("result") }, { role: "user", content: JSON.stringify({
@@ -623,99 +318,35 @@
         const actionGuidance = stage === "decision"
             ? `\nPreserve the character's underlying purpose while correcting the mechanical protocol error. Re-read the current action catalog, choose the action type from its semantic description first, then choose parameters only from that action's own options. Do not fall back to action:null solely because the previous action type or option was invalid; action:null is still valid when no useful valid action exists or the character deliberately decides not to act.\nCurrent action catalog:\n${actionCatalogRepairSummary(actionCatalog)}`
             : "";
-        const maintenancePayload = requestPayloadFromMessages(messages);
-        const maintenanceContract = stage.indexOf("memory-consolidation-") === 0 && maintenancePayload
-            ? `\nExact response shape (illustrative placeholder values only; use supplied real IDs):\n${JSON.stringify(maintenancePayload.requiredResponseShape)}\nRules:\n${(maintenancePayload.responseRules || []).map(function (rule) { return `- ${rule}`; }).join("\n")}\nRepair syntax/shape only. Do not add semantic content, invent missing maintenance operations, or add fields outside this schema.`
-            : "";
         return messages.concat([
             { role: "assistant", content: String(responseContent || "").slice(0, 12000) },
-            { role: "user", content: `Your previous response failed validation:\n${errorList}${actionGuidance}${maintenanceContract}\nReturn the complete corrected ${stage} JSON object. Include every required field, no extra fields, no prose, and no markdown fence.` }
+            { role: "user", content: `Your previous response failed validation:\n${errorList}${actionGuidance}\nReturn the complete corrected ${stage} JSON object. If a relationship upsert has no material effect after normalization, remove it rather than inventing cosmetic wording. Include every required field, no extra fields, no prose, and no markdown fence.` }
         ]);
     }
+
 
     async function requestValidated(messages, stage, client) {
         const actionCatalog = actionCatalogFromMessages(messages);
         const spokenTargetIds = spokenTargetIdsFromMessages(messages);
-        const existingLongTermIds = existingLongTermIdsFromMessages(messages);
         const existingBeliefIds = existingBeliefIdsFromMessages(messages);
-        const protectedLongTermIds = protectedLongTermIdsFromMessages(messages);
-        const maintenancePayload = requestPayloadFromMessages(messages);
-        const maintenanceContext = maintenancePayload && maintenancePayload.context || {};
-        const trace = {
+        const existingRelationships = existingRelationshipsFromMessages(messages);
+        const validate = stage === "decision"
+            ? function (value) { return validateDecision(value, actionCatalog, spokenTargetIds, existingBeliefIds, existingRelationships); }
+            : function (value) { return validateResult(value, existingBeliefIds, existingRelationships); };
+        return setup.StructuredAIRequest.run(client, {
             stage: stage,
-            originalMessages: clone(messages),
-            attempts: [],
-            finalStatus: "pending"
-        };
-        let currentMessages = clone(messages);
-        for (let attempt = 0; attempt < 2; attempt++) {
-            const response = await client.chat(currentMessages);
-            const attemptTrace = {
-                attempt: attempt + 1,
-                kind: attempt === 0 ? "initial" : "repair",
-                messages: clone(currentMessages),
-                modelId: response && response.modelId || null,
-                rawContent: response && typeof response.content === "string" ? response.content : "",
-                usage: response && response.usage || null,
-                providerResponse: response && response.providerResponse ? clone(response.providerResponse) : null,
-                parsedValue: null,
-                validationErrors: []
-            };
-            trace.attempts.push(attemptTrace);
-            if (!response || !response.ok) {
-                trace.finalStatus = "request_failed";
-                trace.safeError = clone(response && response.error || { code: "AI_REQUEST_FAILED", message: "AI request failed." });
-                return { ok: false, error: trace.safeError, modelId: response && response.modelId || null, trace: trace };
-            }
-
-            let value;
-            let validation;
-            try {
-                value = extractObject(response.content);
-                attemptTrace.parsedValue = clone(value);
-                validation = stage === "decision"
-                    ? validateDecision(value, actionCatalog, spokenTargetIds, existingBeliefIds)
-                    : stage === "memory-consolidation-recent"
-                        ? validateRecentMaintenance(value, maintenanceContext)
-                        : stage === "memory-consolidation-beliefs"
-                            ? validateBeliefMaintenance(value, maintenanceContext)
-                        : stage === "memory-consolidation-reconciliation-discovery"
-                            ? validateReconciliationDiscovery(value, maintenanceContext)
-                            : stage === "memory-consolidation-reconciliation-resolution"
-                                ? validateReconciliationResolution(value, maintenanceContext)
-                                : stage === "memory-consolidation-longterm"
-                                    ? validateLongTermMaintenance(value, maintenanceContext)
-                                    : validateResult(value, existingBeliefIds);
-            } catch (error) {
-                validation = { ok: false, message: error.message, errors: [error.message] };
-            }
-
-            if (validation.ok) {
-                trace.finalStatus = "valid";
-                trace.repaired = attempt === 1;
-                return {
-                    ok: true,
-                    value: validation.value,
-                    modelId: response.modelId || null,
-                    usage: response.usage,
-                    rawContent: response.content,
-                    repaired: attempt === 1,
-                    trace: trace
-                };
-            }
-
-            attemptTrace.validationErrors = (validation.errors || [validation.message]).slice();
-            if (attempt === 1) {
-                trace.finalStatus = "invalid_after_repair";
-                trace.safeError = {
-                    code: "INVALID_MODEL_JSON",
-                    message: "The model returned invalid JSON protocol data.",
-                    details: attemptTrace.validationErrors.slice()
-                };
-                return { ok: false, error: trace.safeError, modelId: response && response.modelId || null, trace: trace };
-            }
-            currentMessages = buildRepairMessages(messages, response.content, stage, attemptTrace.validationErrors, actionCatalog);
-        }
+            messages: clone(messages),
+            validate: validate,
+            maxRepairAttempts: 1,
+            buildRepairMessages: function (baseMessages, responseContent, errors) {
+                return buildRepairMessages(baseMessages, responseContent, stage, errors, actionCatalog);
+            },
+            validationErrorCode: "INVALID_MODEL_JSON",
+            validationErrorMessage: "The model returned invalid JSON protocol data.",
+            parseErrorCode: "INVALID_MODEL_JSON",
+            parseErrorMessage: "The model returned invalid JSON protocol data.",
+            traceMessages: true
+        });
     }
 
     setup.AIProtocol = {
@@ -723,18 +354,11 @@
         extractObject: extractObject,
         validateDecision: validateDecision,
         validateResult: validateResult,
-        validateRecentMaintenance: validateRecentMaintenance,
-        validateBeliefMaintenance: validateBeliefMaintenance,
-        validateReconciliationDiscovery: validateReconciliationDiscovery,
-        validateReconciliationResolution: validateReconciliationResolution,
-        validateLongTermMaintenance: validateLongTermMaintenance,
         actionCatalogFromMessages: actionCatalogFromMessages,
         spokenTargetIdsFromMessages: spokenTargetIdsFromMessages,
-        existingLongTermIdsFromMessages: existingLongTermIdsFromMessages,
         existingBeliefIdsFromMessages: existingBeliefIdsFromMessages,
-        protectedLongTermIdsFromMessages: protectedLongTermIdsFromMessages,
+        existingRelationshipsFromMessages: existingRelationshipsFromMessages,
         decisionMessages: decisionMessages,
-        memoryMaintenanceMessages: memoryMaintenanceMessages,
         resultMessages: resultMessages,
         buildRepairMessages: buildRepairMessages,
         requestValidated: requestValidated

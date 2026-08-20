@@ -18,6 +18,9 @@ if errorlevel 1 exit /b 1
 "%NODE_EXE%" tools\generate-world-data.js
 if errorlevel 1 exit /b 1
 
+"%NODE_EXE%" tools\generate-world-editor.js
+if errorlevel 1 exit /b 1
+
 "%NODE_EXE%" tests\run-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-migration-tests.js
@@ -39,6 +42,8 @@ if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-narrator-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-memory-consolidation-tests.js
+if errorlevel 1 exit /b 1
+"%NODE_EXE%" tests\run-mind-retrieval-tests.js
 if errorlevel 1 exit /b 1
 "%NODE_EXE%" tests\run-night-timelapse-tests.js
 if errorlevel 1 exit /b 1

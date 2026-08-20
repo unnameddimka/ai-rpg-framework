@@ -7,6 +7,7 @@
     const CANONICAL_TEXT_MAX = 2000;
     const DIALOGUE_TEXT_MAX = 2000;
     const TOPIC_TEXT_MAX = 240;
+    const RETRIEVAL_BRIEF_MAX = 600;
     const VERBATIM_TEXT_MAX = 3000;
     const RECENT_DIALOGUE_LIMIT = 8;
 
@@ -53,6 +54,13 @@
         return result(true);
     }
 
+    function retrievalBriefValid(value, options) {
+        const opts = options || {};
+        if (typeof value !== "string" || value.length > RETRIEVAL_BRIEF_MAX) return false;
+        if (opts.requireNonEmpty === true && value.trim().length === 0) return false;
+        return true;
+    }
+
     function validateMemoryRecord(record, options) {
         const opts = options || {};
         const maxSummaryLength = Number.isInteger(opts.maxSummaryLength) ? opts.maxSummaryLength : CANONICAL_TEXT_MAX;
@@ -61,6 +69,7 @@
         if (!idTextValid(record.id, MEMORY_ID_MAX)) return result(false, "Memory id is invalid.");
         if (requireTopic && !textValid(record.topic, TOPIC_TEXT_MAX)) return result(false, "Memory topic is invalid.");
         if (!textValid(record.summary, maxSummaryLength)) return result(false, "Memory summary is invalid.");
+        if (record.retrievalBrief !== undefined && !retrievalBriefValid(record.retrievalBrief)) return result(false, "Memory retrieval brief is invalid.");
         if (!validUnitInterval(record.importance, false)) return result(false, "Memory importance is invalid.");
         if (typeof record.protected !== "boolean") return result(false, "Memory protected flag is invalid.");
         return result(true);
@@ -117,7 +126,9 @@
     setup.MindValidators = {
         ID_PATTERN: ID_PATTERN,
         CANONICAL_TEXT_MAX: CANONICAL_TEXT_MAX,
+        RETRIEVAL_BRIEF_MAX: RETRIEVAL_BRIEF_MAX,
         RECENT_DIALOGUE_LIMIT: RECENT_DIALOGUE_LIMIT,
+        retrievalBriefValid: retrievalBriefValid,
         validateBeliefRecord: validateBeliefRecord,
         validateRelationshipRecord: validateRelationshipRecord,
         validateMemoryRecord: validateMemoryRecord,

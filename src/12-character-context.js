@@ -26,9 +26,10 @@
         return String(value || "").toLowerCase();
     }
 
-    function contextTerms(actor, world, preparedObservations) {
+    function contextTerms(actor, world, preparedObservations, suppliedView) {
         const terms = new Set([String(actor.id || "").toLowerCase(), String(actor.name || "").toLowerCase()]);
-        const locationCharacters = setup.CharacterAPI.getView(actor.id).location.characters || [];
+        const view = suppliedView && suppliedView.location ? suppliedView : setup.CharacterAPI.getView(actor.id);
+        const locationCharacters = view && view.location && view.location.characters || [];
         locationCharacters.forEach(function (entry) {
             if (entry && entry.id) terms.add(String(entry.id).toLowerCase());
             if (entry && entry.name) terms.add(String(entry.name).toLowerCase());
@@ -65,6 +66,29 @@
         }).sort(function (a, b) { return b.score - a.score || b.index - a.index; }).slice(0, limit).map(function (entry) { return entry.memory; });
     }
 
+    function byIds(records, ids, limit) {
+        const source = Array.isArray(records) ? records : [];
+        const requested = Array.isArray(ids) ? ids : [];
+        const byId = new Map(source.map(function (record) { return [record.id, record]; }));
+        const result = [];
+        requested.slice(0, Math.max(0, limit || requested.length)).forEach(function (id) {
+            const record = byId.get(id);
+            if (record) result.push(record);
+        });
+        return result;
+    }
+
+    function deterministicSelection(actor, world, preparedObservations, suppliedView) {
+        const mind = actor.mind || {};
+        const terms = contextTerms(actor, world, preparedObservations, suppliedView);
+        const cfg = setup.MindV3.CONFIG;
+        return {
+            beliefIds: selectBeliefs(mind.beliefs || [], terms, cfg.NORMAL_CONTEXT_BELIEF_LIMIT).map(function (record) { return record.id; }),
+            stmIds: selectMemories(mind.shortTermMemories || [], terms, cfg.NORMAL_CONTEXT_STM_LIMIT).map(function (record) { return record.id; }),
+            ltmIds: selectMemories(mind.longTermMemories || [], terms, cfg.NORMAL_CONTEXT_LTM_LIMIT).map(function (record) { return record.id; })
+        };
+    }
+
     function mindContext(actor, world, preparedObservations, options) {
         const mind = actor.mind || {};
         const opts = options || {};
@@ -78,15 +102,17 @@
                 longTermMemories: clone(mind.longTermMemories || [])
             };
         }
-        const terms = contextTerms(actor, world, preparedObservations);
         const cfg = setup.MindV3.CONFIG;
+        const selection = opts.selection && typeof opts.selection === "object"
+            ? opts.selection
+            : deterministicSelection(actor, world, preparedObservations, opts.view);
         return {
             knownFacts: clone(mind.knownFacts || []),
-            beliefs: clone(selectBeliefs(mind.beliefs || [], terms, cfg.NORMAL_CONTEXT_BELIEF_LIMIT)),
+            beliefs: clone(byIds(mind.beliefs || [], selection.beliefIds || [], cfg.NORMAL_CONTEXT_BELIEF_LIMIT)),
             relationships: clone(mind.relationships || []),
             verbatimObservations: clone((mind.verbatimObservations || []).slice(-cfg.NORMAL_CONTEXT_VERBATIM_LIMIT)),
-            shortTermMemories: clone(selectMemories(mind.shortTermMemories || [], terms, cfg.NORMAL_CONTEXT_STM_LIMIT)),
-            longTermMemories: clone(selectMemories(mind.longTermMemories || [], terms, cfg.NORMAL_CONTEXT_LTM_LIMIT))
+            shortTermMemories: clone(byIds(mind.shortTermMemories || [], selection.stmIds || [], cfg.NORMAL_CONTEXT_STM_LIMIT)),
+            longTermMemories: clone(byIds(mind.longTermMemories || [], selection.ltmIds || [], cfg.NORMAL_CONTEXT_LTM_LIMIT))
         };
     }
 
@@ -110,14 +136,39 @@
         if (!actor || actor.type !== "character") return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
         options = options && typeof options === "object" ? options : {};
         const preparedObservations = Array.isArray(options.pendingObservations) ? clone(options.pendingObservations) : [];
+        const view = setup.CharacterAPI.getView(actorId);
         return clone({
             schemaVersion: 1,
-            view: setup.CharacterAPI.getView(actorId),
+            view: view,
             character: privateCharacter(actor, world),
-            mind: mindContext(actor, world, preparedObservations),
+            mind: mindContext(actor, world, preparedObservations, { view: view, selection: options.mindSelection || null }),
             continuation: setup.AIWorkingState.getContinuation(actorId),
             recentDialogue: recentDialogueContext(actor, world),
             pendingObservations: preparedObservations
+        });
+    }
+
+    function compactItem(item) {
+        if (!item || typeof item !== "object") return null;
+        return { id: item.id || null, name: item.name || item.id || "Unknown item" };
+    }
+
+    function buildRetrievalRuntime(actorId, options) {
+        const world = setup.Game.getWorld();
+        const actor = world.entities[actorId];
+        if (!actor || actor.type !== "character") return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        options = options && typeof options === "object" ? options : {};
+        const pending = Array.isArray(options.pendingObservations) ? clone(options.pendingObservations) : [];
+        const view = setup.CharacterAPI.getView(actorId);
+        return clone({
+            actor: { id: actor.id, name: actor.name },
+            location: view && view.location ? { id: view.location.id, name: view.location.name, sublocationId: actor.sublocationId || null, positionText: view.self && view.self.position_text || "" } : null,
+            presentCharacters: (view && view.location && view.location.characters || []).map(function (entry) { return { id: entry.id, name: entry.name }; }),
+            notableItems: (view && view.location && view.location.items || []).map(compactItem).filter(Boolean).concat((view && view.accessible_inventories || []).flatMap(function (inventory) { return (inventory.items || []).map(compactItem).filter(Boolean); })).slice(0, 40),
+            pendingObservations: pending,
+            recentDialogue: recentDialogueContext(actor, world),
+            recentVerbatimObservations: clone((actor.mind && actor.mind.verbatimObservations || []).slice(-setup.MindV3.CONFIG.NORMAL_CONTEXT_VERBATIM_LIMIT)),
+            continuation: setup.AIWorkingState.getContinuation(actorId)
         });
     }
 
@@ -178,7 +229,15 @@
             const actor = setup.Game.getWorld().entities[actorId];
             return actor && actor.type === "character" ? clone(mindContext(actor, setup.Game.getWorld(), [], { full: true })) : fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
         },
-        buildMaintenance: buildMaintenance
+        buildMaintenance: buildMaintenance,
+        buildRetrievalRuntime: buildRetrievalRuntime,
+        selectMindDeterministically: function (actorId, pendingObservations) {
+            const world = setup.Game.getWorld();
+            const actor = world.entities[actorId];
+            if (!actor || actor.type !== "character") return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+            const view = setup.CharacterAPI.getView(actorId);
+            return clone(deterministicSelection(actor, world, pendingObservations || [], view));
+        }
     };
     setup.ContextBuilder = { build: build };
 }());

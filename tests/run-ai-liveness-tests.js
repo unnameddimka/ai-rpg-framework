@@ -31,9 +31,9 @@ function idleStatus() {
         setup.AIController.isInFlight() === false && setup.AITurnScheduler.isWaveInFlight() === false;
 }
 
-load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/10-game-api.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js"); load("src/12-character-context.js"); load("src/13-character-memory.js"); load("src/13-verbatim-memory.js"); load("src/14-event-perception.js");
-load("src/21-ai-settings.js"); load("src/21-ai-request-profiles.js"); load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js");
+load("src/21-ai-settings.js"); load("src/21-ai-request-profiles.js"); load("src/22-openrouter-client.js"); load("src/23-ai-protocol.js"); load("src/23-structured-ai-request.js");
 load("src/24-ai-request-executor.js"); load("src/24-item-model-effects.js"); load("src/24-ai-turn-scheduler.js"); load("src/20-controllers.js");
 load("src/26-presentation-narrator.js");
 

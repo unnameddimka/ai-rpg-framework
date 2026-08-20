@@ -29,13 +29,13 @@ function assert(value, message) { if (!value) throw new Error(message); }
 function ok(result, message) { assert(result && result.ok, `${message}: ${JSON.stringify(result)}`); return result; }
 function known(character, factId) { return character.mind.knownFacts.some(function (fact) { return fact.id === factId; }); }
 function emptyUpdates() { return { relationshipsToUpsert: [], activatedBeliefIds: [] }; }
-function emptyStmResult(overrides) { return Object.assign({ shortTermMemoriesToUpsert: [], shortTermMemoriesToAdd: [], beliefEffects: [], beliefsToAdd: [], activatedBeliefIds: [] }, overrides || {}); }
+function emptyStmResult(overrides) { return Object.assign({ shortTermMemoriesToUpsert: [], shortTermMemoriesToAdd: [], stmRepartitions: [], beliefEffects: [], beliefsToAdd: [], activatedBeliefIds: [] }, overrides || {}); }
 function emptyLtmResult(overrides) { return Object.assign({ longTermMemoriesToUpsert: [], longTermMemoriesToAdd: [], retirementGroups: [], higherOrderBeliefEffects: [], beliefsToAdd: [], activatedBeliefIds: [] }, overrides || {}); }
 
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
 load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/10-game-api.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -43,7 +43,7 @@ load("src/14-event-perception.js");
 load("src/21-ai-settings.js");
 load("src/21-ai-request-profiles.js");
 load("src/22-openrouter-client.js");
-load("src/23-ai-protocol.js");
+load("src/23-ai-protocol.js"); load("src/23-mind-consolidation-protocols.js"); load("src/23-structured-ai-request.js");
 load("src/24-ai-request-executor.js");
 load("src/24-ai-turn-scheduler.js");
 load("src/20-controllers.js");
@@ -54,6 +54,8 @@ load("src/25-turn-flow.js");
 const timelapseCoreSource = fs.readFileSync(path.join(root, "src/24-timelapse-core.js"), "utf8");
 assert(!timelapseCoreSource.includes("The current mode is overnight") && !timelapseCoreSource.includes("end-of-day reflection"),
     "generic timelapse core must not hard-code overnight-only prompt semantics");
+assert(timelapseCoreSource.includes("updates.activatedBeliefIds.length > 10") && timelapseCoreSource.includes("existingBeliefIds, existingRelationships"),
+    "reflection must retain deterministic activation bounds and validate activated IDs against the supplied belief landscape");
 
 function fresh() {
     setup.Game.resetWorld(); setup.Game.acceptPlayerDisclaimer(); setup.Game.finalizePlayerSetup({ mode: "generic" });
@@ -404,7 +406,7 @@ async function main() {
         chat: async function (messages, requestOptions) {
             const payload = plannerPayload(messages);
             assert(payload && payload.stage, `night model call should contain a stage payload: ${JSON.stringify(messages)}`);
-            calls.push({ stage: payload.stage, payload: clone(payload), requestOptions: clone(requestOptions || {}) });
+            calls.push({ stage: payload.stage, payload: clone(payload), requestOptions: clone(requestOptions || {}), systemPrompt: messages && messages[0] ? String(messages[0].content || "") : "" });
             activeByStage[payload.stage] = (activeByStage[payload.stage] || 0) + 1;
             maxActiveByStage[payload.stage] = Math.max(maxActiveByStage[payload.stage] || 0, activeByStage[payload.stage]);
             await new Promise(function (resolve) { setTimeout(resolve, 5); });
@@ -502,6 +504,12 @@ async function main() {
     assert(calls.some(function (call) {
         return call.stage === "timelapse-reflection" && call.payload.context.view.self.id === "hoodedWoman";
     }), "an AI that slept through the whole night should still receive end-of-day reflection");
+    calls.filter(function (call) { return call.stage === "timelapse-reflection"; }).forEach(function (call) {
+        assert(call.systemPrompt.includes("MODEL OUTPUT MUST HAVE EFFECT") && call.systemPrompt.includes("relationshipsToUpsert is delta-only"),
+            "timelapse reflection should instruct the model to omit no-effect relationship upserts before generation");
+        assert(call.systemPrompt.includes("FRESH-ACTIVATION CONTRACT") && call.systemPrompt.includes("is NOT activation evidence") && call.systemPrompt.includes("Do NOT iterate through the belief table") && call.systemPrompt.includes("must be sparse and event-driven") && call.systemPrompt.includes("often preferable for activatedBeliefIds to be empty"),
+            "timelapse reflection must treat belief-table visibility as context rather than fresh salience and request sparse event-driven activation");
+    });
 
     const hidden = result.timelapseResult.hiddenNarrativeEntries || [];
     const hiddenText = hidden.map(function (entry) { return entry.text; }).join("\n");

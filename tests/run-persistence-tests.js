@@ -31,12 +31,46 @@ function saveObjectFromVariables(variables) {
 
 load("src/generated/world-data.js");
 load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/10-game-api.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
 load("src/14-event-perception.js");
 load("src/09-persistence.js");
+
+
+function fakeStorageEngine(entries) {
+    const map = new Map(Object.entries(entries || {}));
+    return {
+        get length() { return map.size; },
+        key: function (index) { return Array.from(map.keys())[index] || null; },
+        getItem: function (key) { return map.has(key) ? map.get(key) : null; },
+        setItem: function (key, value) { map.set(key, value); },
+        snapshot: function () { return Object.fromEntries(map.entries()); }
+    };
+}
+
+const legacyBrowserStore = fakeStorageEngine({
+    "ai-rpg-framework-poc.save.slot.info:0": "legacy-info-0",
+    "ai-rpg-framework-poc.save.slot.data:0": "legacy-data-0",
+    "ai-rpg-framework-poc.save.auto.info:1": "legacy-auto-info-1",
+    "ai-rpg-framework-poc.save.auto.data:1": "legacy-auto-data-1",
+    "ai-rpg-framework-poc.settings": "legacy-settings",
+    "ai-rpg-framework-mvp.save.slot.info:0": "mvp-info-0"
+});
+const legacyMigration = setup.Persistence.migrateLegacyBrowserSaveNamespace(legacyBrowserStore, "ai-rpg-framework-mvp");
+const migratedSnapshot = legacyBrowserStore.snapshot();
+assert(legacyMigration.copied === 3 && legacyMigration.skipped === 1,
+    "MVP startup migration should copy missing legacy POC browser-save payloads without overwriting existing MVP save entries");
+assert(migratedSnapshot["ai-rpg-framework-mvp.save.slot.info:0"] === "mvp-info-0" &&
+    migratedSnapshot["ai-rpg-framework-mvp.save.slot.data:0"] === "legacy-data-0" &&
+    migratedSnapshot["ai-rpg-framework-mvp.save.auto.info:1"] === "legacy-auto-info-1" &&
+    migratedSnapshot["ai-rpg-framework-mvp.save.auto.data:1"] === "legacy-auto-data-1",
+    "legacy POC browser-save data should become visible in the MVP namespace while MVP entries win collisions");
+assert(!Object.prototype.hasOwnProperty.call(migratedSnapshot, "ai-rpg-framework-mvp.settings"),
+    "POC-to-MVP namespace migration must copy save payloads only, not unrelated settings or runtime storage");
+assert(migratedSnapshot["ai-rpg-framework-poc.save.slot.data:0"] === "legacy-data-0",
+    "legacy POC browser saves must remain intact after compatibility copying");
 
 assert(saveHandlers.length === 1, "persistence layer should register exactly one SugarCube onSave synchronization hook");
 const synchronize = saveHandlers[0];

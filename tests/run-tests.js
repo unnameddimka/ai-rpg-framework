@@ -40,7 +40,7 @@ function perform(actorId, action, message) {
 
 load("src/generated/world-data.js");
 load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/10-game-api.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -168,8 +168,9 @@ assert(world.entities.upstairsCorridor && ["innkeeperRoom", "guestRoom1", "guest
 // Portable character mind should carry only model-authored persistent identity.
 world.entities.hoodedWoman.mind.beliefs = [{ id: "portable_belief", text: "The Traveler keeps unusual promises.", confidence: 0.85, activation: 0.6 }];
 world.entities.hoodedWoman.mind.relationships = [{ targetCharacterId: "player", summary: "I trust the Traveler enough to continue our strange collaboration." }];
+const portableLongStmSummary = "P".repeat(2800);
 world.entities.hoodedWoman.mind.shortTermMemories = [
-    { id: "memory_ai_118", topic: "Traveler promises", summary: "The Traveler promised to warn me before changing worlds.", importance: 0.8, protected: false },
+    { id: "memory_ai_118", topic: "Traveler promises", summary: portableLongStmSummary, importance: 0.8, protected: false },
     { id: "memory_ai_150", topic: "Older collaboration", summary: "A retired-looking but still active v3 STM source owns this stable ID.", importance: 0.4, protected: false }
 ];
 world.entities.hoodedWoman.mind.longTermMemories = [{ id: "memory_ai_119", topic: "Understanding the world", summary: "My conversations with the Traveler changed how I understand this world.", importance: 0.9, protected: true }];
@@ -203,7 +204,7 @@ assertOk(importedMaraMind, "matching Mara mind import should succeed");
 world = setup.Game.getWorld();
 assert(world.entities.hoodedWoman.mind.beliefs.length === 1 && world.entities.hoodedWoman.mind.beliefs[0].id === "portable_belief" &&
     world.entities.hoodedWoman.mind.relationships[0].targetCharacterId === "player" &&
-    world.entities.hoodedWoman.mind.shortTermMemories.some(function (memory) { return memory.id === "memory_ai_118"; }) &&
+    world.entities.hoodedWoman.mind.shortTermMemories.some(function (memory) { return memory.id === "memory_ai_118" && memory.summary === portableLongStmSummary; }) &&
     world.entities.hoodedWoman.mind.longTermMemories[0].id === "memory_ai_119" &&
     world.entities.hoodedWoman.mind.verbatimObservations[0].id === "verbatim_hoodedWoman_test_1",
     "matching import should replace all portable target partitions");
@@ -399,6 +400,7 @@ perform("hoodedWoman", { type: "move", destination_id: "street" }, "Mara walks t
 perform("hoodedWoman", { type: "move", destination_id: "villageTemple" }, "Mara enters the temple for the Memory Stone visibility fixture");
 const maraInboxBeforeStone = world.entities.hoodedWoman.mind.pendingObservations.length;
 const playerPendingBeforeStone = world.entities.player.mind.pendingObservations.length;
+const playerVerbatimBeforeStone = world.entities.player.mind.verbatimObservations.length;
 const memoryReport = perform("player", { type: "use_item", item_id: "memoryStone_01" },
     "HumanController actor should squeeze the Memory Stone through the normal formal-action path");
 assert(memoryReport.events.length === 1 && memoryReport.events[0].type === "item_used" &&
@@ -413,11 +415,12 @@ assert(memoryReport.feedback.length === 1 && memoryReport.feedback[0].recipientI
     "memory counts should be natural private prose without redundant debug-style count fields");
 assert(world.entities.player.mind.shortTermMemories.length === 2 && world.entities.player.mind.longTermMemories.length === 1,
     "report_memory_counts must not mutate the actor's existing short-term or long-term memories");
-assert(world.entities.player.mind.pendingObservations.length === playerPendingBeforeStone + 1 &&
-    world.entities.player.mind.pendingObservations.some(function (item) {
-        return item.kind === "action_feedback" && item.code === "MEMORY_COUNTS_REPORTED" &&
-            item.text.includes("Short-term memory: 2 entries") && item.text.includes("Long-term memory: 1 entry");
-    }), "the Human-controlled actor should receive the same private grounded observation in its character inbox");
+assert(world.entities.player.mind.pendingObservations.length === playerPendingBeforeStone,
+    "the Human-controlled actor must not retain scheduler pending observations");
+assert(world.entities.player.mind.verbatimObservations.length > playerVerbatimBeforeStone &&
+    world.entities.player.mind.verbatimObservations.some(function (item) {
+        return item.kind === "action_feedback" && item.text.includes("Short-term memory: 2 entries") && item.text.includes("Long-term memory: 1 entry");
+    }), "the Human-controlled actor should retain the private grounded experience in verbatim memory");
 const maraStoneObservations = world.entities.hoodedWoman.mind.pendingObservations.slice(maraInboxBeforeStone);
 assert(maraStoneObservations.some(function (item) {
     return item.kind === "event" && item.text === "Traveler squeezes the memory stone in one hand.";
@@ -739,6 +742,7 @@ assertFails(setup.CharacterAPI.perform("hoodedWoman", { type: "read_aura", targe
 perform("innkeeper", { type: "move", destination_id: "commonRoom" },
     "innkeeper should enter the aura actor's perceivable major location");
 const playerInboxBeforeAura = world.entities.player.mind.pendingObservations.length;
+const hoodedVerbatimBeforeAura = world.entities.hoodedWoman.mind.verbatimObservations.length;
 const innkeeperInboxBeforeAura = world.entities.innkeeper.mind.pendingObservations.length;
 const expectedAuraTargetIds = setup.CharacterAPI.getView("hoodedWoman").location.characters
     .map(function (character) { return character.id; }).sort();
@@ -762,10 +766,12 @@ assert(auraResults.find(function (item) { return item.characterId === "innkeeper
 assert(world.events.length === eventCountBeforeAura &&
     JSON.stringify(positionsBeforeAura) === JSON.stringify([world.entities.player.locationId, world.entities.hoodedWoman.locationId, world.entities.innkeeper.locationId]),
     "aura scan should not mutate physical state or create a public event");
-assert(world.entities.hoodedWoman.mind.pendingObservations.some(function (item) {
-    return item.kind === "action_feedback" && item.actionType === "read_aura" &&
-        Array.isArray(item.data.results) && item.data.results.length === expectedAuraTargetIds.length;
-}), "aura feedback should enter only the actor's observation inbox");
+assert(world.entities.hoodedWoman.mind.pendingObservations.length === 0,
+    "a Human-controlled aura actor must not retain scheduler pending observations");
+assert(world.entities.hoodedWoman.mind.verbatimObservations.length > hoodedVerbatimBeforeAura &&
+    world.entities.hoodedWoman.mind.verbatimObservations.some(function (item) {
+        return item.kind === "action_feedback" && item.text.includes("aura");
+    }), "aura feedback should remain part of the Human-controlled actor's experienced verbatim history");
 assert(world.entities.player.mind.pendingObservations.length === playerInboxBeforeAura,
     "aura feedback must not enter the target inbox");
 assert(world.entities.innkeeper.mind.pendingObservations.length === innkeeperInboxBeforeAura,
@@ -819,11 +825,11 @@ const inaccessible = setup.CharacterAPI.perform("innkeeper", { type: "take_item"
 assertFails(inaccessible, "ITEM_NOT_ACCESSIBLE", "failed physical action should remain grounded");
 assert(inaccessible.feedback.length === 1 && world.entities.innkeeper.mind.pendingObservations.length === failedInboxBefore + 1,
     "failed physical feedback should be normalized and routed to the actor inbox");
+assertOk(setup.Game.takeHumanControl("player"), "control return should preserve durable minds while clearing scheduler-only inbox state");
 const mindsBeforeRoundTrip = cloneMinds(world);
-assertOk(setup.Game.takeHumanControl("player"), "control return should preserve minds");
 State.variables.world = JSON.parse(JSON.stringify(world));
 assert(JSON.stringify(cloneMinds(setup.Game.getWorld())) === JSON.stringify(mindsBeforeRoundTrip),
-    "JSON serialize/parse and controller switching should preserve every mind partition");
+    "JSON serialize/parse should preserve every post-controller-switch mind partition");
 
 function cloneMinds(value) {
     const result = {};

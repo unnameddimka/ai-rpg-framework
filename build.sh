@@ -56,12 +56,6 @@ if [[ -n "$TWEEGO_EXE" && -z "${TWEEGO_PATH:-}" ]]; then
     done
 fi
 
-printf 'Generating model list...\n'
-"$NODE_EXE" tools/generate-model-list.js
-
-printf 'Generating world data...\n'
-"$NODE_EXE" tools/generate-world-data.js
-
 mkdir -p dist
 
 printf 'Running JavaScript tests...\n'
@@ -74,5 +68,7 @@ else
     printf 'Tweego not found; reusing the SugarCube runtime embedded in the existing dist/game.html.\n'
     "$NODE_EXE" tools/build-from-existing-runtime.js
 fi
+
+"$NODE_EXE" tools/postprocess-product-title.js
 
 printf 'Build complete: dist/game.html\n'

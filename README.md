@@ -1,4 +1,4 @@
-# AI RPG Framework POC
+# AI RPG Framework MVP
 
 Browser-based role-playing prototype with a deterministic world simulation and AI-controlled characters.
 
@@ -20,7 +20,7 @@ The left sidebar exposes three independent model roles:
 - **Utility model** — structured/coarse AI work such as timelapse planning, reflection, and memory consolidation. The authored default is DeepSeek V4 Flash.
 - **Narrator model** — optional presentation prose plus narrowly bounded rendering jobs such as weather prose. The presentation narrator remains optional; weather rendering may save a canonical ambient description derived only from engine-supplied weather data, and weather failure never blocks gameplay.
 
-The API key is never stored in world data, game saves, or exported AI exchange logs. Optional browser storage remembers it for 24 hours.
+The API key is never stored in world data, game saves, or exported AI exchange logs. Optional browser storage remembers it for 7 days.
 
 ## Edit the world
 

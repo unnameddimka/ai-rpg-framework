@@ -5,10 +5,12 @@ const path = require("path");
 const vm = require("vm");
 const root = path.resolve(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "editor/world-editor.html"), "utf8");
+const validatorMatch = html.match(/<script id="world-authored-validator">([\s\S]*?)<\/script>/);
 const match = html.match(/<script id="world-editor-core">([\s\S]*?)<\/script>/);
-if (!match) throw new Error("Editor core script was not found.");
+if (!validatorMatch || !match) throw new Error("Editor shared validator/core script was not found.");
 const context = { globalThis: {} };
 vm.createContext(context);
+vm.runInContext(validatorMatch[1], context, { filename: "world-authored-validator.js" });
 vm.runInContext(match[1], context, { filename: "world-editor-core.js" });
 const core = context.globalThis.WorldEditorCore;
 function assert(condition, message) { if (!condition) throw new Error(message); }
@@ -19,7 +21,7 @@ function validDocument() {
     return {
         schemaVersion: 2, startLocationId: "room", futureTopLevel: { retained: true },
         protectedLocationIds: [], protectedSublocationIds: [], protectedCharacterIds: [], protectedAbilityIds: [],
-        travelerProfiles: {},
+        travelerProfiles: {}, dayActivities: {},
         locations: { room: { id: "room", type: "location", name: "Room", passage: "Room", description: ["A room."],
             defaultSublocationId: "roomFloor", inventoryId: "inventory_room", exits: {}, futureLocationField: "keep",
             sublocations: { roomFloor: { id: "roomFloor", type: "sublocation", locationId: "room", name: "Floor",
@@ -29,8 +31,8 @@ function validDocument() {
             aiDescription: "You are a traveller.", locationId: "room", sublocationId: "roomFloor", inventoryId: "inventory_hero",
             wallet: 1, initialControllerId: "human", defaultControllerId: "dummy", abilityIds: ["readAura"],
             engineFacts: { aura: "Bright." }, futureCharacterField: true,
-            initialMind: { knownFacts: [{ id: "fact", text: "Known", futureFact: 1 }], beliefs: [], relationships: [],
-                recentMemories: [], longTermMemories: [] } } },
+            initialMind: { schemaVersion: 3, knownFacts: [{ id: "fact", text: "Known", futureFact: 1 }], beliefs: [], relationships: [],
+                verbatimObservations: [], shortTermMemories: [], longTermMemories: [] } } },
         abilities: { readAura: { id: "readAura", name: "Read aura", actionType: "read_aura",
             playerDescription: "Sense aura.", aiDescription: "Request grounded aura data.", futureAbilityField: true } },
         itemDefinitions: {
@@ -62,6 +64,8 @@ assert(!/[А-Яа-яЁё]/.test(html), "visible editor source introduced by this
 assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura") && core.KNOWN_ACTIONS.includes("lock") && core.KNOWN_ACTIONS.includes("unlock") &&
     core.KNOWN_ITEM_EFFECTS.includes("report_memory_counts") && core.KNOWN_ITEM_EFFECTS.includes("abstract_study") && core.KNOWN_ITEM_EFFECTS.includes("utility_query"),
     "editor should embed schema 2, known actions, and the allowlisted generic item effects");
+assert(html.includes("Short-term memories") && html.includes("Verbatim observations") && html.includes("Retrieval brief") && !html.includes("Recent memories"),
+    "editor character mind UI should expose Mind v3 memory layers and retrieval briefs, not legacy recentMemories");
 assert(core.validateWorldDocument(validDocument()).length === 0, "valid schema 2 document should validate");
 const travelerProfileDocument = validDocument();
 travelerProfileDocument.travelerProfiles.scholar = { id: "scholar", name: "Scholar", playerDescription: "A thoughtful traveler.", aiDescription: "Curious, patient, and observant." };
@@ -127,15 +131,15 @@ utilityQueryDocument.itemDefinitions.memoryStone.useAction = {
 assert(core.validateWorldDocument(utilityQueryDocument).length === 0,
     "editor should validate model-backed Utility query item authoring");
 const badUtilityQuery = clone(utilityQueryDocument); delete badUtilityQuery.itemDefinitions.memoryStone.useAction.utilityPrompt;
-assert(hasError(badUtilityQuery, "utility query requires"), "editor should reject utility-query authoring without a source prompt");
+assert(hasError(badUtilityQuery, "utility_query useAction requires utilityPrompt"), "editor should reject utility-query authoring without a source prompt");
 const badUtilityCap = clone(utilityQueryDocument); badUtilityCap.itemDefinitions.memoryStone.useAction.utilityMaxTokens = 12;
-assert(hasError(badUtilityCap, "output token cap"), "editor should reject invalid utility-query output token caps");
+assert(hasError(badUtilityCap, "utilityMaxTokens"), "editor should reject invalid utility-query output token caps");
 const badUseEffect = clone(useActionDocument); badUseEffect.itemDefinitions.memoryStone.useAction.effectId = "execute_code";
-assert(hasError(badUseEffect, "invalid use action"), "editor must reject unknown item effect IDs");
+assert(hasError(badUseEffect, "invalid useAction"), "editor must reject unknown item effect IDs");
 const mismatchedLock = clone(lockDocument); mismatchedLock.locations.other.exits.room.locked = false;
 assert(hasError(mismatchedLock, "inconsistent reciprocal lock"), "reciprocal passage lock states must match");
 const badKeyLock = clone(lockDocument); badKeyLock.itemDefinitions.roomKey.keyLockId = "missing_lock";
-assert(hasError(badKeyLock, "invalid key lock ID"), "keys must reference an authored passage lock ID");
+assert(hasError(badKeyLock, "invalid keyLockId"), "keys must reference an authored passage lock ID");
 const keyedContainerDocument = validDocument();
 keyedContainerDocument.locations.room.sublocations.roomFloor.inventoryId = "inventory_floor";
 keyedContainerDocument.locations.room.sublocations.roomFloor.requiredKeyItemId = "floorKey";
@@ -143,7 +147,7 @@ keyedContainerDocument.itemDefinitions.floorKeyType = { id:"floorKeyType", name:
 keyedContainerDocument.items.floorKey = { id:"floorKey", definitionId:"floorKeyType", inventoryId:"inventory_hero" };
 assert(core.validateWorldDocument(keyedContainerDocument).length === 0, "editor should validate a position inventory gated by a specific ordinary key item instance");
 const missingContainerKey = clone(keyedContainerDocument); delete missingContainerKey.items.floorKey;
-assert(hasError(missingContainerKey, "invalid required key item ID"), "editor should reject a keyed container whose required key item instance does not exist");
+assert(hasError(missingContainerKey, "references missing required key item"), "editor should reject a keyed container whose required key item instance does not exist");
 const keyedWithoutInventory = clone(keyedContainerDocument); delete keyedWithoutInventory.locations.room.sublocations.roomFloor.inventoryId;
 assert(hasError(keyedWithoutInventory, "cannot require a key without an inventory"), "editor should reject requiredKeyItemId when the position has no inventory");
 assert(core.createEmptyWorld().characters && core.createEmptyWorld().travelerProfiles && core.createEmptyWorld().abilities &&
@@ -188,17 +192,17 @@ duplicatePassage.locations.other = clone(duplicatePassage.locations.room); dupli
 duplicatePassage.locations.other.name = "Other"; duplicatePassage.locations.other.inventoryId = "inventory_other";
 duplicatePassage.locations.other.defaultSublocationId = "otherFloor";
 duplicatePassage.locations.other.sublocations = { otherFloor: Object.assign(clone(duplicatePassage.locations.room.sublocations.roomFloor), { id: "otherFloor", locationId: "other", reachableSublocationIds: ["otherFloor"] }) };
-assert(hasError(duplicatePassage, "passage name") && hasError(duplicatePassage, "used more than once"), "duplicate passage names should block export");
+assert(hasError(duplicatePassage, "Duplicate passage name"), "duplicate passage names should block export");
 const duplicateInventory = validDocument(); duplicateInventory.characters.hero.inventoryId = "inventory_room";
-assert(hasError(duplicateInventory, "Inventory ID"), "inventory collisions should block export");
+assert(hasError(duplicateInventory, "Duplicate inventory ID"), "inventory collisions should block export");
 const badStart = validDocument(); badStart.startLocationId = "missing";
 assert(hasError(badStart, "startLocationId"), "invalid start location should block export");
 const badBlockedExit = clone(blockedExitDocument); badBlockedExit.locations.room.exits.other.blocked = "yes";
-assert(hasError(badBlockedExit, "blocked must be checked or unchecked"), "blocked transition state must be Boolean");
+assert(hasError(badBlockedExit, "blocked must be Boolean"), "blocked transition state must be Boolean");
 const badBlockedTarget = clone(blockedExitDocument); badBlockedTarget.locations.room.exits.other.destinationId = "missing";
 assert(hasError(badBlockedTarget, "missing location"), "blocked transitions must still reference a real destination");
 const badPosition = validDocument(); badPosition.characters.hero.sublocationId = "missing";
-assert(hasError(badPosition, "missing position"), "invalid character position should block export");
+assert(hasError(badPosition, "invalid sublocation"), "invalid character position should block export");
 const zeroHuman = validDocument(); zeroHuman.characters.hero.initialControllerId = "dummy";
 assert(hasError(zeroHuman, "Exactly one"), "zero initial humans should block export");
 const twoHumans = validDocument(); twoHumans.characters.other = clone(twoHumans.characters.hero); twoHumans.characters.other.id = "other";
@@ -209,7 +213,7 @@ assert(hasError(badAbility, "missing ability"), "invalid ability reference shoul
 const badAction = validDocument(); badAction.abilities.readAura.actionType = "execute_code";
 assert(hasError(badAction, "unknown action"), "unknown ability action type should block export");
 const badItemDefinition = validDocument(); badItemDefinition.itemDefinitions.emptyMug.fillAction.resultDefinitionId = "missing";
-assert(hasError(badItemDefinition, "invalid fill action"), "missing item transformation target should block export");
+assert(hasError(badItemDefinition, "missing result definition"), "missing item transformation target should block export");
 const badItemInventory = validDocument(); badItemInventory.items.mug1.inventoryId = "missing_inventory";
 assert(hasError(badItemInventory, "missing inventory"), "item instances must reference a real inventory");
 
@@ -234,5 +238,9 @@ sublocationItems.locations.room.sublocations.roomFloor.inventoryId = "inventory_
 sublocationItems.items.mug1.inventoryId = "inventory_floor";
 assert(core.sublocationDeletionReferences(sublocationItems.locations.room, "roomFloor", sublocationItems).some(function (x) { return x.includes("mug1"); }),
     "deleting a position with a nonempty optional inventory should be blocked");
+
+const committedWorldDocument = JSON.parse(fs.readFileSync(path.join(root, "data/world.json"), "utf8"));
+assert(core.validateWorldDocument(committedWorldDocument).length === 0,
+    "the current committed data/world.json must validate through the same authored validator embedded in the editor");
 
 console.log("All world editor tests passed.");
