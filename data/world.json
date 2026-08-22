@@ -1,0 +1,2667 @@
+{
+  "schemaVersion": 2,
+  "startLocationId": "tavernEntrance",
+  "protectedLocationIds": [
+    "tavernEntrance",
+    "bar",
+    "commonRoom",
+    "villageTemple",
+    "marketSquare",
+    "merchantWagon"
+  ],
+  "protectedSublocationIds": [
+    "tavernEntranceFloor",
+    "barBehindCounter",
+    "commonRoomTableOne",
+    "templeSanctum",
+    "marketSquareCenter",
+    "merchantWagonFloor",
+    "merchantWagonBunk",
+    "merchantWagonCargo",
+    "merchantWagonChest"
+  ],
+  "protectedCharacterIds": [
+    "player",
+    "hoodedWoman",
+    "innkeeper",
+    "roadMerchant"
+  ],
+  "protectedAbilityIds": [
+    "readAura"
+  ],
+  "locations": {
+    "tavernEntrance": {
+      "id": "tavernEntrance",
+      "type": "location",
+      "name": "Tavern entrance",
+      "passage": "The Tavern",
+      "description": [
+        "You stand in the entrance of a modest roadside tavern.",
+        "The room smells of smoke, spilled ale, and wet wool."
+      ],
+      "defaultSublocationId": "tavernEntranceFloor",
+      "inventoryId": "inventory_tavernEntrance",
+      "exits": {
+        "bar": "bar",
+        "commonRoom": "commonRoom",
+        "street": "street"
+      },
+      "sublocations": {
+        "tavernEntranceFloor": {
+          "id": "tavernEntranceFloor",
+          "type": "sublocation",
+          "locationId": "tavernEntrance",
+          "name": "Tavern floor",
+          "enterLabel": "Stand by the tavern entrance",
+          "selfText": "You are standing near the tavern entrance.",
+          "occupantTemplate": "{name} stands near the tavern entrance.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "tavernEntranceFloor"
+          ]
+        }
+      }
+    },
+    "bar": {
+      "id": "bar",
+      "type": "location",
+      "name": "The bar",
+      "passage": "The Bar",
+      "description": [
+        "The bar counter is dark with age and spilled ale.",
+        "Shelves of mismatched bottles line the wall behind it."
+      ],
+      "defaultSublocationId": "barPublicSide",
+      "inventoryId": "inventory_bar",
+      "exits": {
+        "tavernEntrance": "tavernEntrance",
+        "commonRoom": "commonRoom"
+      },
+      "sublocations": {
+        "barPublicSide": {
+          "id": "barPublicSide",
+          "type": "sublocation",
+          "locationId": "bar",
+          "name": "Public side of the bar",
+          "publicText": "The public side of the counter is worn smooth by years of elbows and spilled drink.",
+          "enterLabel": "Step to the public side of the bar",
+          "selfText": "You are standing on the public side of the counter.",
+          "occupantTemplate": "{name} stands on the public side of the counter.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "barPublicSide",
+            "barBehindCounter"
+          ]
+        },
+        "barBehindCounter": {
+          "id": "barBehindCounter",
+          "type": "sublocation",
+          "locationId": "bar",
+          "name": "Behind the bar",
+          "publicText": "A narrow working space behind the counter holds taps, bottles, and a cabinet of empty mugs.",
+          "enterLabel": "Step behind the bar",
+          "selfText": "You are standing behind the bar.",
+          "occupantTemplate": "{name} stands behind the bar.",
+          "capacity": 2,
+          "capabilities": [
+            "ale_source"
+          ],
+          "reachableSublocationIds": [
+            "barBehindCounter",
+            "barPublicSide"
+          ],
+          "inventoryId": "inventory_barMugCabinet",
+          "inventoryName": "Mug cabinet"
+        }
+      }
+    },
+    "commonRoom": {
+      "id": "commonRoom",
+      "type": "location",
+      "name": "The common room",
+      "passage": "The Common Room",
+      "description": [
+        "Smoke gathers beneath the rafters above scarred tables and mismatched chairs.",
+        "A narrow wooden staircase climbs to a dim landing above the common room; a cramped nook has been curtained off beneath it."
+      ],
+      "defaultSublocationId": "commonRoomFloor",
+      "inventoryId": "inventory_commonRoom",
+      "exits": {
+        "tavernEntrance": "tavernEntrance",
+        "bar": "bar",
+        "upstairsCorridor": "upstairsCorridor"
+      },
+      "sublocations": {
+        "commonRoomFloor": {
+          "id": "commonRoomFloor",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Common-room floor",
+          "enterLabel": "Stand in the common room",
+          "selfText": "You are standing in the common room.",
+          "occupantTemplate": "{name} stands in the common room.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "commonRoomFloor",
+            "commonRoomTableOne",
+            "commonRoomTableTwo",
+            "commonRoomTableThree",
+            "underStairsNook"
+          ]
+        },
+        "commonRoomTableOne": {
+          "id": "commonRoomTableOne",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "First table",
+          "publicText": "The first table stands close to the fire.",
+          "enterLabel": "Sit at the first table",
+          "selfText": "You are sitting at the first table.",
+          "occupantTemplate": "{name} sits at the first table.",
+          "capacity": 4,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_commonRoomTableOne",
+          "reachableSublocationIds": [
+            "commonRoomTableOne",
+            "commonRoomFloor"
+          ]
+        },
+        "commonRoomTableTwo": {
+          "id": "commonRoomTableTwo",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Second table",
+          "publicText": "The second table sits nearer the shadowed wall.",
+          "enterLabel": "Sit at the second table",
+          "selfText": "You are sitting at the second table.",
+          "occupantTemplate": "{name} sits at the second table.",
+          "capacity": 4,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_commonRoomTableTwo",
+          "reachableSublocationIds": [
+            "commonRoomTableTwo",
+            "commonRoomFloor"
+          ]
+        },
+        "underStairsNook": {
+          "id": "underStairsNook",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Nook beneath the stairs",
+          "publicText": "A curtain beneath the staircase hides a tiny sleeping nook with a narrow cot, a folded blanket, and almost no room for possessions.",
+          "enterLabel": "Step into the nook beneath the stairs",
+          "selfText": "You are in the cramped sleeping nook beneath the stairs.",
+          "occupantTemplate": "{name} is in the little sleeping nook beneath the stairs.",
+          "capacity": 1,
+          "reachableSublocationIds": [
+            "underStairsNook",
+            "commonRoomFloor",
+            "underStairsBed"
+          ]
+        },
+        "commonRoomTableThree": {
+          "id": "commonRoomTableThree",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Third table",
+          "publicText": "The third table stands a little apart from the others near the staircase.",
+          "enterLabel": "Sit at the third table",
+          "selfText": "You are sitting at the third table.",
+          "occupantTemplate": "{name} sits at the third table.",
+          "capacity": 4,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_commonRoomTableThree",
+          "reachableSublocationIds": [
+            "commonRoomTableThree",
+            "commonRoomFloor"
+          ]
+        },
+        "underStairsBed": {
+          "id": "underStairsBed",
+          "type": "sublocation",
+          "locationId": "commonRoom",
+          "name": "Nell’s cot",
+          "publicText": "A narrow cot fills most of the curtained nook beneath the stairs.",
+          "enterLabel": "Lie down on the cot",
+          "selfText": "You are lying on the narrow cot beneath the stairs.",
+          "occupantTemplate": "{name} is lying on the narrow cot beneath the stairs.",
+          "capacity": 4,
+          "capabilities": [
+            "sleep"
+          ],
+          "reachableSublocationIds": [
+            "underStairsBed",
+            "underStairsNook"
+          ]
+        }
+      },
+      "timelapseActions": [
+        {
+          "id": "clean_common_room",
+          "label": "Clean the common room",
+          "description": "Collect unattended mugs around the common room, empty them, and return them to the mug cabinet.",
+          "effectId": "collect_mugs_to_storage",
+          "effectParams": {
+            "itemFamilyId": "mug",
+            "emptyDefinitionId": "emptyMug",
+            "destinationInventoryId": "inventory_barMugCabinet"
+          }
+        }
+      ]
+    },
+    "street": {
+      "id": "street",
+      "type": "location",
+      "name": "The street",
+      "passage": "The Street",
+      "description": [
+        "Cold rain falls upon the village street.",
+        "The tavern's windows glow warmly behind you; near the little temple, a low smithy opens onto the road beneath a soot-darkened roof, and a broader lane leads toward the market square."
+      ],
+      "defaultSublocationId": "streetCenter",
+      "inventoryId": "inventory_street",
+      "exits": {
+        "tavernEntrance": "tavernEntrance",
+        "villageTemple": "villageTemple",
+        "villageEdge": "villageEdge",
+        "villageSmithy": "villageSmithy",
+        "marketSquare": "marketSquare"
+      },
+      "sublocations": {
+        "streetCenter": {
+          "id": "streetCenter",
+          "type": "sublocation",
+          "locationId": "street",
+          "name": "Village street",
+          "enterLabel": "Stand in the street",
+          "selfText": "You are standing in the village street.",
+          "occupantTemplate": "{name} stands in the village street.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "streetCenter"
+          ]
+        }
+      }
+    },
+    "villageTemple": {
+      "id": "villageTemple",
+      "type": "location",
+      "name": "Village temple",
+      "passage": "The Village Temple",
+      "description": [
+        "A tiny stone temple crouches at the edge of the village, smelling of cold incense and rain.",
+        "At the far end, beneath a soot-darkened icon, a crystal sphere rests on a crooked brass stand."
+      ],
+      "defaultSublocationId": "templeSanctum",
+      "inventoryId": "inventory_villageTemple",
+      "exits": {
+        "street": "street"
+      },
+      "sublocations": {
+        "templeSanctum": {
+          "id": "templeSanctum",
+          "type": "sublocation",
+          "locationId": "villageTemple",
+          "name": "Before the crystal sphere",
+          "publicText": "Pale light moves inside the sphere like a thought trying to remember its shape.",
+          "enterLabel": "Stand before the crystal sphere",
+          "selfText": "You are standing before the crystal sphere.",
+          "occupantTemplate": "{name} stands before the crystal sphere.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "templeSanctum"
+          ]
+        }
+      }
+    },
+    "upstairsCorridor": {
+      "id": "upstairsCorridor",
+      "type": "location",
+      "name": "Upstairs corridor",
+      "passage": "The Upstairs Corridor",
+      "description": [
+        "The staircase opens onto a narrow timber landing above the common room.",
+        "Five closed doors line the corridor: the innkeeper’s private room and four modest guest rooms."
+      ],
+      "defaultSublocationId": "upstairsLanding",
+      "inventoryId": "inventory_upstairsCorridor",
+      "exits": {
+        "commonRoom": "commonRoom",
+        "innkeeperRoom": {
+          "destinationId": "innkeeperRoom",
+          "lockId": "lock_innkeeper_room",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        },
+        "guestRoom1": {
+          "destinationId": "guestRoom1",
+          "lockId": "lock_guest_room_1",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        },
+        "guestRoom2": {
+          "destinationId": "guestRoom2",
+          "lockId": "lock_guest_room_2",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        },
+        "guestRoom3": {
+          "destinationId": "guestRoom3",
+          "lockId": "lock_guest_room_3",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        },
+        "guestRoom4": {
+          "destinationId": "guestRoom4",
+          "lockId": "lock_guest_room_4",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
+      },
+      "sublocations": {
+        "upstairsLanding": {
+          "id": "upstairsLanding",
+          "type": "sublocation",
+          "locationId": "upstairsCorridor",
+          "name": "Upstairs landing",
+          "enterLabel": "Stand on the upstairs landing",
+          "selfText": "You are standing on the narrow upstairs landing.",
+          "occupantTemplate": "{name} stands on the upstairs landing.",
+          "capacity": 12,
+          "reachableSublocationIds": [
+            "upstairsLanding"
+          ]
+        }
+      }
+    },
+    "innkeeperRoom": {
+      "id": "innkeeperRoom",
+      "type": "location",
+      "name": "Innkeeper's room",
+      "passage": "The Innkeeper's Room",
+      "description": [
+        "A plain private room with a sturdy bed, a washstand, and a small chest. It is more practical than comfortable."
+      ],
+      "defaultSublocationId": "innkeeperRoomFloor",
+      "inventoryId": "inventory_innkeeperRoom",
+      "exits": {
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_innkeeper_room",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
+      },
+      "sublocations": {
+        "innkeeperRoomFloor": {
+          "id": "innkeeperRoomFloor",
+          "type": "sublocation",
+          "locationId": "innkeeperRoom",
+          "name": "Innkeeper's room",
+          "enterLabel": "Stand in innkeeper's room",
+          "selfText": "You are standing in the innkeeper's private room.",
+          "occupantTemplate": "{name} stands in the innkeeper's private room.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "innkeeperRoomFloor",
+            "innkeeperRoomBed",
+            "innkeeperRoomChest"
+          ]
+        },
+        "innkeeperRoomBed": {
+          "id": "innkeeperRoomBed",
+          "type": "sublocation",
+          "locationId": "innkeeperRoom",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "innkeeperRoomBed",
+            "innkeeperRoomFloor"
+          ],
+          "capabilities": [
+            "sleep"
+          ]
+        },
+        "innkeeperRoomChest": {
+          "id": "innkeeperRoomChest",
+          "type": "sublocation",
+          "locationId": "innkeeperRoom",
+          "name": "Garrick's chest",
+          "publicText": "A small sturdy chest stands against the wall among Garrick's private belongings.",
+          "enterLabel": "Stand by Garrick's chest",
+          "selfText": "You are standing beside Garrick's small private chest.",
+          "occupantTemplate": "{name} stands beside Garrick's small private chest.",
+          "capacity": 2,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_innkeeperRoomChest",
+          "inventoryName": "Garrick's chest",
+          "requiredKeyItemId": "innkeeperChestKey",
+          "reachableSublocationIds": [
+            "innkeeperRoomChest",
+            "innkeeperRoomFloor"
+          ]
+        }
+      }
+    },
+    "guestRoom1": {
+      "id": "guestRoom1",
+      "type": "location",
+      "name": "Guest room 1",
+      "passage": "Guest Room 1",
+      "description": [
+        "A small guest room with a narrow bed, a peg for a coat, and a simple wooden stool."
+      ],
+      "defaultSublocationId": "guestRoom1Floor",
+      "inventoryId": "inventory_guestRoom1",
+      "exits": {
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_guest_room_1",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
+      },
+      "sublocations": {
+        "guestRoom1Floor": {
+          "id": "guestRoom1Floor",
+          "type": "sublocation",
+          "locationId": "guestRoom1",
+          "name": "Guest room 1",
+          "enterLabel": "Stand in guest room 1",
+          "selfText": "You are standing in guest room 1.",
+          "occupantTemplate": "{name} stands in guest room 1.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "guestRoom1Floor",
+            "guestRoom1Bed"
+          ]
+        },
+        "guestRoom1Bed": {
+          "id": "guestRoom1Bed",
+          "type": "sublocation",
+          "locationId": "guestRoom1",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "guestRoom1Bed",
+            "guestRoom1Floor"
+          ],
+          "capabilities": [
+            "sleep"
+          ]
+        }
+      }
+    },
+    "guestRoom2": {
+      "id": "guestRoom2",
+      "type": "location",
+      "name": "Guest room 2",
+      "passage": "Guest Room 2",
+      "description": [
+        "A small guest room with a narrow bed, a peg for a coat, and a simple wooden stool."
+      ],
+      "defaultSublocationId": "guestRoom2Floor",
+      "inventoryId": "inventory_guestRoom2",
+      "exits": {
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_guest_room_2",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
+      },
+      "sublocations": {
+        "guestRoom2Floor": {
+          "id": "guestRoom2Floor",
+          "type": "sublocation",
+          "locationId": "guestRoom2",
+          "name": "Guest room 2",
+          "enterLabel": "Stand in guest room 2",
+          "selfText": "You are standing in guest room 2.",
+          "occupantTemplate": "{name} stands in guest room 2.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "guestRoom2Floor",
+            "guestRoom2Bed"
+          ]
+        },
+        "guestRoom2Bed": {
+          "id": "guestRoom2Bed",
+          "type": "sublocation",
+          "locationId": "guestRoom2",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "guestRoom2Bed",
+            "guestRoom2Floor"
+          ],
+          "capabilities": [
+            "sleep"
+          ]
+        }
+      }
+    },
+    "guestRoom3": {
+      "id": "guestRoom3",
+      "type": "location",
+      "name": "Guest room 3",
+      "passage": "Guest Room 3",
+      "description": [
+        "A small guest room with a narrow bed, a peg for a coat, and a simple wooden stool."
+      ],
+      "defaultSublocationId": "guestRoom3Floor",
+      "inventoryId": "inventory_guestRoom3",
+      "exits": {
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_guest_room_3",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
+      },
+      "sublocations": {
+        "guestRoom3Floor": {
+          "id": "guestRoom3Floor",
+          "type": "sublocation",
+          "locationId": "guestRoom3",
+          "name": "Guest room 3",
+          "enterLabel": "Stand in guest room 3",
+          "selfText": "You are standing in guest room 3.",
+          "occupantTemplate": "{name} stands in guest room 3.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "guestRoom3Floor",
+            "guestRoom3Bed"
+          ]
+        },
+        "guestRoom3Bed": {
+          "id": "guestRoom3Bed",
+          "type": "sublocation",
+          "locationId": "guestRoom3",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "guestRoom3Bed",
+            "guestRoom3Floor"
+          ],
+          "capabilities": [
+            "sleep"
+          ]
+        }
+      }
+    },
+    "guestRoom4": {
+      "id": "guestRoom4",
+      "type": "location",
+      "name": "Guest room 4",
+      "passage": "Guest Room 4",
+      "description": [
+        "A small guest room with a narrow bed, a peg for a coat, and a simple wooden stool."
+      ],
+      "defaultSublocationId": "guestRoom4Floor",
+      "inventoryId": "inventory_guestRoom4",
+      "exits": {
+        "upstairsCorridor": {
+          "destinationId": "upstairsCorridor",
+          "lockId": "lock_guest_room_4",
+          "locked": true,
+          "lockedReason": "The door is locked."
+        }
+      },
+      "sublocations": {
+        "guestRoom4Floor": {
+          "id": "guestRoom4Floor",
+          "type": "sublocation",
+          "locationId": "guestRoom4",
+          "name": "Guest room 4",
+          "enterLabel": "Stand in guest room 4",
+          "selfText": "You are standing in guest room 4.",
+          "occupantTemplate": "{name} stands in guest room 4.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "guestRoom4Floor",
+            "guestRoom4Bed"
+          ]
+        },
+        "guestRoom4Bed": {
+          "id": "guestRoom4Bed",
+          "type": "sublocation",
+          "locationId": "guestRoom4",
+          "name": "Bed",
+          "publicText": "A bed occupies one side of the room.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the bed.",
+          "occupantTemplate": "{name} is lying on the bed.",
+          "capacity": 4,
+          "reachableSublocationIds": [
+            "guestRoom4Bed",
+            "guestRoom4Floor"
+          ],
+          "capabilities": [
+            "sleep"
+          ]
+        }
+      }
+    },
+    "villageEdge": {
+      "id": "villageEdge",
+      "type": "location",
+      "name": "Village edge",
+      "passage": "The Village Edge",
+      "description": [
+        "The last fences and gardens of the village give way to a narrow path beneath the trees.",
+        "Farther on, the woodland closes around a quieter clearing away from the other homes."
+      ],
+      "defaultSublocationId": "villageEdgePath",
+      "inventoryId": "inventory_villageEdge",
+      "exits": {
+        "street": "street",
+        "maraCottageGardenLocation": "maraCottageGardenLocation",
+        "trampledGlade": "trampledGlade"
+      },
+      "sublocations": {
+        "villageEdgePath": {
+          "id": "villageEdgePath",
+          "type": "sublocation",
+          "locationId": "villageEdge",
+          "name": "Path at the village edge",
+          "enterLabel": "Stand on the path at the village edge",
+          "selfText": "You are standing where the village path enters the woodland.",
+          "occupantTemplate": "{name} stands where the village path enters the woodland.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "villageEdgePath"
+          ]
+        }
+      }
+    },
+    "maraCottageGardenLocation": {
+      "id": "maraCottageGardenLocation",
+      "type": "location",
+      "name": "Mara's Garden",
+      "passage": "Mara's Garden",
+      "description": [
+        "A quiet forest clearing surrounds Mara's small cottage, separated from the village by a narrow woodland path.",
+        "Cultivated beds of herbs, mushrooms, and medicinal plants fill much of the garden, with another path leading away toward the nearby forest stream."
+      ],
+      "defaultSublocationId": "maraCottageGarden",
+      "inventoryId": "inventory_maraCottageGardenLocation",
+      "exits": {
+        "villageEdge": "villageEdge",
+        "secludedCottage": {
+          "destinationId": "secludedCottage",
+          "lockId": "lock_mara_cottage",
+          "locked": false,
+          "lockedReason": "The cottage door is locked."
+        },
+        "forestMountainStream": "forestMountainStream"
+      },
+      "sublocations": {
+        "maraCottageGarden": {
+          "id": "maraCottageGarden",
+          "type": "sublocation",
+          "locationId": "maraCottageGardenLocation",
+          "name": "Mara's garden",
+          "publicText": "Narrow beds of medicinal herbs and mushrooms surround the cottage, carefully tended beneath the trees.",
+          "enterLabel": "Stand in Mara's garden",
+          "selfText": "You are standing among the cultivated beds in Mara's garden.",
+          "occupantTemplate": "{name} stands among the cultivated beds in Mara's garden.",
+          "capacity": 12,
+          "reachableSublocationIds": [
+            "maraCottageGarden"
+          ]
+        }
+      }
+    },
+    "secludedCottage": {
+      "id": "secludedCottage",
+      "type": "location",
+      "name": "Mara's Cottage",
+      "passage": "Mara's Cottage",
+      "description": [
+        "Mara's cottage is a small one-room home and workshop, practical rather than comfortable.",
+        "A modest bed, a stove and hearth, a scarred work table, crowded shelves, and a small sturdy chest make the interior serve equally as living space and hedge-witch workshop."
+      ],
+      "defaultSublocationId": "maraCottageFloor",
+      "inventoryId": "inventory_secludedCottage",
+      "exits": {
+        "maraCottageGardenLocation": {
+          "destinationId": "maraCottageGardenLocation",
+          "lockId": "lock_mara_cottage",
+          "locked": false,
+          "lockedReason": "The cottage door is locked."
+        }
+      },
+      "sublocations": {
+        "maraCottageFloor": {
+          "id": "maraCottageFloor",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Cottage interior",
+          "publicText": "Inside, a modest bed, a practical stove and hearth, a work table, and crowded shelves make one small room serve as both home and workshop.",
+          "enterLabel": "Step inside the cottage",
+          "selfText": "You are standing inside Mara's cottage.",
+          "occupantTemplate": "{name} stands inside Mara's cottage.",
+          "capacity": 8,
+          "reachableSublocationIds": [
+            "maraCottageFloor",
+            "maraCottageBed",
+            "maraCottageTable",
+            "maraCottageShelves",
+            "maraCottageChest"
+          ]
+        },
+        "maraCottageBed": {
+          "id": "maraCottageBed",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Bed",
+          "publicText": "A simple, well-used bed occupies one side of the cottage.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the cottage bed.",
+          "occupantTemplate": "{name} is lying on the cottage bed.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "maraCottageBed",
+            "maraCottageFloor"
+          ],
+          "capabilities": [
+            "sleep"
+          ]
+        },
+        "maraCottageTable": {
+          "id": "maraCottageTable",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Work table",
+          "publicText": "A scarred wooden table provides space for sorting ingredients, preparing remedies, and ordinary meals.",
+          "enterLabel": "Sit at the work table",
+          "selfText": "You are sitting at the cottage work table.",
+          "occupantTemplate": "{name} sits at the cottage work table.",
+          "capacity": 3,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_maraCottageTable",
+          "inventoryName": "Mara cottage work table",
+          "reachableSublocationIds": [
+            "maraCottageTable",
+            "maraCottageFloor"
+          ]
+        },
+        "maraCottageShelves": {
+          "id": "maraCottageShelves",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Alchemical shelves",
+          "publicText": "Shelves hold jars, bottles, dried herbs, mushrooms, simple powders, a mortar and pestle, and the ordinary supplies of a working hedge witch.",
+          "enterLabel": "Stand by the alchemical shelves",
+          "selfText": "You are standing beside the alchemical shelves.",
+          "occupantTemplate": "{name} stands beside the alchemical shelves.",
+          "capacity": 2,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_maraCottageShelves",
+          "inventoryName": "Alchemical shelves",
+          "reachableSublocationIds": [
+            "maraCottageShelves",
+            "maraCottageFloor"
+          ]
+        },
+        "maraCottageChest": {
+          "id": "maraCottageChest",
+          "type": "sublocation",
+          "locationId": "secludedCottage",
+          "name": "Mara's chest",
+          "publicText": "A small sturdy wooden chest sits near the wall for Mara's private belongings and valuable working materials.",
+          "enterLabel": "Stand by Mara's chest",
+          "selfText": "You are standing beside Mara's private chest.",
+          "occupantTemplate": "{name} stands beside Mara's private chest.",
+          "capacity": 2,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_maraCottageChest",
+          "inventoryName": "Mara's chest",
+          "requiredKeyItemId": "maraChestKey",
+          "reachableSublocationIds": [
+            "maraCottageChest",
+            "maraCottageFloor"
+          ]
+        }
+      }
+    },
+    "forestMountainStream": {
+      "id": "forestMountainStream",
+      "type": "location",
+      "name": "Forest stream",
+      "passage": "Forest Stream",
+      "description": [
+        "A clear forest stream runs over dark stones at the foot of the mountains, not far from Mara's cottage.",
+        "Pines and old broadleaf trees crowd the banks, while the mountain slopes rise beyond them through the forest.",
+        "The place is quiet and secluded enough to linger without the village close at hand."
+      ],
+      "defaultSublocationId": "forestStreamBank",
+      "inventoryId": "inventory_forestMountainStream",
+      "exits": {
+        "maraCottageGardenLocation": "maraCottageGardenLocation",
+        "trampledGlade": "trampledGlade"
+      },
+      "sublocations": {
+        "forestStreamBank": {
+          "id": "forestStreamBank",
+          "type": "sublocation",
+          "locationId": "forestMountainStream",
+          "name": "Stream bank",
+          "publicText": "A narrow bank follows the clear water between roots, moss, and dark stream-worn stones.",
+          "enterLabel": "Stand by the forest stream",
+          "selfText": "You are standing on the bank of the forest stream.",
+          "occupantTemplate": "{name} stands on the bank of the forest stream.",
+          "capacity": 12,
+          "reachableSublocationIds": [
+            "forestStreamBank",
+            "forestStreamSittingPlace"
+          ]
+        },
+        "forestStreamSittingPlace": {
+          "id": "forestStreamSittingPlace",
+          "type": "sublocation",
+          "locationId": "forestMountainStream",
+          "name": "Stones by the stream",
+          "publicText": "A pair of broad, smooth stones beside the water make a comfortable place for two people to sit close to the stream.",
+          "enterLabel": "Sit on the stones by the stream",
+          "selfText": "You are sitting beside the stream.",
+          "occupantTemplate": "{name} sits beside the stream.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "forestStreamSittingPlace",
+            "forestStreamBank"
+          ]
+        }
+      }
+    },
+    "villageSmithy": {
+      "id": "villageSmithy",
+      "type": "location",
+      "name": "Smithy",
+      "passage": "The Smithy",
+      "description": [
+        "A low timber-and-stone smithy stands beside the street near the village temple, its roof and doorway darkened by years of smoke.",
+        "Inside, heat from the forge hangs over an anvil and scarred workbench. Iron bars, rough blanks, nails, horseshoe stock, simple fittings, and half-finished practical pieces lie in ordered clutter, while a hand-turned grindstone stands ready in one corner."
+      ],
+      "defaultSublocationId": "smithyForgeArea",
+      "inventoryId": "inventory_villageSmithy",
+      "exits": {
+        "street": "street"
+      },
+      "sublocations": {
+        "smithyForgeArea": {
+          "id": "smithyForgeArea",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Forge floor",
+          "publicText": "The working forge, anvil, tongs, hammers, iron stock, and half-finished everyday metalwork fill the hot soot-marked front room; a grindstone occupies one corner.",
+          "enterLabel": "Step onto the forge floor",
+          "selfText": "You are standing on the forge floor beside the working hearth and anvil.",
+          "occupantTemplate": "{name} stands on the forge floor near the hearth and anvil.",
+          "capacity": 8,
+          "reachableSublocationIds": [
+            "smithyForgeArea",
+            "smithyLivingRoom"
+          ]
+        },
+        "smithyLivingRoom": {
+          "id": "smithyLivingRoom",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Rear living room",
+          "publicText": "A low doorway behind the workshop opens into a sparse private room with a stool, a small chest, a washbasin, a few plain household things, and a narrow bed.",
+          "enterLabel": "Step into the rear living room",
+          "selfText": "You are in the modest living room behind the smithy.",
+          "occupantTemplate": "{name} is in the modest living room behind the smithy.",
+          "capacity": 3,
+          "reachableSublocationIds": [
+            "smithyLivingRoom",
+            "smithyForgeArea",
+            "smithyLivingBed",
+            "smithyLivingChest"
+          ]
+        },
+        "smithyLivingBed": {
+          "id": "smithyLivingBed",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Harlan's bed",
+          "publicText": "A narrow, sturdy bed takes up one wall of the rear room, close to a small chest of personal belongings.",
+          "enterLabel": "Lie down on the bed",
+          "selfText": "You are lying on the narrow bed in the rear room.",
+          "occupantTemplate": "{name} is lying on the narrow bed in the rear room.",
+          "capacity": 1,
+          "capabilities": [
+            "sleep"
+          ],
+          "reachableSublocationIds": [
+            "smithyLivingBed",
+            "smithyLivingRoom"
+          ]
+        },
+        "smithyLivingChest": {
+          "id": "smithyLivingChest",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Harlan's chest",
+          "publicText": "A small iron-bound chest holds Harlan's private belongings in the rear living room.",
+          "enterLabel": "Stand by Harlan's chest",
+          "selfText": "You are standing beside Harlan's private chest.",
+          "occupantTemplate": "{name} stands beside Harlan's private chest.",
+          "capacity": 2,
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_smithyLivingChest",
+          "inventoryName": "Harlan's chest",
+          "requiredKeyItemId": "blacksmithChestKey",
+          "reachableSublocationIds": [
+            "smithyLivingChest",
+            "smithyLivingRoom"
+          ]
+        }
+      }
+    },
+    "marketSquare": {
+      "id": "marketSquare",
+      "type": "location",
+      "name": "Market Square",
+      "passage": "Market Square",
+      "description": [
+        "A broad hard-packed square opens off the village street, used when travelers, carts, or occasional sellers have reason to stop.",
+        "Most days there is little here beyond wheel ruts, hitching posts, and open space; when the road merchant is in the village, his massive wagon dominates the square."
+      ],
+      "defaultSublocationId": "marketSquareCenter",
+      "inventoryId": "inventory_marketSquare",
+      "exits": {
+        "street": "street",
+        "merchantWagon": {
+          "destinationId": "merchantWagon",
+          "lockId": "lock_merchant_wagon",
+          "locked": true,
+          "lockedReason": "The heavy wagon door is locked."
+        }
+      },
+      "sublocations": {
+        "marketSquareCenter": {
+          "id": "marketSquareCenter",
+          "type": "sublocation",
+          "locationId": "marketSquare",
+          "name": "Market square",
+          "enterLabel": "Stand in the market square",
+          "selfText": "You are standing in the market square.",
+          "occupantTemplate": "{name} stands in the market square.",
+          "capacity": 30,
+          "reachableSublocationIds": [
+            "marketSquareCenter",
+            "merchantSaleChest"
+          ]
+        },
+        "merchantSaleChest": {
+          "id": "merchantSaleChest",
+          "type": "sublocation",
+          "locationId": "marketSquare",
+          "name": "Locked sales chest",
+          "presenceOwnerCharacterId": "roadMerchant",
+          "publicText": "A stout iron-bound sales chest sits beside the merchant’s wagon. Its lid is locked; the road merchant keeps the key on himself.",
+          "enterLabel": "Stand by the merchant’s sales chest",
+          "selfText": "You are standing beside the merchant’s locked sales chest.",
+          "occupantTemplate": "{name} stands beside the merchant’s locked sales chest.",
+          "capacity": 3,
+          "reachableSublocationIds": [
+            "merchantSaleChest",
+            "marketSquareCenter"
+          ],
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_merchantSaleChest",
+          "inventoryName": "Merchant sale chest",
+          "requiredKeyItemId": "merchantSaleChestKey"
+        }
+      }
+    },
+    "merchantWagon": {
+      "id": "merchantWagon",
+      "type": "location",
+      "name": "Armored merchant wagon",
+      "passage": "Armored Merchant Wagon",
+      "presenceOwnerCharacterId": "roadMerchant",
+      "description": [
+        "The wagon interior is cramped, dark, and practical: a road home built inside a cargo hold rather than a comfortable room.",
+        "Heavy oak surrounds the space. Crates, straps, spare gear, and travel supplies are packed wherever they fit, while a narrow sleeping mattress is wedged along one wall.",
+        "Above, the reinforced roof and closable fighting hatch belong to the same brutally practical machine as the iron-patched exterior."
+      ],
+      "defaultSublocationId": "merchantWagonFloor",
+      "inventoryId": "inventory_merchantWagon",
+      "exits": {
+        "marketSquare": {
+          "destinationId": "marketSquare",
+          "lockId": "lock_merchant_wagon",
+          "locked": true,
+          "lockedReason": "The heavy wagon door is locked."
+        }
+      },
+      "sublocations": {
+        "merchantWagonFloor": {
+          "id": "merchantWagonFloor",
+          "type": "sublocation",
+          "locationId": "merchantWagon",
+          "name": "Wagon interior",
+          "publicText": "Crates, straps, tools, and travel gear leave only a narrow aisle through the armored wagon.",
+          "enterLabel": "Step inside the wagon",
+          "selfText": "You are standing in the cramped wagon interior.",
+          "occupantTemplate": "{name} stands inside the cramped wagon.",
+          "capacity": 6,
+          "reachableSublocationIds": [
+            "merchantWagonFloor",
+            "merchantWagonBunk",
+            "merchantWagonCargo",
+            "merchantWagonChest"
+          ]
+        },
+        "merchantWagonBunk": {
+          "id": "merchantWagonBunk",
+          "type": "sublocation",
+          "locationId": "merchantWagon",
+          "name": "Road mattress",
+          "publicText": "A narrow, thick mattress is wedged securely between cargo braces, with a rolled blanket at one end.",
+          "enterLabel": "Lie down on the road mattress",
+          "selfText": "You are lying on the wagon mattress.",
+          "occupantTemplate": "{name} lies on the wagon mattress.",
+          "capacity": 1,
+          "reachableSublocationIds": [
+            "merchantWagonBunk",
+            "merchantWagonFloor"
+          ],
+          "capabilities": [
+            "sleep"
+          ]
+        },
+        "merchantWagonCargo": {
+          "id": "merchantWagonCargo",
+          "type": "sublocation",
+          "locationId": "merchantWagon",
+          "name": "Cargo crates",
+          "publicText": "Heavy crates and tied-down boxes fill much of the wagon, arranged to survive rough roads and sudden stops.",
+          "enterLabel": "Stand by the cargo crates",
+          "selfText": "You are standing among the wagon cargo crates.",
+          "occupantTemplate": "{name} stands among the wagon cargo crates.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "merchantWagonCargo",
+            "merchantWagonFloor"
+          ],
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_merchantWagonCargo",
+          "inventoryName": "Merchant wagon cargo"
+        },
+        "merchantWagonChest": {
+          "id": "merchantWagonChest",
+          "type": "sublocation",
+          "locationId": "merchantWagon",
+          "name": "Locked road chest",
+          "publicText": "A compact iron-bound chest is bolted low against the wagon frame for private valuables and papers.",
+          "enterLabel": "Stand by the locked road chest",
+          "selfText": "You are standing beside the merchant’s private road chest.",
+          "occupantTemplate": "{name} stands beside the merchant’s private road chest.",
+          "capacity": 2,
+          "reachableSublocationIds": [
+            "merchantWagonChest",
+            "merchantWagonFloor"
+          ],
+          "capabilities": [
+            "place_item"
+          ],
+          "inventoryId": "inventory_merchantWagonChest",
+          "inventoryName": "Merchant private road chest",
+          "requiredKeyItemId": "merchantWagonKey"
+        }
+      }
+    },
+    "trampledGlade": {
+      "id": "trampledGlade",
+      "type": "location",
+      "name": "Trampled Glade",
+      "passage": "Trampled Glade",
+      "description": [
+        "A small clearing lies tucked between dense trees, hidden from the ordinary paths through the woods.",
+        "The grass has been heavily trampled in a rough circle. Dry twigs are crushed underfoot, and several branches have been snapped unusually high above the ground.",
+        "Whatever keeps passing through the clearing seems to move around it with more energy than a person merely crossing from one path to another."
+      ],
+      "requiresDiscovery": true,
+      "defaultSublocationId": "trampledGladeClearing",
+      "inventoryId": "inventory_trampledGlade",
+      "exits": {
+        "forestMountainStream": "forestMountainStream",
+        "villageEdge": "villageEdge"
+      },
+      "sublocations": {
+        "trampledGladeClearing": {
+          "id": "trampledGladeClearing",
+          "type": "sublocation",
+          "locationId": "trampledGlade",
+          "name": "Trampled clearing",
+          "publicText": "Trampled grass, crushed twigs, and high broken branches mark the secluded clearing.",
+          "enterLabel": "Stand in the trampled clearing",
+          "selfText": "You are standing in the trampled clearing.",
+          "occupantTemplate": "{name} stands in the trampled clearing.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "trampledGladeClearing"
+          ]
+        }
+      }
+    }
+  },
+  "characters": {
+    "player": {
+      "id": "player",
+      "name": "Traveler",
+      "playerDescription": "A road-worn traveler carries the look of someone accustomed to unfamiliar places and long journeys.",
+      "interactionLabel": "Speak with the traveller",
+      "aiDescription": "You are the Traveler, an itinerant wanderer accustomed to roads, unfamiliar places, and changing circumstances. Your deeper history, motives, and immediate goals are intentionally open-ended unless they have been established in play. Do not assume a particular current location or activity from this description; use the canonical view, observations, and memory to understand what is happening now.",
+      "locationId": "tavernEntrance",
+      "sublocationId": "tavernEntranceFloor",
+      "inventoryId": "inventory_player",
+      "wallet": 10,
+      "initialControllerId": "human",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "Beneath the aura of an ordinary human, there is a faint second presence — something impossible to place, as though some part of this person exists beyond the boundaries of this world. It does not feel corrupt or hostile, only profoundly out of place."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      }
+    },
+    "hoodedWoman": {
+      "id": "hoodedWoman",
+      "name": "Mara the Hedge Witch",
+      "playerDescription": "Mara is a striking young woman with a guarded, self-contained manner and an expression that is often difficult to read.",
+      "interactionLabel": "Speak with Mara",
+      "aiDescription": "You are Mara, a secretive hedge witch. You conceal your abilities and distrust authority. You know a great deal about alchemy and medicine, but your magical abilities are limited and you never had an academic magical education. You are quite beautiful, so people sometimes accuse you of cooperating with demons, but that is false. You live alone in a secluded cottage beyond the edge of the village, surrounded by forest. You grow herbs and mushrooms around the cottage and work there as a hedge witch, preparing medicines, remedies, simple alchemical mixtures, and potions for people who seek your help.",
+      "locationId": "commonRoom",
+      "sublocationId": "commonRoomTableOne",
+      "inventoryId": "inventory_hoodedWoman",
+      "wallet": 8,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [
+        "readAura"
+      ],
+      "engineFacts": {
+        "aura": "A quiet, disciplined magical presence surrounds her."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "mara_home",
+            "text": "I live and work in a secluded cottage beyond the edge of the village, surrounded by forest."
+          },
+          {
+            "id": "mara_work",
+            "text": "I grow herbs and mushrooms around my cottage and prepare medicines, remedies, potions, and simple alchemical mixtures there."
+          },
+          {
+            "id": "mara_village_reputation",
+            "text": "Many villagers are uneasy about me and prefer not to associate themselves openly with witchcraft."
+          },
+          {
+            "id": "mara_village_clients",
+            "text": "Despite that unease, villagers quietly seek my advice, medicines, remedies, and potions."
+          },
+          {
+            "id": "mara_open_secret",
+            "text": "People broadly know that villagers come to me for help, but individuals often avoid admitting publicly that they themselves do so."
+          },
+          {
+            "id": "mara_sleeping_place",
+            "text": "I normally sleep in the bed in my cottage."
+          },
+          {
+            "id": "garrick_home",
+            "text": "Garrick lives at the tavern he owns and runs."
+          },
+          {
+            "id": "nell_home",
+            "text": "Nell lives at the tavern and sleeps in the nook beneath the stairs."
+          },
+          {
+            "id": "blacksmith_role",
+            "text": "Harlan is the village blacksmith and works at the smithy beside the street near the temple."
+          },
+          {
+            "id": "blacksmith_patient",
+            "text": "Harlan has come to me more than once for treatment of burns and other injuries caused by his forge work."
+          },
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          },
+          {
+            "id": "mara_trampled_glade",
+            "text": "I know a concealed path to a secluded clearing between the forest stream and the village edge. The grass there is repeatedly trampled and some branches have been broken unusually high, but I do not know for certain what causes it."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan is a wary but practical repeat patient. He does not advertise coming to a hedge witch, but he has trusted my treatment for forge burns and injuries often enough that I know his caution is mixed with genuine respect for my skill."
+          },
+          {
+            "targetCharacterId": "roadMerchant",
+            "summary": "Maksym is the traveling merchant who returns on his route. His visits bring outside goods, news, and a welcome change of pace. He treats me much like his other regular customers and does not seem especially interested in village gossip about me."
+          }
+        ],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      },
+      "initialDiscoveredLocationIds": [
+        "trampledGlade"
+      ]
+    },
+    "innkeeper": {
+      "id": "innkeeper",
+      "name": "Garrick the Innkeeper",
+      "playerDescription": "Garrick the Innkeeper is a solid, watchful man with the disciplined bearing of someone who spent years among soldiers before taking up tavern work.",
+      "interactionLabel": "Speak with Garrick the Innkeeper",
+      "aiDescription": "You are Garrick the Innkeeper, the male owner of this roadside tavern. You were once a professional soldier. After years of service you saved enough money to leave military life, buy this tavern, and retire into a quieter trade. You are practical, disciplined, stern, experienced at judging people, and financially cautious to the point of greed. You dislike waste, expect payment for drinks, and hate supporting anyone who contributes nothing. A drink costs one gold. You know the tavern business well and understand that a tavern is not a barracks: harmless shouting, flirting, gambling, boasting, singing, and foolishness are part of business. You intervene when behaviour becomes bad for business or genuinely dangerous. Old military habits make you decisive when order really has to be restored, especially if staff are threatened or the tavern is likely to be wrecked. You are not sentimental in how you present yourself, but you have a dry sense of humour, often dark old-soldier humour. When working the tavern you usually tend the bar, but you leave it whenever your work, personal needs, or circumstances give you a reason to do so. You took Nell in after bandits destroyed her family and home. Over time you have come to regard her almost as a daughter, though you would rarely say that aloud. You could not bring yourself to throw her into the street, yet your nature would strongly resent feeding an idle extra mouth for free. Nell works hard and makes herself useful, so the present arrangement satisfies both your conscience and your practical nature. You are genuinely pleased with her, treat her fairly, do not pamper her, and would normally protect her if drunken or violent patrons seriously threatened her.",
+      "locationId": "bar",
+      "sublocationId": "barBehindCounter",
+      "inventoryId": "inventory_innkeeper",
+      "wallet": 25,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "His aura is entirely ordinary, but unusually steady — dense, warm, and settled, like a hearth that has burned in the same place for many years. There is little turbulence in it; what he feels tends to sink deep rather than flare brightly."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "nell_role",
+            "text": "Nell is the young waitress who lives and works at my tavern; she is not a stranger, customer, applicant, or newly hired employee."
+          },
+          {
+            "id": "nell_history",
+            "text": "Several years ago bandits killed Nell’s parents and burned her home, leaving her with nowhere safe to go."
+          },
+          {
+            "id": "nell_shelter",
+            "text": "I took Nell in; she sleeps in the small nook beneath the stairs and receives food, shelter, and safety here."
+          },
+          {
+            "id": "nell_work",
+            "text": "Nell earns her place by helping with serving patrons, collecting mugs, carrying things between the common room and bar, and other ordinary tavern work."
+          },
+          {
+            "id": "nell_arrangement",
+            "text": "Nell works hard and gives me no reason to reconsider the arrangement; as long as she continues honestly helping, her place here is secure."
+          },
+          {
+            "id": "mara_home",
+            "text": "Mara is a hedge witch who lives alone in a secluded cottage beyond the village edge, surrounded by woodland."
+          },
+          {
+            "id": "mara_services",
+            "text": "Mara grows herbs and mushrooms and prepares medicines, remedies, potions, and simple alchemical mixtures at her cottage."
+          },
+          {
+            "id": "mara_local_reputation",
+            "text": "Many villagers are wary of Mara and of openly associating themselves with witchcraft."
+          },
+          {
+            "id": "mara_open_secret",
+            "text": "Villagers quietly go to Mara for remedies and advice despite that unease; everyone broadly knows this, though people rarely admit their own visits openly."
+          },
+          {
+            "id": "garrick_sleeping_place",
+            "text": "I live at the tavern and normally sleep in the bed in my private room upstairs."
+          },
+          {
+            "id": "blacksmith_role",
+            "text": "Harlan is the village blacksmith and runs the smithy beside the street near the temple."
+          },
+          {
+            "id": "blacksmith_importance",
+            "text": "Most village households depend on Harlan sooner or later for nails, horseshoes, fittings, tool repair, and sharpening."
+          },
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "nell",
+            "summary": "I regard Nell almost as a daughter, though I show it through shelter, fair treatment, expectations, and protection rather than sentiment. I am glad she works hard because I could not abandon her, but supporting an idle dependent would offend my practical nature."
+          },
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan and I do not much like each other, but I respect his competence and know the village depends on his work. We mostly keep to our own spheres and have little reason to talk unless business requires it."
+          },
+          {
+            "targetCharacterId": "roadMerchant",
+            "summary": "Maksym is the road merchant who visits regularly. His arrivals are good for business and break the monotony; he brings useful goods and outside stories. We are familiar and cordial, but not unusually close."
+          }
+        ],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      },
+      "routineAnchors": {
+        "evening": {
+          "locationId": "bar",
+          "sublocationId": "barBehindCounter"
+        }
+      }
+    },
+    "nell": {
+      "id": "nell",
+      "name": "Nell",
+      "playerDescription": "A young woman of about eighteen has an open, cheerful face, with a trace of caution around unfamiliar people.",
+      "interactionLabel": "Speak with Nell",
+      "aiDescription": "You are Nell, an eighteen-year-old waitress at this roadside tavern. A few years ago bandits raided your nearby village, killed your parents, and burned your family home. You eventually reached Garrick the Innkeeper’s tavern with almost nothing. Garrick took you in and gave you food, shelter, and safety; you now sleep in the cramped nook beneath the stairs and work hard to earn your place. You are cheerful, friendly, helpful, and good-natured without being pushy. You understand your low social position and are somewhat nervous around customers, especially armed, wealthy, drunk, angry, or threatening strangers, but you try to remain polite. Your past matters when relevant, but you do not make every conversation about tragedy. Your ordinary work is to move around the tavern, collect empty mugs, carry them back toward the bar, keep an eye on the room, and sometimes politely ask guests whether they want anything else. When a patron clearly gives you money to buy ale for them, you normally take the payment to Garrick, obtain the ale from him, and bring the drink back to the patron. You are deeply grateful to Garrick and try to be useful and dependable. The tavern is more than an arbitrary job: it gives you food, warmth, shelter, safety, familiar people, a useful role, and a place where you belong. Outside it you currently have no obvious safe destination. Some part of you may hope that one day a genuinely better life could appear, perhaps through love, marriage, a new home, or another good opportunity, but this is not an active quest and you do not spend your days trying to escape or find a husband. For now the tavern is home, and you try to live up to your role there.",
+      "locationId": "commonRoom",
+      "sublocationId": "commonRoomFloor",
+      "inventoryId": "inventory_nell",
+      "wallet": 0,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "Her aura is wholly of this world, but unusually vivid and quick to change — warm currents shifting through it with every passing thought and emotion, like candlelight disturbed by a nearby breath. Nothing about it feels supernatural; she simply seems more intensely present than most people."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "garrick_owner",
+            "text": "Garrick the Innkeeper owns and runs the tavern where I live and work."
+          },
+          {
+            "id": "garrick_history",
+            "text": "Garrick was a professional soldier before saving enough money to buy the tavern and retire from military life."
+          },
+          {
+            "id": "garrick_shelter",
+            "text": "Garrick took me in after bandits killed my parents and destroyed my home; he gives me food, shelter, and safety in exchange for my work."
+          },
+          {
+            "id": "garrick_character",
+            "text": "Garrick is stern, practical, very conscious of money, and dislikes supporting anyone who contributes nothing, but he treats me fairly rather than cruelly."
+          },
+          {
+            "id": "garrick_protection",
+            "text": "If patrons become genuinely dangerous, Garrick can be relied upon to step in and restore order."
+          },
+          {
+            "id": "nell_home",
+            "text": "I sleep in the nook beneath the stairs and currently regard the tavern as my safest home and place in the world."
+          },
+          {
+            "id": "nell_duties",
+            "text": "My ordinary responsibilities include serving patrons, collecting mugs, carrying things between the common room and bar, and helping with the general work of the tavern."
+          },
+          {
+            "id": "mara_home",
+            "text": "Mara is a hedge witch who lives alone in a secluded cottage beyond the village edge, surrounded by forest."
+          },
+          {
+            "id": "mara_services",
+            "text": "Mara grows herbs and mushrooms and makes medicines, remedies, potions, and simple alchemical mixtures at her cottage."
+          },
+          {
+            "id": "mara_local_reputation",
+            "text": "Many villagers are uneasy about Mara and her witchcraft, even though they know where she lives and what kind of help she offers."
+          },
+          {
+            "id": "mara_open_secret",
+            "text": "People in the village quietly seek Mara for remedies and advice, and everyone broadly knows it, but individuals often avoid admitting openly that they themselves visit her."
+          },
+          {
+            "id": "nell_sleeping_place",
+            "text": "I live at the tavern and normally sleep on the narrow cot in my nook beneath the stairs."
+          },
+          {
+            "id": "blacksmith_role",
+            "text": "Harlan is the village blacksmith and works at the smithy beside the street near the temple."
+          },
+          {
+            "id": "blacksmith_tavern",
+            "text": "Harlan sometimes comes to the tavern in the evening for a drink and often talks with me while he is there."
+          },
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "innkeeper",
+            "summary": "I am deeply grateful to Garrick, trust him, and regard his tavern as my current home. I try to repay his protection and support by being useful and dependable. I know he is stern and miserly enough to hate supporting an idle dependent, but I also know he is not cruel and would have great difficulty simply abandoning me."
+          },
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan is a familiar local and I find him serious but easier to talk with than his manner first suggests. We often chat when he drinks at the tavern, and I regard him as friendly company."
+          },
+          {
+            "targetCharacterId": "roadMerchant",
+            "summary": "Maksym is the familiar road merchant whose visits make the village livelier. He brings goods, news, and stories from outside. I know him and generally enjoy his visits, but we do not begin with an unusually deep personal bond."
+          }
+        ],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      },
+      "routineAnchors": {
+        "evening": {
+          "locationId": "commonRoom",
+          "sublocationId": "commonRoomFloor"
+        }
+      }
+    },
+    "blacksmith": {
+      "id": "blacksmith",
+      "name": "Harlan the Blacksmith",
+      "playerDescription": "Harlan is a broad-shouldered, thick-forearmed man in middle age, with a square soot-marked face and a steady, appraising stare. He carries himself with the calm certainty of someone accustomed to being needed.",
+      "interactionLabel": "Speak with Harlan the Blacksmith",
+      "aiDescription": "You are Harlan, the village blacksmith. You are a serious, practical, businesslike man with dry understated humour and a slightly arrogant streak. You take great pride in being useful and privately regard yourself as one of the village's essential men, almost an informal authority, because every household eventually needs your work. You respect competence, clear obligations, and people who understand the limits of their own business. You spend most of your working life making and repairing ordinary necessities rather than glamorous weapons: nails in quantity, horseshoes, small iron fittings for harness and tack, household and farm hardware, and repairs to practical tools. You also straighten, sharpen, and repair knives, axes, and scythes when villagers bring them. You live in the small rear room attached to your smithy. You and Garrick the Innkeeper do not much like each other, but you respect one another's competence and local importance; you both prefer not to interfere in the other's sphere, so you speak relatively little. You sometimes drink at Garrick's tavern in the evening. Nell is usually the person there you most naturally talk to: you like her and find her good company, but your feeling toward her is friendly and familiar, not sexual or romantic. Like most locals you are wary of Mara and witchcraft, but you know her remedies work because you have quietly gone to her several times for burns and other forge injuries. You respect her skill without advertising those visits.",
+      "locationId": "villageSmithy",
+      "sublocationId": "smithyForgeArea",
+      "inventoryId": "inventory_blacksmith",
+      "wallet": 18,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "His aura is wholly ordinary: steady, dense, and grounded, with the settled rhythm of a man accustomed to heat, weight, repetition, and practical work."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "harlan_role",
+            "text": "I am the village blacksmith and work from the smithy beside the street near the temple."
+          },
+          {
+            "id": "harlan_work",
+            "text": "Most of my trade is practical village ironwork: nails, horseshoes, harness and tack fittings, ordinary household and farm hardware, and repairing or sharpening knives, axes, and scythes."
+          },
+          {
+            "id": "harlan_home",
+            "text": "I live in the small rear room attached to my smithy."
+          },
+          {
+            "id": "harlan_sleeping_place",
+            "text": "I normally sleep on the bed in the rear living room of my smithy."
+          },
+          {
+            "id": "garrick_role",
+            "text": "Garrick owns and runs the village tavern and is one of the other locally important working men."
+          },
+          {
+            "id": "nell_role",
+            "text": "Nell lives and works at Garrick’s tavern and is usually the person there I find easiest to talk with when I stop in for a drink."
+          },
+          {
+            "id": "mara_role",
+            "text": "Mara is the hedge witch who lives beyond the village and treats illnesses, burns, and other injuries with herbs, remedies, and magic-adjacent craft."
+          },
+          {
+            "id": "mara_treatment",
+            "text": "I have quietly gone to Mara more than once for burns and other injuries from forge work, and I know from experience that her treatment is effective."
+          },
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "innkeeper",
+            "summary": "Garrick and I irritate one another and do not seek each other’s company, but I respect his competence and importance. We both understand that the tavern is his sphere and the smithy is mine, and it is better not to meddle."
+          },
+          {
+            "targetCharacterId": "nell",
+            "summary": "I like Nell and find her pleasant, easy company when I drink at the tavern. My feeling toward her is friendly and familiar, not romantic or sexual."
+          },
+          {
+            "targetCharacterId": "hoodedWoman",
+            "summary": "I am cautious around Mara and would rather not advertise my dealings with a witch, but I respect her practical skill because she has successfully treated several burns and injuries from my work."
+          },
+          {
+            "targetCharacterId": "roadMerchant",
+            "summary": "Maksym is the regular road merchant. His visits are useful and make the village less isolated; he brings outside goods and news. We know one another and deal cordially, without any special starting loyalty or intimacy."
+          }
+        ],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      }
+    },
+    "roadMerchant": {
+      "id": "roadMerchant",
+      "name": "Maksym the Wagoner",
+      "playerDescription": "A young road merchant in his early thirties, moustached and weathered by travel without looking old. He carries himself with easy confidence and the measured caution of a man accustomed to weapons and dangerous roads.",
+      "interactionLabel": "Speak with Maksym the Wagoner",
+      "aiDescription": "You are Maksym the Wagoner, a traveling merchant and road adventurer in your early thirties. You are younger than Garrick and Harlan, still visibly driven by youth, curiosity, appetite for life, and the pull of the next road, but you have already seen ambushes, ugly deaths, desperate people, and enough bad country to take danger seriously. Trading is how you sustain the life you actually love: moving between settlements, discovering places, carrying useful goods, and returning with outside news and stories. Profit matters because roads, oxen, guards, repairs, and stock cost money, but greed is not your defining motive. You bargain firmly and enjoy a good deal without trying to humiliate people. You are relaxed and self-possessed in a broadly Cossack-like way: informal, independent, hard to intimidate, fond of dry understated jokes and small verbal jabs, often answering with a faint moustached smirk rather than loud laughter. You are comfortable with weapons and therefore behave around other people as though they may be armed too: leave sensible distance, watch hands without staring, do not grab strangers casually, and avoid cornering or publicly humiliating someone unless you are prepared for needless violence. You do not swagger or boast about fighting. Your four-ox wagon is a thick-oak, iron-patched mobile road home and cargo fortress. Its roof hatch mounts an expensive heavy lever-operated repeating crossbow with a bolt magazine; against lightly armored attackers it can kill, while against exceptional armor its crushing impact is still intended to knock a rider down or out of the saddle. On dangerous road legs you commonly hire several melee guards with wooden shields to keep attackers away while you shoot from above. You can maintain the mechanism and ordinary road repairs but regard its more complicated workings as costly specialist craft. You already know the regular villagers on this route. Treat them with cordial familiarity and broadly even-handed commercial neutrality. Their village gossip rarely interests you for its own sake; in particular, stories about Mara and demons are background chatter unless they become relevant to safety, trade, travel, or something genuinely unusual. Your visits are social as well as commercial: you bring outside news, road rumors, and stories, and you are perfectly willing to spend an evening at the tavern instead of hovering over your wagon. You may settle someday, but right now the world still feels too large to stop moving.",
+      "locationId": "commonRoom",
+      "sublocationId": "commonRoomTableTwo",
+      "inventoryId": "inventory_roadMerchant",
+      "wallet": 60,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "weeklyPresence": {
+        "presentWeekdayIndexes": [
+          1,
+          4
+        ],
+        "arrivalLocationId": "marketSquare",
+        "arrivalSublocationId": "marketSquareCenter",
+        "initialLocationId": "commonRoom",
+        "initialSublocationId": "commonRoomTableTwo"
+      },
+      "tradeLifecycle": {
+        "settleAcquiredOnDeparture": true,
+        "restock": {
+          "entries": [
+            {
+              "definitionId": "saltPouch",
+              "min": 3,
+              "max": 6,
+              "chance": 1
+            },
+            {
+              "definitionId": "dyedCloth",
+              "min": 1,
+              "max": 3,
+              "chance": 0.85
+            },
+            {
+              "definitionId": "townShirt",
+              "min": 0,
+              "max": 2,
+              "chance": 0.65
+            },
+            {
+              "definitionId": "leatherBelt",
+              "min": 0,
+              "max": 2,
+              "chance": 0.6
+            },
+            {
+              "definitionId": "sewingKit",
+              "min": 1,
+              "max": 2,
+              "chance": 0.9
+            },
+            {
+              "definitionId": "soapBar",
+              "min": 1,
+              "max": 3,
+              "chance": 0.85
+            },
+            {
+              "definitionId": "brassBrooch",
+              "min": 0,
+              "max": 2,
+              "chance": 0.5
+            },
+            {
+              "definitionId": "paperSheet",
+              "min": 3,
+              "max": 8,
+              "chance": 1
+            },
+            {
+              "definitionId": "writingSet",
+              "min": 1,
+              "max": 2,
+              "chance": 0.8
+            },
+            {
+              "definitionId": "fineFile",
+              "min": 0,
+              "max": 1,
+              "chance": 0.45
+            },
+            {
+              "definitionId": "smallShears",
+              "min": 0,
+              "max": 1,
+              "chance": 0.45
+            },
+            {
+              "definitionId": "glassMirror",
+              "min": 0,
+              "max": 1,
+              "chance": 0.3
+            }
+          ],
+          "targetInventoryId": "inventory_merchantSaleChest"
+        }
+      },
+      "engineFacts": {
+        "aura": "His aura is ordinary but restless and lively, tightly controlled around the edges like a campfire banked against the wind."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "garrick_role",
+            "text": "Garrick owns and runs the village tavern."
+          },
+          {
+            "id": "nell_role",
+            "text": "Nell lives and works at Garrick’s tavern."
+          },
+          {
+            "id": "mara_role",
+            "text": "Mara is the local hedge witch and makes remedies, potions, and salves."
+          },
+          {
+            "id": "harlan_role",
+            "text": "Harlan is the village blacksmith."
+          },
+          {
+            "id": "village_gossip",
+            "text": "Villagers sometimes whisper about Mara and demons or witchcraft; I have heard such talk before and do not consider it important by itself."
+          },
+          {
+            "id": "wagon_home",
+            "text": "My armored wagon is my road home; I sleep on the mattress inside it when I stay in the village."
+          },
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "innkeeper",
+            "summary": "Garrick is the innkeeper and a familiar customer/contact on this route. I know him well enough for easy business and tavern conversation, but I do not treat him as a special ally or favorite."
+          },
+          {
+            "targetCharacterId": "nell",
+            "summary": "Nell is a familiar young face at Garrick’s tavern. I am cordial with her and may joke or trade news, but there is no unusually deep starting bond."
+          },
+          {
+            "targetCharacterId": "hoodedWoman",
+            "summary": "Mara is the village hedge witch and a useful producer of remedies. I know the local stories about her but care much more whether her goods work than whether villagers whisper about demons."
+          },
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan is the village blacksmith and a familiar practical contact. I respect useful workmanship and deal with him on the same straightforward terms as other regular villagers."
+          }
+        ],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      }
+    }
+  },
+  "abilities": {
+    "readAura": {
+      "id": "readAura",
+      "name": "Read aura",
+      "actionType": "read_aura",
+      "playerDescription": "Sense the hidden auras of everyone you can currently perceive.",
+      "aiDescription": "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
+    }
+  },
+  "itemDefinitions": {
+    "travelerClothing": {
+      "id": "travelerClothing",
+      "name": "Traveler's clothes",
+      "description": "Practical road-worn travelling clothes.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Practical, road-worn travelling clothes show the wear of long journeys and unfamiliar roads."
+    },
+    "maraClothing": {
+      "id": "maraClothing",
+      "name": "Mara's clothes",
+      "description": "Simple practical clothes for everyday work.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Simple, practical clothes are suited to herb-gathering, medicine making, and solitary work around a woodland cottage."
+    },
+    "maraHoodedCloak": {
+      "id": "maraHoodedCloak",
+      "name": "Mara's hooded cloak",
+      "description": "A dark hooded cloak.",
+      "familyId": "cloak",
+      "tags": [
+        "clothing",
+        "cloak"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "shoulders"
+      ],
+      "equippedDescription": "A dark hooded cloak hangs from her shoulders, its deep hood casting much of her face into shadow."
+    },
+    "garrickClothing": {
+      "id": "garrickClothing",
+      "name": "Garrick's clothes",
+      "description": "Plain sturdy tavern clothes.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Plain, sturdy clothes suited to long hours of practical tavern work are kept serviceable rather than decorative."
+    },
+    "nellClothing": {
+      "id": "nellClothing",
+      "name": "Nell's dress and apron",
+      "description": "A cheap, carefully mended dress and apron.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "A cheap, repeatedly mended dress and apron are kept clean and carefully neat."
+    },
+    "silverChain": {
+      "id": "silverChain",
+      "name": "Silver chain",
+      "description": "A fine silver chain, simple and delicate.",
+      "familyId": "jewelry",
+      "tags": [
+        "jewelry"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "neck"
+      ],
+      "equippedDescription": "A fine silver chain rests around the wearer's neck."
+    },
+    "cleaningRagType": {
+      "id": "cleaningRagType",
+      "name": "Cleaning rag",
+      "familyId": "rag",
+      "tags": [
+        "tool",
+        "cloth"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "emptyMug": {
+      "id": "emptyMug",
+      "name": "Empty mug",
+      "familyId": "mug",
+      "tags": [
+        "container",
+        "drink_container",
+        "empty"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": true,
+      "fillAction": {
+        "actionLabel": "Fill with ale",
+        "requiredEnvironmentCapability": "ale_source",
+        "resultDefinitionId": "mugOfAle",
+        "feedbackText": "You fill the mug with ale.",
+        "aiDescription": "Fill an empty mug with ale from an available ale source.",
+        "aiPrerequisites": [
+          "An ale source must be present at the actor's current position.",
+          "The actor must have access to a compatible empty mug."
+        ]
+      }
+    },
+    "mugOfAle": {
+      "id": "mugOfAle",
+      "name": "Mug of ale",
+      "familyId": "mug",
+      "tags": [
+        "container",
+        "drink",
+        "filled"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Drink the ale",
+        "resultType": "transform",
+        "resultDefinitionId": "emptyMug",
+        "feedbackText": "You drink the ale. The mug is now empty.",
+        "aiDescription": "Drink the ale in a filled mug, leaving an empty mug.",
+        "aiPrerequisites": [
+          "The filled mug must be accessible to the actor."
+        ]
+      }
+    },
+    "innkeeperRoomKeyType": {
+      "id": "innkeeperRoomKeyType",
+      "name": "Key to the innkeeper's room",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_innkeeper_room"
+    },
+    "guestRoom1KeyType": {
+      "id": "guestRoom1KeyType",
+      "name": "Key to Guest Room 1",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_guest_room_1"
+    },
+    "guestRoom2KeyType": {
+      "id": "guestRoom2KeyType",
+      "name": "Key to Guest Room 2",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_guest_room_2"
+    },
+    "guestRoom3KeyType": {
+      "id": "guestRoom3KeyType",
+      "name": "Key to Guest Room 3",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_guest_room_3"
+    },
+    "guestRoom4KeyType": {
+      "id": "guestRoom4KeyType",
+      "name": "Key to Guest Room 4",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_guest_room_4"
+    },
+    "memoryStone": {
+      "id": "memoryStone",
+      "name": "Memory Stone",
+      "description": "A smooth, dark stone veined with faint silvery threads. It feels slightly warmer than the air around it and fits comfortably in a closed hand.",
+      "familyId": "memory_stone",
+      "tags": [
+        "tool",
+        "memory",
+        "magical"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "useAction": {
+        "actionLabel": "Squeeze in hand",
+        "effectId": "report_memory_counts",
+        "publicText": "{actorName} squeezes the memory stone in one hand.",
+        "feedbackText": "The stone grows faintly warm in your hand. Short-term memory: {shortTermCount} {shortTermEntryWord}. Long-term memory: {longTermCount} {longTermEntryWord}.",
+        "aiDescription": "Squeeze the Memory Stone to request its private engine-grounded memory-count feedback.",
+        "aiPrerequisites": [
+          "The Memory Stone must be accessible to the actor."
+        ]
+      }
+    },
+    "arcaneKnowledgeSlab": {
+      "id": "arcaneKnowledgeSlab",
+      "name": "Slab of Full Arcane Knowledge",
+      "description": "A thin, dark slab with a perfectly smooth face and no visible writing, hinge, clasp, or seam. When touched with intent, pale symbols and diagrams can appear across its surface with unnatural clarity. It feels less like a book than an entrance into a library too large to fit inside any building. Its archive covers magical theory, practice, history, creatures, artifacts, rituals, alchemy, auras, souls, competing schools, and countless cross-referenced subjects, but it is an encyclopedia rather than an oracle: it does not reveal current hidden facts or the future, and access to knowledge does not grant instant mastery.",
+      "familyId": "arcane_knowledge_slab",
+      "tags": [
+        "magical",
+        "knowledge",
+        "artifact",
+        "tool"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "useAction": {
+        "actionLabel": "Consult slab",
+        "effectId": "abstract_study",
+        "publicText": "{actorName} touches the surface of the arcane knowledge slab and searches its archive.",
+        "feedbackText": "You survey the slab's material relevant to “{inputText}”. The reading gives you a broad theoretical orientation to that subject and enough context to identify narrower lines of study. Further consultation can profitably focus on a more specific aspect; this is study and orientation, not instant practical mastery.",
+        "inputLabel": "Question or topic",
+        "inputPlaceholder": "What do you want to learn about?",
+        "inputMaxLength": 600,
+        "aiInstructions": "When you choose Consult slab, put the subject or question you want to study in action.input_text. Choose it from your own curiosity, memories, current questions, and circumstances. This interaction records abstract study progress rather than returning concrete reference content. Repeated consultations on a related line move from broad orientation to focused understanding and then diminishing returns; when the slab says a line is saturated, practice or a genuinely different question is more useful than asking the same thing again.",
+        "focusedFeedbackText": "You study the slab's material relevant to “{inputText}” in greater depth. The reading gives you a substantially clearer theoretical grasp of this line of inquiry and organizes it within the broader subject. Another close consultation on the same line would mostly consolidate what you have already learned; practical competence would still require practice.",
+        "saturatedFeedbackText": "You revisit the slab's material relevant to “{inputText}”. The archive now mostly reinforces and organizes material you have already studied rather than opening a substantially new theoretical direction. Further reading on this same line has diminishing returns; meaningful progress would come from practice or from choosing a different question.",
+        "aiDescription": "Consult the slab about a chosen topic and record abstract study progress.",
+        "aiPrerequisites": [
+          "The slab must be accessible to the actor.",
+          "A concrete question or study topic must be supplied as input_text."
+        ]
+      }
+    },
+    "blacksmithClothing": {
+      "id": "blacksmithClothing",
+      "name": "Harlan's work clothes",
+      "description": "Heavy practical clothes and a leather apron suited to forge work.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing",
+        "workwear"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "Heavy, soot-marked work clothes and a thick leather apron are suited to long hours beside the forge."
+    },
+    "smithHammer": {
+      "id": "smithHammer",
+      "name": "Smith's hammer",
+      "description": "A well-used forging hammer with a stout wooden handle and a dark iron head.",
+      "familyId": "tool",
+      "tags": [
+        "tool",
+        "smithing"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "right_hand"
+      ],
+      "equippedDescription": "A well-used smith’s hammer is held ready in his right hand."
+    },
+    "healingSalve": {
+      "id": "healingSalve",
+      "name": "Healing Salve",
+      "description": "A small wrapped pot of thick herbal salve with a sharp green scent, prepared for treating ordinary cuts, burns, and soreness.",
+      "familyId": "healing_salve",
+      "tags": [
+        "medicine",
+        "remedy",
+        "crafted"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": [],
+      "externalSaleValue": 6
+    },
+    "staminaPotion": {
+      "id": "staminaPotion",
+      "name": "Stamina Potion",
+      "description": "A small stoppered bottle of bitter herbal tonic prepared to restore strength after hard work or exhaustion.",
+      "familyId": "stamina_potion",
+      "tags": [
+        "medicine",
+        "tonic",
+        "crafted"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": [],
+      "externalSaleValue": 7
+    },
+    "squirrelPelt": {
+      "id": "squirrelPelt",
+      "name": "Squirrel Pelt",
+      "description": "A cleaned small-game pelt, light enough to fold and carry with other trade goods.",
+      "familyId": "squirrel_pelt",
+      "tags": [
+        "pelt",
+        "trade_good",
+        "hunting"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": [],
+      "externalSaleValue": 2
+    },
+    "innkeeperChestKeyType": {
+      "id": "innkeeperChestKeyType",
+      "name": "Key to Garrick's chest",
+      "description": "A small iron key for Garrick's private chest.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "blacksmithChestKeyType": {
+      "id": "blacksmithChestKeyType",
+      "name": "Key to Harlan's chest",
+      "description": "A small sturdy key for Harlan's private chest.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "maraChestKeyType": {
+      "id": "maraChestKeyType",
+      "name": "Mara's Chest Key",
+      "description": "A small key for Mara's private storage chest.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "maraCottageKeyType": {
+      "id": "maraCottageKeyType",
+      "name": "Mara's Cottage Key",
+      "description": "A plain key for the door of Mara's cottage.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "keyLockId": "lock_mara_cottage"
+    },
+    "saltPouch": {
+      "id": "saltPouch",
+      "name": "Pouch of Salt",
+      "description": "A stout waxed-cloth pouch of clean coarse salt brought in from outside the village.",
+      "familyId": "salt",
+      "tags": [
+        "trade_good",
+        "regional",
+        "food_supply"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "dyedCloth": {
+      "id": "dyedCloth",
+      "name": "Dyed Cloth",
+      "description": "A folded length of sturdy town-dyed cloth, brighter and more even in color than most homespun village fabric.",
+      "familyId": "cloth",
+      "tags": [
+        "trade_good",
+        "textile",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "townShirt": {
+      "id": "townShirt",
+      "name": "Town-made Shirt",
+      "description": "A simple ready-made linen shirt with neat seams and better finishing than improvised village clothing.",
+      "familyId": "clothing_good",
+      "tags": [
+        "trade_good",
+        "clothing",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "leatherBelt": {
+      "id": "leatherBelt",
+      "name": "Good Leather Belt",
+      "description": "A well-cut city-made leather belt with a plain brass buckle.",
+      "familyId": "leather_good",
+      "tags": [
+        "trade_good",
+        "leather",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "sewingKit": {
+      "id": "sewingKit",
+      "name": "Sewing Kit",
+      "description": "A small wrapped kit of needles, thread, pins, and a compact thimble.",
+      "familyId": "sewing_supply",
+      "tags": [
+        "trade_good",
+        "tool",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "soapBar": {
+      "id": "soapBar",
+      "name": "Bar of Soap",
+      "description": "A firm scented bar of properly rendered soap, wrapped in coarse paper.",
+      "familyId": "soap",
+      "tags": [
+        "trade_good",
+        "household",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "brassBrooch": {
+      "id": "brassBrooch",
+      "name": "Brass Brooch",
+      "description": "A small polished brass brooch with a simple stamped pattern, decorative without being extravagant.",
+      "familyId": "jewelry",
+      "tags": [
+        "trade_good",
+        "jewelry",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "paperSheet": {
+      "id": "paperSheet",
+      "name": "Paper Sheet",
+      "description": "A clean portable sheet of pale writing paper suitable for notes, letters, diagrams, or drawings.",
+      "familyId": "paper",
+      "tags": [
+        "paper",
+        "writing",
+        "trade_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": [],
+      "writable": true
+    },
+    "writingSet": {
+      "id": "writingSet",
+      "name": "Writing Set",
+      "description": "A compact reusable writing set containing pen, ink, charcoal, and the small practical tools needed to write or sketch on paper.",
+      "familyId": "writing_set",
+      "tags": [
+        "writing",
+        "tool",
+        "trade_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": [],
+      "writingCapability": true
+    },
+    "fineFile": {
+      "id": "fineFile",
+      "name": "Fine Metal File",
+      "description": "A narrow, carefully toothed city-made file useful for delicate fitting and finishing work beyond ordinary rough forge tools.",
+      "familyId": "specialized_tool",
+      "tags": [
+        "tool",
+        "trade_good",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "smallShears": {
+      "id": "smallShears",
+      "name": "Small Steel Shears",
+      "description": "A precise pair of compact steel shears suited to cloth, leather trimming, and other fine work.",
+      "familyId": "specialized_tool",
+      "tags": [
+        "tool",
+        "trade_good",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "glassMirror": {
+      "id": "glassMirror",
+      "name": "Small Glass Mirror",
+      "description": "A palm-sized glass mirror backed with thin metal, a modest luxury from a larger town.",
+      "familyId": "small_luxury",
+      "tags": [
+        "trade_good",
+        "luxury",
+        "town_good"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    },
+    "merchantClothing": {
+      "id": "merchantClothing",
+      "name": "Road merchant's clothing",
+      "description": "Hard-wearing layered road clothes chosen for weather, riding, and work around a heavy wagon.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing",
+        "merchant"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "He wears durable layered road clothes, a weathered coat, and high boots built for mud and long travel."
+    },
+    "merchantSabre": {
+      "id": "merchantSabre",
+      "name": "Road Sabre",
+      "description": "A serviceable curved sabre, well maintained and plainly carried as working road equipment rather than decoration.",
+      "familyId": "weapon",
+      "tags": [
+        "weapon",
+        "sabre",
+        "merchant"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": [
+        "belt_weapon"
+      ],
+      "equippedDescription": "A well-kept road sabre rides at his hip within easy reach."
+    },
+    "merchantWagonKeyType": {
+      "id": "merchantWagonKeyType",
+      "name": "Key to the armored wagon",
+      "description": "A heavy iron key made for the merchant wagon’s reinforced lock.",
+      "familyId": "key",
+      "tags": [
+        "key",
+        "merchant"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": [],
+      "keyLockId": "lock_merchant_wagon"
+    },
+    "merchantSaleChestKeyType": {
+      "id": "merchantSaleChestKeyType",
+      "name": "Key to the merchant's sales chest",
+      "description": "A small sturdy iron key for the locked sales chest the road merchant sets beside his wagon.",
+      "familyId": "key",
+      "tags": [
+        "key",
+        "merchant",
+        "trade"
+      ],
+      "consumable": false,
+      "fillable": false,
+      "equipSlots": []
+    }
+  },
+  "items": {
+    "travelerClothing_01": {
+      "id": "travelerClothing_01",
+      "definitionId": "travelerClothing",
+      "equippedByCharacterId": "player",
+      "equippedSlot": "clothing"
+    },
+    "maraClothing_01": {
+      "id": "maraClothing_01",
+      "definitionId": "maraClothing",
+      "equippedByCharacterId": "hoodedWoman",
+      "equippedSlot": "clothing"
+    },
+    "maraHoodedCloak_01": {
+      "id": "maraHoodedCloak_01",
+      "definitionId": "maraHoodedCloak",
+      "equippedByCharacterId": "hoodedWoman",
+      "equippedSlot": "shoulders"
+    },
+    "garrickClothing_01": {
+      "id": "garrickClothing_01",
+      "definitionId": "garrickClothing",
+      "equippedByCharacterId": "innkeeper",
+      "equippedSlot": "clothing"
+    },
+    "nellClothing_01": {
+      "id": "nellClothing_01",
+      "definitionId": "nellClothing",
+      "equippedByCharacterId": "nell",
+      "equippedSlot": "clothing"
+    },
+    "silverChain_01": {
+      "id": "silverChain_01",
+      "definitionId": "silverChain",
+      "inventoryId": "inventory_player"
+    },
+    "cleaningRag": {
+      "id": "cleaningRag",
+      "definitionId": "cleaningRagType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "emptyMug_1": {
+      "id": "emptyMug_1",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_2": {
+      "id": "emptyMug_2",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_3": {
+      "id": "emptyMug_3",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_4": {
+      "id": "emptyMug_4",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_5": {
+      "id": "emptyMug_5",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_6": {
+      "id": "emptyMug_6",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_7": {
+      "id": "emptyMug_7",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_8": {
+      "id": "emptyMug_8",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_9": {
+      "id": "emptyMug_9",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "emptyMug_10": {
+      "id": "emptyMug_10",
+      "definitionId": "emptyMug",
+      "inventoryId": "inventory_barMugCabinet"
+    },
+    "innkeeperRoomKey": {
+      "id": "innkeeperRoomKey",
+      "definitionId": "innkeeperRoomKeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "guestRoom1Key": {
+      "id": "guestRoom1Key",
+      "definitionId": "guestRoom1KeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "guestRoom2Key": {
+      "id": "guestRoom2Key",
+      "definitionId": "guestRoom2KeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "guestRoom3Key": {
+      "id": "guestRoom3Key",
+      "definitionId": "guestRoom3KeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "guestRoom4Key": {
+      "id": "guestRoom4Key",
+      "definitionId": "guestRoom4KeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "memoryStone_01": {
+      "id": "memoryStone_01",
+      "definitionId": "memoryStone",
+      "inventoryId": "inventory_villageTemple"
+    },
+    "arcaneKnowledgeSlab_01": {
+      "id": "arcaneKnowledgeSlab_01",
+      "definitionId": "arcaneKnowledgeSlab",
+      "inventoryId": "inventory_maraCottageChest"
+    },
+    "blacksmithClothing_01": {
+      "id": "blacksmithClothing_01",
+      "definitionId": "blacksmithClothing",
+      "equippedByCharacterId": "blacksmith",
+      "equippedSlot": "clothing"
+    },
+    "smithHammer_01": {
+      "id": "smithHammer_01",
+      "definitionId": "smithHammer",
+      "equippedByCharacterId": "blacksmith",
+      "equippedSlot": "right_hand"
+    },
+    "innkeeperChestKey": {
+      "id": "innkeeperChestKey",
+      "definitionId": "innkeeperChestKeyType",
+      "inventoryId": "inventory_innkeeper"
+    },
+    "blacksmithChestKey": {
+      "id": "blacksmithChestKey",
+      "definitionId": "blacksmithChestKeyType",
+      "inventoryId": "inventory_blacksmith"
+    },
+    "maraChestKey": {
+      "id": "maraChestKey",
+      "definitionId": "maraChestKeyType",
+      "inventoryId": "inventory_hoodedWoman"
+    },
+    "maraCottageKey": {
+      "id": "maraCottageKey",
+      "definitionId": "maraCottageKeyType",
+      "inventoryId": "inventory_hoodedWoman"
+    },
+    "merchantClothing_01": {
+      "id": "merchantClothing_01",
+      "definitionId": "merchantClothing",
+      "equippedByCharacterId": "roadMerchant",
+      "equippedSlot": "clothing"
+    },
+    "merchantSabre_01": {
+      "id": "merchantSabre_01",
+      "definitionId": "merchantSabre",
+      "equippedByCharacterId": "roadMerchant",
+      "equippedSlot": "belt_weapon"
+    },
+    "merchantWagonKey": {
+      "id": "merchantWagonKey",
+      "definitionId": "merchantWagonKeyType",
+      "inventoryId": "inventory_roadMerchant"
+    },
+    "merchantSaleChestKey": {
+      "id": "merchantSaleChestKey",
+      "definitionId": "merchantSaleChestKeyType",
+      "inventoryId": "inventory_roadMerchant"
+    },
+    "tableTwoAle_1": {
+      "id": "tableTwoAle_1",
+      "definitionId": "mugOfAle",
+      "inventoryId": "inventory_commonRoomTableTwo"
+    },
+    "tableTwoAle_2": {
+      "id": "tableTwoAle_2",
+      "definitionId": "mugOfAle",
+      "inventoryId": "inventory_commonRoomTableTwo"
+    },
+    "tableTwoAle_3": {
+      "id": "tableTwoAle_3",
+      "definitionId": "mugOfAle",
+      "inventoryId": "inventory_commonRoomTableTwo"
+    },
+    "maksymAle_01": {
+      "id": "maksymAle_01",
+      "definitionId": "mugOfAle",
+      "inventoryId": "inventory_roadMerchant"
+    }
+  },
+  "dayActivities": {
+    "maraAssistance": {
+      "id": "maraAssistance",
+      "kind": "sponsored_job",
+      "name": "Help Mara for the day",
+      "sponsorCharacterId": "hoodedWoman",
+      "workLocationId": "secludedCottage",
+      "offerDescription": "Offer the Traveler a day of simple paid work helping with herbs, remedies, gathering nearby reagents, carrying water, sorting plants, and other practical tasks around the cottage. Neutral strangers who ask reasonably for work should usually be acceptable, but personality, memories, relationships, and recent conflict may justify refusal. You may offer work proactively when there is a natural reason, but do not repeatedly offer work without context.",
+      "narrationInstructions": "Spend the working day together at Mara's cottage and its immediate grounds. Describe grounded auxiliary work such as gardening, carrying water, sorting herbs, preparing ingredients, or gathering berries, mushrooms, roots, and other reagents in the nearby unnamed woodland around the property. Do not claim travel to another named canonical location. Do not create or hand over the final reward during the five work rounds.",
+      "settlement": {
+        "type": "sponsor_items",
+        "minTotal": 1,
+        "maxTotal": 3,
+        "definitionIds": [
+          "healingSalve",
+          "staminaPotion"
+        ]
+      }
+    },
+    "forgeAssistance": {
+      "id": "forgeAssistance",
+      "kind": "sponsored_job",
+      "name": "Help Harlan at the forge",
+      "sponsorCharacterId": "blacksmith",
+      "workLocationId": "villageSmithy",
+      "offerDescription": "Offer the Traveler a day of auxiliary forge work: carrying materials, working the bellows, holding workpieces, fetching tools, moving coal, and similar assistance while you remain the actual smith. Neutral strangers who ask reasonably for work should usually be acceptable, but personality, memories, relationships, and recent conflict may justify refusal. You may offer work proactively when there is a natural reason, but do not repeatedly offer work without context.",
+      "narrationInstructions": "Spend the working day together at the smithy. Harlan does the skilled forging; the Traveler performs auxiliary work such as bellows, carrying coal or stock, holding a workpiece, fetching tools, and moving finished or unfinished pieces. Do not mint or hand over salary during the five work rounds.",
+      "settlement": {
+        "type": "sponsor_gold",
+        "min": 3,
+        "max": 7
+      }
+    },
+    "soloHunting": {
+      "id": "soloHunting",
+      "kind": "solo",
+      "name": "Go hunting",
+      "entryLocationId": "forestMountainStream",
+      "workLocationId": "forestMountainStream",
+      "entryActionLabel": "Go hunting",
+      "narrationInstructions": "Describe one grounded compressed round of the Traveler hunting small game alone in the woods around the stream. Keep the Traveler within the broad hunting area and do not determine the final catch. Do not invent tracked items or rewards before settlement.",
+      "settlement": {
+        "type": "random_items",
+        "minTotal": 1,
+        "maxTotal": 5,
+        "definitionId": "squirrelPelt"
+      },
+      "completionDiscovery": {
+        "locationId": "trampledGlade",
+        "chance": 0.1,
+        "observationText": "During the hunt, {actorName} notices broken branches and heavily trampled grass beside a concealed way into a secluded clearing."
+      }
+    }
+  },
+  "calendar": {
+    "weekdayNames": [
+      "Sunday",
+      "Monday",
+      "Flamesday",
+      "Flowday",
+      "Woodsday",
+      "Goldsday",
+      "Earthsday"
+    ],
+    "initialWeekdayIndex": 1
+  }
+}

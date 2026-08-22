@@ -1,0 +1,11 @@
+dist/game.html
+*.log
+.vscode/settings.json
+data/*.bak
+
+# Local private authored world (never commit)
+data/world.private.json
+.build/
+dist/Mallowstead-*.zip
+dist/mallowstead.html
+dist/mallowstead-private.html

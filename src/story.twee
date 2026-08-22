@@ -1,0 +1,12 @@
+:: StoryTitle
+Mallowstead
+
+
+:: StoryInit
+<<set $health = 10>>
+<<set $maxHealth = 10>>
+<<run setup.Game.bootstrap()>>
+
+
+:: StoryCaption
+<div id="framework-sidebar"></div>

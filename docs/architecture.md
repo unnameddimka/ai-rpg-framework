@@ -1,0 +1,495 @@
+# AI RPG Architecture
+
+## 1. Design goal
+
+AI RPG combines a deterministic stateful RPG engine with stateless model inference. The framework should permit emergent character behavior without allowing generated prose to become an alternate game engine.
+
+The core separation is:
+
+> **engine = objective world; controller/model = intention; presentation = prose**
+
+## 2. Authored world and runtime save
+
+### 2.1 Authored/static source
+
+`data/world.json` is the authoritative authored world document. Build tools validate it and generate embedded source data.
+
+Authored data includes:
+
+- locations and exits;
+- sublocations/positions;
+- static descriptions;
+- character definitions and authored descriptions;
+- abilities;
+- item definitions;
+- stable initial item instances/placement;
+- lock/key definitions and authored defaults;
+- authored `knownFacts` and initial relationship/mind baselines;
+- authored timelapse actions;
+- authored seven-day calendar labels, optional scheduled character presence, conditional topology owners, and narrow trade lifecycle/restock metadata.
+
+### 2.2 Runtime state
+
+The save owns compatible runtime state, including:
+
+- character location/sublocation;
+- sleeping;
+- wallet;
+- runtime item instances, transformations, ownership and placement;
+- dynamic lock state;
+- beliefs;
+- relationships;
+- recent/long-term memories;
+- continuation;
+- committed event journal;
+- pending observations;
+- AI turn queue;
+- runtime ID counters;
+- AI inference session identity;
+- canonical calendar day counter;
+- generated trade-stock provenance and writable paper instance `content`.
+
+### 2.3 Migration
+
+Compatible older saves are reconciled transactionally as:
+
+> **fresh current authored world + compatible saved runtime overlay**
+
+Current authoring wins for static definitions. Compatible runtime state wins for what actually happened during play.
+
+New authored stable entities absent from an old save appear from current authoring. Stable existing runtime item instances preserve saved state/placement. Removed authored entities are not resurrected merely because an old save contained them.
+
+Dynamic reciprocal lock state is restored by stable `lockId` when compatible.
+
+Valid saved runtime events and pending observations survive migration when their referenced current entities remain valid. Invalid references may be sanitized/discarded with migration warnings. Runtime counters are reconstructed above all preserved IDs.
+
+A manually patched save may therefore add a well-formed pending observation for a current character. No special story migration code is required: queue restoration/repair makes an AI-controlled recipient with pending observations normally eligible.
+
+Migration validates the complete candidate before atomically replacing the restored world. Failure leaves the original save state untouched.
+
+## 3. Entities, inventories, items
+
+The runtime world contains stable entity IDs. Locations, sublocations, characters, and item instances are entities. Inventories are explicit containers owned by characters/locations/sublocations.
+
+An item instance references an authored item definition. The definition supplies type-level behavior/metadata; the instance supplies identity and runtime container/state.
+
+A sublocation inventory may optionally declare `requiredKeyItemId`, which references one concrete ordinary item instance. Access is granted only while that exact key is directly present in the acting character's normal inventory. Without it, the container itself may remain visible but its canonical contents are omitted from accessible inventories and cannot be targeted by take/place/use/study, including timelapse study. With the key, contents are exposed normally even if the character had forgotten them. Container keys are ordinary transferable items; there is intentionally no open/closed or lock/unlock state for these containers. This differs from passage locks, whose persistent reciprocal `locked` state is world state.
+
+Writable item definitions may set `writable:true`; the concrete item instance owns one persistent string `content`. Plain text is literal writing and `*...*` is the canonical textual description of a drawing/visual mark. A reusable accessible item definition with `writingCapability:true` enables the grounded `write_paper` action without consumption. `read_paper` is a separate grounded action and requires no writing tool.
+
+`transfer_items` is the generic atomic bulk-transfer action for explicit loose item-instance IDs. Current routes cover character→character, character→accessible container, and accessible container→character. Validation is all-or-nothing; no implicit item stacks are introduced.
+
+Equipment is item-defined rather than character-slot-defined. A definition with non-empty `equipSlots` is equippable and supplies `equippedDescription`; slots are free-form exact-match strings. A character stores `equippedItems` records `{itemId, slot, visible}`. Inventory placement uses `item.containerId = inventoryId`; equipped placement uses `item.containerId = characterId`, and one item may occupy a slot at a time. `equip`/`unequip` are ordinary formal actions from `view.available_actions`; equipped items remain eligible for `use_item`, while transfer/drop/place require unequipping first. The `visible` flag currently defaults true and is reserved for future concealment/layering rules.
+
+Character visual descriptions are intrinsic only. Canonical current appearance is computed from base `playerDescription`, neutral `undressed` state when the exact `clothing` slot is empty, and visible equipped-item descriptions. The canonical view exposes both assembled appearance text and structured `equipped_items` to Human/AI consumers.
+
+Tracked transformations change the instance's definition/subtype deterministically rather than replacing narrative text only.
+
+Item definitions may expose authored `useAction` effects. Most effects are synchronous/deterministic, such as `report_memory_counts`, and may return only grounded public/private feedback without adding stats or buffs.
+
+`abstract_study` is a deterministic text-input effect for educational/reference interactions that must not materialize new lore. The controller supplies bounded `input_text`; the engine validates and commits `use_item`, then returns authored private feedback whose template may interpolate `{inputText}`. Study progress belongs to the **item instance** and is keyed by reader character ID (`item.abstractStudyProgressByCharacterId[characterId]`), so one physical source can remember independent threads for multiple readers and separate copies of the same item definition do not share progress. Consecutive lexically related queries advance through `survey`, `focused`, and `saturated`; an unrelated query begins a new survey. `focusedFeedbackText` and `saturatedFeedbackText` are optional authored stage templates, with `feedbackText` as the survey/fallback template. This progress is deterministic source bookkeeping rather than character mind/lore and no model request is created.
+
+A `useAction` may also declare a **model-backed information request**. The generic effect is `utility_query`:
+
+1. the controller chooses ordinary `use_item` and supplies bounded `input_text` when that authored item requires it;
+2. the deterministic engine validates ownership/current availability/input, commits the public `item_used` event, and returns a deferred model-request descriptor;
+3. after that canonical action commit, the shared AI executor sends the authored information-source contract plus the reader input to the Utility model;
+4. the generated result is delivered only to the configured reader as private grounded action feedback/observation.
+
+The Utility call is **not an actor turn**. The information source has no controller, personality, goals, memories, relationships, or autonomous agency. The request does not receive the reader's private mind by default; current `utility_query` input consists of authored source instructions/description plus the explicit reader query.
+
+Source authoring also owns **specificity and output size**. `utility_query` may declare `utilityMaxTokens` to bound model output for that item. A source contract may intentionally return concrete reference material, but concrete worldbuilding is not implicit: new proper nouns, dates, named doctrines, spells, organizations, places, historical claims, or similar setting facts should only be generated when the authored source explicitly allows it. When gameplay only needs to establish that a character studied a subject and broadened understanding, use deterministic `abstract_study` instead of generating a summary with a model.
+
+A generated information result grounds **what the source returned**, not necessarily the objective truth of every proposition inside it. Authored sources may contain competing schools, disputed history, mistaken theories, records, interpretations, etc. unless their contract explicitly defines stronger authority. A model-request failure does not retroactively undo the already committed physical item-use action; it becomes private failure feedback instead.
+
+## 4. Characters and control
+
+Every character has a stable identity independent of location.
+
+Controller roles:
+
+- HumanController;
+- AIController;
+- Dummy/debug controller.
+
+Exactly one character must be HumanController-controlled. Switching is atomic and controller state is validated/repaired on bootstrap/load where possible.
+
+Authored `defaultControllerId` is not the same as current runtime control assignment.
+
+`mind.pendingObservations` is strictly an AI-controller scheduler inbox. Human/Dummy characters still receive committed experience into verbatim memory, but do not retain scheduler pending records. Switching away from AI clears the inbox; switching a former Human character back to AI starts with a clean inbox plus any newly generated controller-transition observation. Migration repairs legacy non-AI backlogs away rather than replaying old Human experience.
+
+## 5. Character mind
+
+Mind v3 separates runtime stimuli, experienced history, autobiographical memory, and interpretation. The canonical design specification is `docs/engine/ai-rpg-mind-v3.md`.
+
+A character mind contains:
+
+- `knownFacts`: authored baseline, refreshed from current authoring during migration;
+- `pendingObservations`: authoritative unprocessed **AI scheduler** reaction inbox; non-AI controllers do not retain this backlog;
+- `verbatimObservations`: persistent compact records of actually committed/delivered recent experience;
+- `shortTermMemories`: thematic, relatively detailed autobiographical memory;
+- `longTermMemories`: thematic, intentionally more lossy durable autobiographical memory;
+- STM/LTM also persist derived `retrievalBrief` index metadata used only for semantic recall;
+- `beliefs`: subjective inductive interpretations with stable `id`, `text`, numeric `confidence`, and numeric `activation`;
+- `relationships`: runtime durable social summaries.
+
+`continuation` remains AI runtime state outside autobiographical mind: a model-authored opaque working intention that the framework stores/returns without interpreting its semantics. Engine-owned `recentDialogue` is also outside `mind`; it is bounded conversational working context containing own validated speech plus only speech actually delivered through perception.
+
+Experience enters `verbatimObservations` only after canonical commit/delivery. Raw scheduler envelopes, provider diagnostics, failed intentions, speculative model output, hidden information, and timelapse summaries are not memory. Normal STM consolidation is eligible strictly above 40 verbatim records. It snapshots the complete current buffer, marks every record older than the newest 20 as the exact eviction set, gives the retained 20 as interpretive context, and removes only the captured eviction IDs after a validated atomic commit. Newly arriving observations survive an older in-flight job. Direct belief reinforcement/contradiction may use only the current eviction set as fresh evidence, preventing rolling-window double reinforcement.
+
+STM and LTM are topic-oriented records with stable engine-owned IDs; topics are labels, never identity. Both use a 4000-character summary hard boundary and the same <=600 `retrievalBrief` semantic-index contract; their difference is function rather than container size. STM favors minimal information loss and bounded coherent topic upsert. Its 4000-character limit is per record, not a forgetting target: when a broad STM can no longer absorb relevant evidence without losing useful detail, the model may explicitly semantically repartition one or more unprotected source STM records into multiple coherent replacement records. Repartition is atomic, source-owned and stale-checked; source STM cannot simultaneously be normally upserted, overlapping source sets are invalid, every replacement counts toward the existing eight-write STM budget, and at most one replacement may retain one source ID while all new IDs are allocated by the engine from the live global counter at commit. A retained-ID replacement must itself materially change normalized model-writable memory state; an unchanged source plus genuinely new material should use ordinary creation rather than a fake repartition echo. Failed repartition preserves both source STM and verbatim evidence. Protected-memory semantics remain authoritative: protected STM/LTM cannot be silently rewritten, repartitioned, or retired. LTM is a subtractive transformation: after asking what the character should still know once source STM is gone, it intentionally discards minor/repetitive/transient detail while preserving significant durable facts. There is no fixed compression ratio and no goal to minimize LTM record count; if several distinct durable themes deserve preservation, multiple semantically coherent LTM records are preferred over deleting significant facts merely to fit one record. LTM consolidation is an evidence-driven delta with no arbitrary operation-count cap on genuinely required durable-memory writes/STM retirement. Higher-order belief output follows a separate fresh-evidence semantic contract rather than a quantity target: supplied STM/LTM/relationships/beliefs are context, consistency is not new evidence, and `higherOrderBeliefEffects` is a sparse (usually empty) channel only for genuinely new cross-memory inference rather than a scan of compatible existing beliefs. Relevance alone never requires an LTM upsert; every upsert must materially change normalized topic/summary/importance/retrievalBrief, while unmentioned LTM remains intact automatically. Every material LTM write names its source STM/LTM provenance; provenance supports an actual transformation but is not itself an effect, and for an upsert citing only the target LTM itself is insufficient evidence for a rewrite. Any number of unprotected STM records may retire in one atomic pass only through explicit coverage groups marking them either `represented` by resulting LTM or `safe_to_forget` with a compact `routine`/`redundant`/`transient` reason; omitted STM remains available for later consolidation. Existing-belief higher-order effects remain semantic `{beliefId,effect,strength}` evidence and never assign replacement confidence/activation directly.
+
+Beliefs answer what remembered experience means rather than what happened. Every model request in which beliefs influence interpretation receives one centralized belief-semantics block. Existing belief confidence is changed only by engine-owned bounded log-odds math from model-reported `supports | contradicts | ambiguous` evidence and strength. Activation independently represents salience; relevant evidence/use raises it with a saturating update and timelapse maintenance decays it exponentially. Time alone does not lower confidence. Ordinary character turns/reflection may update relationship summaries and explicitly activate supplied beliefs, but may not directly author autobiographical memory, belief text/confidence, or belief deletion.
+
+Belief reconciliation replaces the v2 contradiction scanner. Candidate clusters favor activated/recently changed or tension-bearing beliefs and receive relevant STM/LTM evidence. Outcomes may revise, merge, weaken, reinforce, contextualize, supersede, remove, or deliberately leave dissonance unresolved. Reconciliation never mutates autobiographical memory merely to make belief text coherent.
+
+All model-produced mind changes use snapshot -> asynchronous computation -> schema/source validation -> stale check -> candidate-clone validation -> atomic commit. Normal STM jobs run in a transient non-blocking Utility-model lane with at most one queued/active job per character; canonical decisions/reaction waves have priority. Appended verbatim records do not by themselves stale an otherwise compatible job, but incompatible changes to the maintained source state do. In-flight auxiliary jobs are not persisted. Multi-character timelapse mind work may prepare concurrently while commits allocate IDs from the then-current global counter, so unrelated global allocator advancement is not a stale-mind condition. Persistent developer recovery history stores at most one full pre-run mind snapshot per logical maintenance run rather than near-identical per-stage copies. Independent retrieval-brief backfill is derived metadata recovery, writes only still-empty briefs whose topic/summary remain unchanged, and creates no full recovery snapshot.
+
+Ordinary `game-decision` uses a cheap Utility-model semantic preflight to choose bounded autobiographical context. The selector sees current compact runtime context plus a catalog of `STM/LTM: id + topic + retrievalBrief` and `beliefs: id + text + confidence + activation`; it never receives full STM/LTM summaries or the formal-action catalog. It returns IDs only, up to the configurable 12 STM / 8 LTM / 16 belief budgets. This read-only ingress is deliberately tolerant: unknown/wrong-layer/duplicate IDs are dropped and over-budget results are truncated in model order, while a valid empty result remains valid. The Character-model decision then receives the full canonical records for the sanitized selected IDs. Empty briefs remain usable through `topic` alone. Only genuine selector transport/parse/required-structure failure uses the previous deterministic bounded selector as fallback; malformed/truncated selector JSON is not repaired with another model call. Semantic retrieval is Phase 1 for ordinary `game-decision` only; timelapse planning/reflection continue their existing context paths.
+
+Timelapse is a cognitive boundary. Before planning, all current character verbatim buffers are force-consolidated with the entire snapshot marked for eviction; failure preserves source records and is diagnostic rather than destructive. Committed timelapse actions/interactions/settlement append actual experienced records at commit time. After the period, eligible STM/LTM consolidation, higher-order belief reappraisal/reconciliation, and activation decay run; after lived rounds/settlement have committed, auxiliary/reflection failure does not roll back the period.
+
+v2->v3 save and portable-mind migration is deterministic and requires no model call. Existing beliefs keep stable IDs/text and confidence semantics while receiving neutral activation; old `recentMemories` become one-for-one legacy STM records; old LTM and relationships survive; v3 verbatim begins empty because the pre-v3 engine did not store a genuine canonical verbatim stream. Migration preserves the established character rather than re-inducing beliefs from historical memory.
+
+Portable mind v3 is replace-only and exact-character-ID guarded. It carries beliefs including activation, relationships, STM, LTM, and bounded verbatim observations. It excludes `knownFacts`, pending observations, scheduler/controller/physical state, continuation, recentDialogue, active auxiliary work and provider state. Import preserves the destination's current authored facts and pending inbox, clears continuation, invalidates transient background mind work, validates atomically, and advances the shared memory/belief allocator beyond imported engine-generated IDs.
+
+Post-timelapse reflection still reuses grounded nearby-character identity and can repair/drop malformed relationship target IDs without turning invalid relationship residue into a failed lived day/night. Epistemic grounding continues to allow deliberate lies and mistaken inferences while preventing unsupported connective confabulation.
+
+## 6. Canonical restricted character view
+
+`CharacterAPI.getView(actorId)` / the current equivalent is the canonical public + operational projection for an ordinary controller.
+
+It contains the actor-visible state required to play, including:
+
+- self state;
+- current location/sublocations;
+- visible characters;
+- accessible inventories/items;
+- available abilities;
+- exact current `available_actions` catalog and concrete options.
+
+Human UI and ordinary AIController both reason from this same base projection.
+
+AI ordinary-decision context adds private data (AI description, ability instructions, mind records, continuation, prepared pending observations) but does not replace the public view with a second interpretation.
+It also adds `relevantMechanics`, derived from the same action registry through relaxed source gating. Relevant mechanics expose only mechanics anchored in the actor's grounded current scene/items and may describe missing prerequisites; they are not executable authority. `view.available_actions` remains the exact executable-now contract. This lets a Character reason toward prerequisites (for example, an ale source makes `fill` relevant even before a mug is held) without receiving a global catalog of hidden/world actions.
+
+Maintenance workflows such as timelapse/reflection/consolidation may build purpose-specific compact contexts directly; they are not ordinary controller decisions.
+
+## 7. Formal actions
+
+The deterministic action registry/CharacterAPI is the sole authority for formal mechanics.
+
+`view.available_actions` is generated from current state. A requested action must match:
+
+- a currently offered action type;
+- that action's schema;
+- its current concrete option values.
+
+Examples include movement, moving within a location, item transfer, placement, item use, equip/unequip, money transfer, showing a known hidden location to a nearby character, locks, sleep, and character abilities.
+
+Narrative cannot establish a tracked state transition that the engine did not execute.
+A character must also wait when its next step depends on another actor completing a tracked prerequisite that canonical state still shows as false; `action: null` plus a pending `continuation` is a valid deliberate response, and another actor's speech/preparation is not completion.
+
+### 7.1 Attempt vs result
+
+A controller response may contain speech/narrative and one formal action attempt. Speech and visible attempt-phase narration happen before deterministic completion.
+
+The engine then executes the formal action and emits grounded result/failure.
+
+If prose claims something inconsistent with the deterministic result, the engine wins.
+
+### 7.2 Invalid vs grounded failure
+
+- Impossible/out-of-contract Human request: reject; no world tick.
+- Valid available attempt that fails in-world: turn is spent; grounded failure becomes part of the tick.
+
+## 8. Intent, speech and loudness
+
+Human and AI use the same canonical combined intent path: optional speech/visible narrative plus at most one formal action.
+
+Speech may have an explicit addressee independently of formal-action target.
+
+Loudness currently has two mechanical values:
+
+- `noticeable`;
+- `hidden`.
+
+Whisper-like prose does not change loudness by itself.
+
+## 9. Events, perception and observations
+
+The engine emits canonical events after deterministic commits.
+
+Major location transitions use one event:
+
+```text
+character_moved { actorId, fromLocationId, toLocationId, ... }
+```
+
+The same event is delivered to the union of recipients who can perceive the actor from source or destination. It is not split into separate departure/arrival canonical events.
+
+Events generate recipient-specific experienced observations. For AI-controlled recipients, `character.mind.pendingObservations` is the authoritative reaction inbox until scheduler processing. Human/Dummy recipients do not retain scheduler pending records; their delivered committed experience still reaches verbatim memory. Event-journal recipient/processed metadata is retained only for diagnostics/history and must not drive a second independent pending queue. Pending AI observations are already perception-filtered; the model must treat a delivered observation as perceived.
+
+Model context receives a compact recipient-safe observation projection rather than a cloned event envelope. Routing/scheduler/provider bookkeeping (`recipients`, legacy `pendingFor`, `processedBy`, controller/provider metadata) is excluded.
+
+A failed attempt to traverse a locked passage is itself a grounded physical event. Perceivers on the actor side can identify the actor normally; perceivers on the far side receive an anonymous form such as `Someone tried the door from the other side.` The lock remains unchanged, and observation alone does not mechanically wake a sleeping character.
+
+Each character also owns a bounded engine-managed `recentDialogue` window (currently eight utterances) outside `mind`. It contains the character's own validated speech and speech actually delivered to that character through normal perception, including HumanController speech arriving through the normal `submitIntent` path. Delivered Human and AI utterances are interleaved in delivery order. It survives save/load, does not clear merely on movement, and is intentionally excluded from portable character-mind export/import. This is conversational working context, not autobiographical long-term memory.
+
+Observation IDs are consumed explicitly rather than clearing an inbox indiscriminately.
+
+## 10. AI reaction queue and world ticks
+
+AI does not run from a background timer. Autonomy progresses when HumanController advances the world.
+
+A valid Human Submit creates one world tick:
+
+1. commit Human narrative/action attempt/result;
+2. route observations;
+3. process the AI reaction wave synchronously;
+4. each eligible AI reacts at most once in that tick;
+5. later AI reactions see observations accumulated from earlier committed reactions;
+6. finish presentation and unlock Human input.
+
+Initiative among still-unreacted eligible AI is tiered:
+
+1. formal-action targets;
+2. speech targets;
+3. deterministic queue order.
+
+Human-origin targeting contributes stronger initiative.
+
+Ordinary reactions remain sequential because this causal visibility is a gameplay invariant.
+
+A failed model/protocol/commit step rolls back only that uncommitted AI reaction snapshot and stops the current wave. Earlier committed reactions remain committed.
+
+## 11. Sleeping
+
+Sleeping is explicit canonical state and is distinct from merely lying on a bed.
+
+Observation alone does not mechanically wake a character. Existing wake-on-own-action/non-empty-speech semantics wake the actor before that behavior commits.
+
+## 12. Timelapse architecture
+
+Timelapse is a generic coarse-time execution framework with mode-specific wrappers/policies.
+
+Current source split:
+
+- `24-timelapse-core.js`: generic planning protocol, compact context, rounds, encounters, replans, reflection;
+- `24-night-timelapse.js`: overnight entry/exit policy.
+
+Overnight and daytime timelapse are currently exposed.
+
+### 12.1 Overnight behavior
+
+Current overnight mode:
+
+- is triggered by Human sleep on an appropriate bed;
+- uses five coarse sequential rounds;
+- allows each step to choose a reachable location plus one coarse action;
+- treats travel as implicit inside that round;
+- supports `narrate`, `sleep`, and authored deterministic timelapse actions;
+- resolves social collisions via private intents plus one public group resolver;
+- replans affected participants after actual encounters/failures;
+- performs reflection and memory consolidation at the end;
+- returns/wakes HumanController in the morning;
+- does **not** automatically wake AI characters.
+
+Tick-mode `continuation` is cut at the timelapse boundary and is not passed into coarse planning. Pre-existing pending observations are likewise treated as boundary input for every AI character, including characters already sleeping and skipped by active planning: their entry observation IDs are snapshotted before planner eligibility and consumed only after the first successfully committed coarse round, so stale pre-timelapse reactions cannot leak into the post-timelapse phase while rollback before any commit remains truthful.
+
+`narrate` may describe untracked background activity but cannot mutate tracked items, ownership, money, locks, movement, sleeping state, or deterministic world flags.
+
+### 12.2 Concurrency
+
+Rounds are causal/sequential. Within safe phases, independent model work may run concurrently (plans, intents, independent encounter groups, replans, reflections, consolidations as permitted by the implementation).
+
+Progressive UI may show committed blocks while work continues; speculative planning/thinking is never presented as committed world fact.
+
+### 12.3 Daytime mode and jobs
+
+Canonical global environment state contains `timePhase` and `weatherNarrative`. Valid phases are `evening`, `nighttime_timelapse`, `morning`, and `daytime_timelapse`; UI labels are Evening/Night/Morning/Day. New worlds and legacy saves without a phase begin in Evening. Ordinary ticks never advance time. Evening permits overnight entry; Morning permits daytime activities. Successful overnight returns Morning; successful daytime returns Evening.
+
+Daytime is a five-round policy over the same `24-timelapse-core.js`. Entering it wakes every character. Free NPCs plan ordinary coarse activity. A sponsored job binds its sponsor to the authored worksite and treats the Human worker as physically present but non-interactive for encounter arbitration. Accepted sponsor/Human pairs reach the worksite through ordinary timelapse reachability; an unreachable worksite fails the activity without consuming the day. Characters may optionally author phase `routineAnchors`; the planner sees the end-of-period anchor as soft context, and after a successful daytime -> Evening transition the engine deterministically applies reachable/capacity-valid evening anchors. Anchor application never bypasses lock/key traversal and failure is a soft warning rather than rollback of committed daytime history.
+
+`world.dayActivities` is authored data. Initial policies are Mara assistance at her cottage, Harlan forge assistance at the smithy, and sponsorless hunting at the forest stream. `offer_day_work(activity_id)` is an AI-owned grounded action available only in Morning when the Human is physically reachable. It creates a single pending offer and pauses the current causal wave. Accept begins the job; Decline emits grounded refusal feedback and resumes the original wave while preserving already-reacted character IDs.
+
+Settlement is a hook after five committed rounds and before reflection/maintenance. Sponsor settlement uses a narrow Character-model request with full sponsor context but reward-only output. Mara may choose 1-3 Healing Salve/Stamina Potion instances; Harlan may choose 3-7 gold, minted only by this settlement policy. Solo hunting uses engine RNG for 1-5 Squirrel Pelts. No reward exists before settlement, and a failed settlement does not advance to Evening.
+
+Timelapse planning also exposes `study_item` for existing `abstract_study` items when the item is carried by the actor or physically present in the chosen room/accessible sublocation. The existing item-owned per-reader study progress is reused; no parallel study system exists.
+
+### 12.4 Weekly rhythm and scheduled presence
+
+The runtime owns a monotonically increasing calendar `dayNumber`; the current weekday is derived from that counter plus the authored seven-name sequence. Overnight completion advances the day exactly once after the completed local night/reflection/maintenance work and before the new Morning is presented.
+
+A character may define authored `weeklyPresence`. Presence is derived, not represented by deleting/recreating entities. While away, the character keeps canonical mind/inventory/wallet/equipment state but is excluded from local views, pathfinding targets, observations, scheduler eligibility and timelapse participant sets. A location/sublocation may declare `presenceOwnerCharacterId`; while that owner is away it remains persisted canonically but disappears from local topology.
+
+Scheduled characters receive their own schedule and current weekday as grounded private context from the same structured schedule that drives the engine. Arrival hooks may perform authored deterministic placement/restock. Departure hooks may settle only locally acquired trade items that carry explicit authored external sale values. Generated sale stock and acquired stock are tracked by item-level trade provenance so personal possessions and keyed-container contents are not mistaken for commerce.
+
+### 12.5 Discoverable location topology
+
+A location may author `requiresDiscovery`. Access to such a location is canonical **per-character runtime state** (`discoveredLocationIds` plus authored initial discoveries), separate from mind text. Ordinary locations are implicitly known. Discovery applies to the whole location rather than to individual entrances: once a character knows a secret location, all of its authored entrances are usable by that character.
+
+Character views, formal movement options and actor-specific timelapse routing all use the same discovery filter. An undiscovered secret location is therefore neither a destination nor an intermediate pathfinding shortcut. Direct action validation remains authoritative even if UI/model filtering is bypassed. A character can gain discovery through an explicit deterministic grant, the generic validated `show_hidden_location` formal action, or by being a source-side perceiver when another character visibly enters the secret location. Off-screen inference does not grant discovery.
+
+Human-facing committed off-screen presentation is additionally epistemic: an event touching a secret location that the current Human character has not discovered is suppressed from ordinary `Elsewhere`, history and the `Show invisible events` gameplay surface. Canonical events remain available to administrative diagnostics/emergency dumps. Saved discoveries survive migration, current authored initial discoveries are unioned in, removed IDs are discarded, and being restored physically inside a secret location repairs discovery automatically. Portable mind export/import does not carry location discovery.
+
+### 12.6 Global weather
+
+Weather is optional external environmental input, never a gameplay dependency. The browser resolves approximate location through the CORS-capable public `https://ipwho.is/` endpoint, requests current conditions from Open-Meteo, deterministically normalizes them, and sends only that normalized weather plus a minimal `rural, low-technology environment` style contract to the Narrator role. The Narrator is not given game time, lore, characters, or scene state and must not mention time of day or modern measurements. The resulting prose is saved as canonical `weatherNarrative` and shown globally.
+
+A fresh playable world renders immediately while initial weather resolution runs asynchronously through this same canonical refresh/fallback pipeline. The startup attempt carries an applicability/revision guard: if the simulation advances first, the stale result is discarded rather than overwriting the newer period or committing fallback into it. While applicable, any fetch/narrator failure commits/preserves the same shared fallback semantics and never blocks play. Existing saved weather is preserved on load. Successful day/night timelapse attempts refresh weather. The latest refresh retains explicit `ip-geolocation`, `weather-fetch`, `weather-narration`, and `weather-commit` diagnostics, including the failed stage when applicable; the ordinary presentation-Narrator toggle does not disable this infrastructure weather renderer.
+
+## 13. AI model roles and request profiles
+
+Production requests resolve through `setup.AIRequestProfiles`.
+
+Current model roles:
+
+- **Character**: ordinary AIController decision;
+- **Utility**: timelapse structural work, reflection, memory consolidation, authored non-character information-source queries;
+- **Narrator**: presentation prose plus explicitly bounded rendering of engine-supplied non-mechanical facts such as weather. The ordinary presentation narrator remains non-canonical; the weather renderer is a narrow exception whose output is saved as canonical ambient prose but cannot create mechanics or additional world facts.
+
+Profiles centralize model role, max output, reasoning settings, temperature, provider routing, and telemetry labels without encoding gameplay semantics.
+
+Ordinary character decisions intentionally retain the existing larger reasoning/output budget until measured tuning demonstrates a safe reduction.
+
+Structural timelapse requests use bounded outputs and reasoning disabled. Current shipped selections are Character = DeepSeek V4 Flash by default with DeepSeek V4 Pro as an available alternative, Utility = DeepSeek V4 Flash, and Narrator = Euryale 3.3 70B Nitro. Role eligibility comes from the model catalog; selectors remain present so later supported models can be tested without changing request architecture.
+
+## 14. OpenRouter transport
+
+The browser calls OpenRouter directly using the user-supplied key.
+
+Requests are non-streaming today. Every physical OpenRouter attempt is also captured by a bounded low-level transport diagnostic ring at the provider boundary, including pre-response network/timeout failures, HTTP/provider status, sanitized provider diagnostics, and executor-propagated actor/purpose/stage metadata where available. This complements rather than replaces the high-level semantic exchange log.
+
+Routing defaults:
+
+- provider sort: latency;
+- provider fallbacks: enabled;
+- stable non-secret `session_id` per runtime/model-role/profile/actor family where available.
+
+Stable request prefixes are retained where practical so provider-side prompt caching can benefit repeated requests. Prompt caching is an optimization only; correctness never depends on a cache hit.
+
+Gameplay response caching is not enabled.
+
+## 15. Shared request executor
+
+The low-level shared executor provides:
+
+- serialized causal request execution by default;
+- an explicit concurrent path used only by workflows that prove requests independent;
+- at least one second between live transport calls;
+- `Retry-After` aware shared provider cooldown after 429;
+- a hard per-transport liveness timeout (default 180 seconds) covering both fetch and complete response-body read; the Stage 2 `mind-v3-ltm` profile may use its targeted 300-second override while preflight and ordinary gameplay retain the default;
+- optional presentation-request suppression while provider rate-limit cooldown is active;
+- no automatic rate-limit retry loop;
+- sanitized exchange logging (latest 100 exchanges);
+- request purpose/stage/model/options and provider diagnostics.
+
+The one-second pacing guard remains intentional even when timelapse permits safe parallel work.
+
+Above the transport executor, `StructuredAIRequest` centralizes the repeated structured-output lifecycle: transport call, JSON extraction/parsing, truncation detection, protocol-specific normalization/validation callbacks, configurable repair/retry policy, and attempt diagnostics. Domain protocols still own their schemas and semantic validators. Ordinary AI decisions, timelapse structured work, Mind v3 maintenance, semantic retrieval and brief backfill reuse this lifecycle rather than maintaining separate repair engines.
+
+### Model Output Must Have Effect
+
+Structured model→engine mutation protocols follow a project-wide **Model Output Must Have Effect** invariant. The model may inspect far more state than it returns: relevance, retrieval, contextual use, or continued importance do not justify echoing an existing record. Every upsert must materially change model-writable state after protocol normalization; unchanged normalized records are omitted before generation whenever the model follows the prompt and are rejected deterministically where comparison is available. Unmentioned persistent records remain unchanged automatically. Engine-owned fields, provenance/debug metadata, or cosmetic paraphrase do not manufacture an effect. Prompt prevention is the primary token-efficiency mechanism; validator rejection/repair is defense in depth. Explicit protocol-level negative/null decisions such as `action:null`, intentional no-reaction, `safe_to_forget`, or an empty mutation set remain valid when the decision itself is the semantic result of the invocation.
+
+Current model-facing upsert channels applying this rule are STM, LTM, retained-ID STM repartition replacements, and relationship summaries in ordinary decisions/results and post-timelapse reflection. LTM provenance supports an actual transformation but is not itself a reason to emit an unchanged memory. No arbitrary LTM write cap is introduced: high-volume **meaningful** consolidation remains valid; useless echoed work is forbidden.
+
+## 16. AI protocol
+
+Ordinary character decisions return one strict JSON object containing:
+
+- `action`;
+- `publicNarrative`;
+- `spokenText`;
+- `spokenTargetId`;
+- `spokenLoudness`;
+- `continuation`;
+- `memoryUpdates`.
+
+Protocol validation rejects unknown/malformed fields and illegal action options. Action-specific authored text input (currently `use_item.input_text` for `abstract_study` and `utility_query`) is also required/bounded from the current `available_actions` option record before execution. One repair attempt may be made for malformed/schema-invalid output.
+Tracked state is never completed through Character narrative/speech merely because a formal mechanic is currently unavailable. Action definitions carry compact AI descriptions and prerequisite descriptions. Ordinary Character context includes only scene/item-grounded relevant mechanics through relaxed source gating, while `view.available_actions` remains the exact executable-now authority. The Character is instructed to use an available prerequisite when a relevant mechanic is not yet executable and to keep later steps in continuation rather than narrating them as completed. Ordinary Character turns remain single-pass after normal structured-response validation.
+
+Structured timelapse workflows use separate exact JSON protocols with their own validators/repair prompts. Timelapse action contracts are mode-aware: `sleep` is exposed/valid during nighttime but omitted and defensively rejected during daytime. Beds are correspondingly removed from the daytime planner's reachable-location projection. Committed timelapse `narrate` prose is requested as third-person world narration; sponsored daytime work receives the sponsor's grounded canonical ID/name explicitly so public prose addresses the sponsor by visible name rather than from a `You/I/We` sponsor perspective.
+
+## 17. Presentation narrator
+
+The optional narrator is a presentation layer only. It does not decide actions, mutate world state, or rewrite canonical history.
+
+It receives deterministic facts/committed tick structure and returns literary prose. If disabled or failed, deterministic presentation remains available.
+
+Progressive committed ordinary/timelapse output may be displayed before all AI work finishes; the input remains locked until the canonical operation ends. Committed off-screen output is a product-facing **Elsewhere** presentation, not debug data: `visibleToHuman=false` is preserved for character epistemics while the human user may still read it. Timelapse uses a live-feed modal that receives committed round entries even when the optional presentation Narrator is enabled, plus non-canonical lifecycle status lines such as planning, reflecting and consolidating memories.
+
+## 18. Persistence synchronization
+
+In-place async world mutations can occur without SugarCube passage navigation. Before save serialization, the persistence layer synchronizes the active save moment with current live `State.variables` so exported saves contain the actual committed runtime state.
+
+This synchronization is bookkeeping only: it does not create a gameplay turn, event, observation, AI reaction, or fake passage navigation.
+
+## 19. World editor
+
+The standalone editor is a browser-only authoring tool for `data/world.json`. It does not write directly into repository files; Save downloads a new JSON file.
+
+The editor mirrors authored data but is not a runtime/save editor. Authored validation has one shared JavaScript implementation used by both `tools/generate-world-data.js` and the editor; the build embeds that validator into the single offline HTML artifact. The editor therefore validates the same current contracts as the generator, including Mind v3 numeric beliefs/activation, STM/LTM/verbatim/retrieval briefs, day activities, timelapse actions, and optional morning/evening character `routineAnchors`. Reusable starter identities are deliberately absent from authored world data.
+
+Fresh-world initialization uses the stable canonical `player`/Traveler shell for location, sublocation, inventory, equipment, wallet and other world-bound setup. Onboarding is disclaimer -> optional OpenRouter setup -> Traveler selection. Reusable custom starter identities are browser-local presets with ZIP import/export; choosing one copies only name/playerDescription/aiDescription onto the canonical shell and stores no preset/library reference in the world or save. Legacy saves that used authored Traveler profiles materialize their already-saved identity as ordinary Custom authoring during migration.
+
+## 19.1 Product settings and onboarding UI
+
+The normal sidebar is gameplay-oriented and contains only character/player state, a compact AI status light, and a Settings entry point. Settings owns OpenRouter/model configuration, maintenance/admin operations, world validation/reset, starter-library transfer controls, and the generated build timestamp. Every OpenRouter key input is always empty and accepts only a new key; stored-key availability is communicated separately as Available (green), Not set, or Rejected after a confirmed authentication failure. Player-facing AI failures use short human-readable messages, with raw provider/protocol detail secondary and expandable.
+
+The global red Emergency Dump control is intentionally outside this consolidation and must remain directly usable above Settings, startup, timelapse and migration blocking surfaces.
+
+## 20. Debug tooling
+
+The crystal sphere/prompt lab exposes scheduler/request state, dry runs, exchange import/export, replay and diagnostics. Debug tooling must observe normal architecture rather than offer alternate gameplay commit paths.
+
+Normal sidebar may expose read-only scheduler information, but there is no manual gameplay “process pending AI request” button. Admin/debug controls may safely dismiss pending reactions, clear continuation, or clear both (including a global keep-list operation) only when no AI/executor/wave/migration work is live. Such cleanup is runtime administration, emits no story event, and never implicitly sleeps/wakes a character.
+
+A red **Emergency dump** control exports one best-effort ZIP without requiring world validation. It is also exposed as a top-level fixed control above blocking overlays so diagnostics remain reachable regardless of gameplay lock, pending day-work offer, AI/timelapse work, or migration UI. The dump preserves canonical world/SugarCube state, full minds and recovery snapshots needed to reconstruct represented recovery points, scheduler/aux state, event/history data, current retrieval diagnostics, latest handled timelapse state, weather/network/runtime errors, and one complete high-level request/response record per semantic AI exchange. Low-level transport diagnostics remain separate for network/provider failure analysis. Full request/response payloads are not duplicated into parallel exchange files/traces; structured traces retain repair/retry metadata and only attempt-specific message deltas where needed. `recovery-points.json` indexes current state and persisted mind-recovery boundaries. `manifest.json` records per-section success/failure; failure to capture one section must not prevent the remaining files from being downloaded. API/authentication secrets are defensively redacted.
+
+
+`frameworkUI.turnBusy` is obsolete as persisted state. Busy UI derives only from live runtime operations. Save/load strips or ignores stale serialized busy flags; rendering (`Engine.show()`) is not recovery logic because passage rendering may itself request optional narration.
+
+## 21. Current authored story/world notes
+
+The current authored world includes the tavern, village/street/temple, village edge, a separate Mara's Garden location, Mara's Cottage (`secludedCottage`) as an interior-only location, a working village Smithy (`villageSmithy`) reached from the Street near the temple, and a permanent Market Square.
+
+The authored week is Sunday → Monday → Flamesday → Flowday → Woodsday → Goldsday → Earthsday, with fresh worlds beginning Monday evening. On that fresh initial evening Maksym the Wagoner starts seated at the tavern's second table with one filled mug of ale; this is initial authored placement only. His recurring Monday/Woodsday arrival placement remains Market Square, and he is already away when the following morning begins. His armored four-ox wagon and locked sales-chest sublocation are conditional local topology tied to his presence. Fresh merchandise is generated into the existing key-gated sales chest; Maksym carries its key and the separate wagon key. Goods directly handed to him by other characters become acquired trade stock in his personal inventory; supported valued goods settle to his wallet when he leaves.
+
+Maksym is a familiar but not deeply bonded recurring visitor: villagers generally enjoy the goods/news/stories and break in monotony, while he treats them with cordial commercial even-handedness and little interest in local gossip unless it matters to safety/trade/travel. Current narrow externally valued local goods are Squirrel Pelts, Healing Salve, and Stamina Potion. The merchant also introduces Paper Sheets and reusable Writing Sets alongside salt, cloth/clothing, household/town goods, small jewelry, and specialized tools.
+
+The Smithy contains the forge floor plus Harlan the Blacksmith's rear living room and sleeping bed. Harlan (`blacksmith`) begins AI-controlled at the forge with coarse work clothing and a smith's hammer equipped in `right_hand`. His authored role centers on mundane village ironwork—nails, horseshoes, harness/tack fittings, practical repairs and sharpening—rather than weapons. Seeded local relationships capture mutual irritation/respect with Garrick, friendly explicitly non-romantic familiarity with Nell, and wary practical treatment history with Mara; Price has no pre-authored relationship with him.
+
+Mara's cottage includes a work table, a private key-gated chest, and a stable authored **Slab of Full Arcane Knowledge** instance stored inside that chest. `Consult slab` uses deterministic `abstract_study`. Mara/another holder supplies a subject or question in `input_text`; the engine returns authored private feedback for the reader's current study stage. A new line gives broad orientation, a related follow-up gives focused understanding, and continued reading on the same line reaches `saturated` feedback with diminishing theoretical returns. The slab never asks a model to invent or summarize the subject, so it cannot introduce new schools, spells, techniques, taxonomies, history, dates, mechanisms, recipes, or other setting facts through this interaction. It provides no buffs, stats, automatic mastery, or omniscient current/future knowledge.
+
+Mara's Garden (`maraCottageGardenLocation`) connects reciprocally to village edge, Mara's Cottage, and **Forest stream** (`forestMountainStream`). The cottage no longer connects directly to village edge or the stream. The stream has an ordinary bank plus `forestStreamSittingPlace`, a capacity-two sublocation represented by broad smooth stones beside the water; its enter action moves only the acting character. Save migration preserves surviving stable sublocation identity and derives its current authored parent, so old garden positions reparent safely while cottage-bed occupants remain on the bed.
+
+Story-specific activation of an existing save is performed by editing that save's runtime observation inbox when desired, not by embedding Mara/slab special cases into migration.
+
+## 22. Deferred architecture
+
+Explicitly deferred:
+
+- professional NPC daily schedules/travel-to-work;
+- broader village economy, prices, barter/shop abstractions, and additional production chains;
+- embeddings/vector indexing if the future compact semantic-retrieval catalog itself becomes too large;
+- large-crowd optimization beyond current emergency limits;
+- expanded loudness propagation/shouts;
+- equipment stacking/layering/concealment controls;
+- combat/quest systems;
+- narrator grounding redesign.
+
+## LTM maintenance semantic preflight
+
+STM→LTM consolidation uses a two-stage archive lookup. The read-only preflight receives every source STM in full, the complete compact belief/relationship significance context, and every historical LTM only as `id/topic/retrievalBrief/importance/protected`; it returns only a high-recall `relevantLtmIds` set with no arbitrary count cap. The main consolidation request then receives every source STM in full again plus only those selected historical LTM bodies in full. Unselected LTM remains canonical and unchanged and cannot be upserted or cited as LTM provenance by that prepared Stage-2 proposal. New durable-memory creation remains unconstrained by the selected historical set. Preflight failure or stale mind state before Stage 2 aborts safely without retiring STM or mutating LTM.
+
+Timelapse reflection uses fresh event-driven belief salience: seeing, rereading, or finding an existing belief compatible with context is not activation evidence. `activatedBeliefIds` should be sparse and may be empty; existing deterministic reflection bounds remain a safety layer.
+
+The active user-facing product is **Mallowstead**; the engine remains at MVP maturity rather than POC.
+
+**Release-profile invariant:** the committed `data/world.json` is the public canonical Mallowstead world. A local ignored `data/world.private.json` may contain developer-only authored experiments. `build.bat` / `build.sh` default to public; the explicit `private` profile generates into isolated `.build/<profile>/src` staging so private authored/generated state cannot replace tracked public generated files. Public packaging is whitelist-based. Runtime/gameplay/save schemas stay shared between profiles; only authored world, build identity, and disclosure onboarding differ.
+
+**Persistence identity invariant:** the current SugarCube `StoryTitle` is `Mallowstead`, producing current save ID `mallowstead`. Load compatibility accepts both legacy `ai-rpg-framework-mvp` and `ai-rpg-framework-poc` IDs. Legacy browser-save slots are copied forward non-destructively into the Mallowstead storage namespace only when the corresponding current entry is absent; current Mallowstead entries win collisions, MVP wins over older POC entries, and unrelated legacy settings/runtime storage is not copied. Persisted OpenRouter keys use a seven-day (`7 * 24h`) TTL; credential-storage architecture is otherwise unchanged.
+
+**Initial-weather invariant:** after Player/AI setup completes, a fresh world renders the first playable scene immediately and resolves `environment.weatherInitialized` in the background. Startup reuses the same canonical weather refresh/fallback pipeline used at coarse-time boundaries; while it is pending the UI may show `Checking current weather…`. A startup result may commit only while the same world/revision is still current, so a slow response cannot overwrite a later tick-period state. Missing AI credentials or network/model failure commits the shared neutral fallback when the startup request is still applicable and never blocks play. Already initialized saved weather is not refreshed merely because a save is opened.

@@ -1,0 +1,11 @@
+{
+  "productName": "Mallowstead",
+  "version": "0.1.2b",
+  "author": "Dmytro Turovskiy",
+  "currentSaveId": "mallowstead",
+  "legacySaveIds": [
+    "ai-rpg-framework-mvp",
+    "ai-rpg-framework-poc"
+  ],
+  "publicDisclosureVersion": 1
+}
