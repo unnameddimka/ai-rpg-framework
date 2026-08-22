@@ -9,3 +9,4 @@ data/world.private.json
 dist/Mallowstead-*.zip
 dist/mallowstead.html
 dist/mallowstead-private.html
+model-contract-bench/bench.sqlite3
