@@ -324,6 +324,45 @@ function validateWorld(document) {
                             `Item definition ${id} useAction.${field} must be non-empty text when present.`);
                     }
                 }
+                if (definition.useAction.knowledgeEntries !== undefined) {
+                    const entries = definition.useAction.knowledgeEntries;
+                    requireCondition(Array.isArray(entries) && entries.length <= 500,
+                        `Item definition ${id} useAction.knowledgeEntries must be an array with at most 500 entries.`);
+                    const entryIds = new Set();
+                    for (const entry of Array.isArray(entries) ? entries : []) {
+                        requireCondition(entry && typeof entry === "object" && !Array.isArray(entry),
+                            `Item definition ${id} has an invalid knowledge entry.`);
+                        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+                        requireCondition(nonBlank(entry.id) && entry.id.length <= 120 && !entryIds.has(entry.id),
+                            `Item definition ${id} has an invalid or duplicate knowledge entry ID.`);
+                        if (nonBlank(entry.id)) entryIds.add(entry.id);
+                        if (entry.title !== undefined) {
+                            requireCondition(typeof entry.title === "string" && nonBlank(entry.title) && entry.title.length <= 240,
+                                `Item definition ${id} knowledge entry ${entry.id || "?"} has an invalid title.`);
+                        }
+                        requireCondition(typeof entry.article === "string" && nonBlank(entry.article) && entry.article.length <= 8000,
+                            `Item definition ${id} knowledge entry ${entry.id || "?"} must contain article text up to 8000 characters.`);
+                        if (entry.priority !== undefined) {
+                            requireCondition(Number.isInteger(entry.priority) && entry.priority >= -1000 && entry.priority <= 1000,
+                                `Item definition ${id} knowledge entry ${entry.id || "?"} priority must be an integer from -1000 to 1000.`);
+                        }
+                        requireCondition(Array.isArray(entry.keywords) && entry.keywords.length >= 1 && entry.keywords.length <= 32,
+                            `Item definition ${id} knowledge entry ${entry.id || "?"} requires 1 to 32 keywords.`);
+                        const keywords = new Set();
+                        for (const keyword of Array.isArray(entry.keywords) ? entry.keywords : []) {
+                            requireCondition(typeof keyword === "string" && nonBlank(keyword) && keyword.length <= 120 && !keywords.has(keyword),
+                                `Item definition ${id} knowledge entry ${entry.id || "?"} has an invalid or duplicate keyword.`);
+                            if (typeof keyword !== "string") continue;
+                            keywords.add(keyword);
+                            const firstStar = keyword.indexOf("*");
+                            requireCondition(firstStar < 0 || (firstStar === keyword.length - 1 && keyword.lastIndexOf("*") === firstStar),
+                                `Item definition ${id} knowledge entry ${entry.id || "?"} keyword ${keyword} may use only one trailing wildcard.`);
+                            const stem = keyword.endsWith("*") ? keyword.slice(0, -1).trim() : keyword.trim();
+                            requireCondition(/^[\p{L}\p{N}].*/u.test(stem),
+                                `Item definition ${id} knowledge entry ${entry.id || "?"} contains an unusable keyword.`);
+                        }
+                    }
+                }
             }
             if (definition.useAction.effectId === "utility_query") {
                 requireCondition(nonBlank(definition.useAction.utilityPrompt),
@@ -352,6 +391,26 @@ function validateWorld(document) {
         registerTechnicalId(technicalIdOwners, id, `ability ${id}`);
         requireCondition(knownActions.has(String(ability.actionType)),
             `Ability ${id} references unknown action '${ability.actionType}'.`);
+    }
+
+    function authoredInventoryExists(inventoryId) {
+        if (!nonBlank(String(inventoryId || ""))) return false;
+        if (inventoryOwners.has(String(inventoryId))) return true;
+        return entries(document.characters).some(function (entry) { return String(entry[1] && entry[1].inventoryId || "") === String(inventoryId); });
+    }
+
+    function validateRestockEntries(ownerId, hook, label) {
+        requireCondition(isObject(hook) && Array.isArray(hook.entries), `${label}.entries must be an array.`);
+        requireCondition(authoredInventoryExists(hook.targetInventoryId), `${label} has an invalid targetInventoryId.`);
+        hook.entries.forEach(function (entry, index) {
+            requireCondition(isObject(entry) && own(document.itemDefinitions, String(entry.definitionId || "")),
+                `${label} entry ${index} references an invalid item definition.`);
+            for (const field of ["min", "max"]) requireCondition(Number.isInteger(entry[field]) && entry[field] >= 0,
+                `${label} entry ${index} ${field} must be a non-negative integer.`);
+            requireCondition(entry.max >= entry.min, `${label} entry ${index} max must be >= min.`);
+            if (own(entry, "chance")) requireCondition(typeof entry.chance === "number" && Number.isFinite(entry.chance) && entry.chance >= 0 && entry.chance <= 1,
+                `${label} entry ${index} chance must be from 0 to 1.`);
+        });
     }
 
     let humanCount = 0;
@@ -387,6 +446,9 @@ function validateWorld(document) {
                     `Character ${id} routine anchor '${phase}' references an invalid sublocation.`);
             }
         }
+        if (character.weeklyPresence !== undefined && character.awayable !== undefined) {
+            throw new Error(`Character ${id} cannot define both weeklyPresence and awayable.`);
+        }
         if (character.weeklyPresence !== undefined) {
             requireCondition(isObject(character.weeklyPresence), `Character ${id} weeklyPresence must be an object.`);
             const days = character.weeklyPresence.presentWeekdayIndexes;
@@ -405,23 +467,57 @@ function validateWorld(document) {
                     `Character ${id} weeklyPresence has an invalid initialSublocationId.`);
             }
         }
+        if (character.awayable !== undefined) {
+            const config = character.awayable;
+            requireCondition(isObject(config), `Character ${id} awayable must be an object.`);
+            const weekdayNames = document.calendar && document.calendar.weekdayNames || ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"];
+            requireCondition(Array.isArray(config.arrivalSchedule) && config.arrivalSchedule.length > 0,
+                `Character ${id} awayable.arrivalSchedule must be a non-empty array.`);
+            const arrivalKeys = new Set();
+            config.arrivalSchedule.forEach(function (entry, index) {
+                requireCondition(isObject(entry) && weekdayNames.includes(entry.weekday) && ["Morning", "Evening"].includes(entry.phase),
+                    `Character ${id} awayable arrival opportunity ${index} has an invalid weekday or phase.`);
+                const key = `${entry.weekday}:${entry.phase}`;
+                requireCondition(!arrivalKeys.has(key), `Character ${id} awayable has duplicate arrival opportunity ${key}.`);
+                arrivalKeys.add(key);
+            });
+            requireCondition(isObject(config.defaultDeparture) && config.defaultDeparture.relativeToArrival === "next_morning",
+                `Character ${id} awayable.defaultDeparture must currently use relativeToArrival=next_morning.`);
+            requireCondition(Number.isInteger(config.travelPeriods) && config.travelPeriods > 0,
+                `Character ${id} awayable.travelPeriods must be a positive integer.`);
+            requireCondition(own(document.locations, String(config.arrivalLocationId || "")),
+                `Character ${id} awayable has an invalid arrivalLocationId.`);
+            const awayArrivalLocation = document.locations[config.arrivalLocationId];
+            requireCondition(awayArrivalLocation && isObject(awayArrivalLocation.sublocations) && own(awayArrivalLocation.sublocations, String(config.arrivalSublocationId || "")),
+                `Character ${id} awayable has an invalid arrivalSublocationId.`);
+            if (config.aiDescription !== undefined) requireCondition(typeof config.aiDescription === "string" && nonBlank(config.aiDescription),
+                `Character ${id} awayable.aiDescription must be non-empty text when present.`);
+            if (config.initialState !== undefined) {
+                requireCondition(isObject(config.initialState) && typeof config.initialState.present === "boolean",
+                    `Character ${id} awayable.initialState must contain Boolean present.`);
+                if (config.initialState.present) {
+                    const plan = config.initialState.plannedDeparture;
+                    requireCondition(isObject(plan) && Number.isInteger(plan.dayOffset) && plan.dayOffset >= 0 && ["Morning", "Evening"].includes(plan.phase),
+                        `Character ${id} awayable.initialState.plannedDeparture is invalid.`);
+                } else if (config.initialState.travelPeriodsRemaining !== undefined) {
+                    requireCondition(Number.isInteger(config.initialState.travelPeriodsRemaining) && config.initialState.travelPeriodsRemaining >= 0,
+                        `Character ${id} awayable.initialState.travelPeriodsRemaining must be non-negative.`);
+                }
+            }
+            if (config.onArrival !== undefined) {
+                requireCondition(Array.isArray(config.onArrival), `Character ${id} awayable.onArrival must be an array.`);
+                config.onArrival.forEach(function (hook, index) {
+                    requireCondition(isObject(hook) && hook.action === "restock",
+                        `Character ${id} awayable.onArrival hook ${index} has an unsupported action.`);
+                    validateRestockEntries(id, hook, `Character ${id} awayable.onArrival restock hook ${index}`);
+                });
+            }
+        }
         if (character.tradeLifecycle !== undefined) {
             requireCondition(isObject(character.tradeLifecycle), `Character ${id} tradeLifecycle must be an object.`);
             if (own(character.tradeLifecycle, "settleAcquiredOnDeparture")) requireCondition(typeof character.tradeLifecycle.settleAcquiredOnDeparture === "boolean",
                 `Character ${id} tradeLifecycle.settleAcquiredOnDeparture must be Boolean.`);
-            if (character.tradeLifecycle.restock !== undefined) {
-                requireCondition(isObject(character.tradeLifecycle.restock) && Array.isArray(character.tradeLifecycle.restock.entries),
-                    `Character ${id} tradeLifecycle.restock.entries must be an array.`);
-                character.tradeLifecycle.restock.entries.forEach(function (entry, index) {
-                    requireCondition(isObject(entry) && own(document.itemDefinitions, String(entry.definitionId || "")),
-                        `Character ${id} restock entry ${index} references an invalid item definition.`);
-                    for (const field of ["min", "max"]) requireCondition(Number.isInteger(entry[field]) && entry[field] >= 0,
-                        `Character ${id} restock entry ${index} ${field} must be a non-negative integer.`);
-                    requireCondition(entry.max >= entry.min, `Character ${id} restock entry ${index} max must be >= min.`);
-                    if (own(entry, "chance")) requireCondition(typeof entry.chance === "number" && Number.isFinite(entry.chance) && entry.chance >= 0 && entry.chance <= 1,
-                        `Character ${id} restock entry ${index} chance must be from 0 to 1.`);
-                });
-            }
+            if (character.tradeLifecycle.restock !== undefined) validateRestockEntries(id, character.tradeLifecycle.restock, `Character ${id} tradeLifecycle.restock`);
         }
         requireCondition(Number.isInteger(character.wallet) && character.wallet >= 0,
             `Character ${id} has an invalid wallet.`);
@@ -460,8 +556,8 @@ function validateWorld(document) {
         const ownerLabel = record.sublocationId ? `Sublocation ${record.sublocationId}` : `Location ${record.locationId}`;
         requireCondition(own(document.characters, record.characterId),
             `${ownerLabel} presenceOwnerCharacterId references missing character '${record.characterId}'.`);
-        requireCondition(document.characters[record.characterId].weeklyPresence !== undefined,
-            `${ownerLabel} presence owner '${record.characterId}' must define weeklyPresence.`);
+        requireCondition(document.characters[record.characterId].weeklyPresence !== undefined || document.characters[record.characterId].awayable !== undefined,
+            `${ownerLabel} presence owner '${record.characterId}' must define weeklyPresence or awayable.`);
     });
 
     for (const [locationId, location] of entries(document.locations)) {
@@ -535,6 +631,12 @@ function validateWorld(document) {
         if (definition && definition.writable === true && own(item, "content")) {
             requireCondition(typeof item.content === "string" && item.content.length <= 12000,
                 `Writable item ${id} content must be text up to 12000 characters.`);
+        }
+        if (item.tradeProvenance !== undefined) {
+            const provenance = item.tradeProvenance;
+            requireCondition(isObject(provenance) && own(document.characters, String(provenance.ownerCharacterId || "")) &&
+                ["sale_stock", "acquired_stock"].includes(provenance.role) && Number.isInteger(provenance.dayNumber) && provenance.dayNumber >= 0,
+                `Item ${id} has invalid authored tradeProvenance.`);
         }
         const hasInventory = nonBlank(String(item.inventoryId || ""));
         const hasEquippedOwner = nonBlank(String(item.equippedByCharacterId || ""));

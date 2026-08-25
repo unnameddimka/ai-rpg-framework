@@ -819,7 +819,7 @@ Return the complete corrected JSON object only. Use exactly the documented field
                         } else {
                             activities[characterId] = actionResult.text;
                             addFact(publicRecords, factsByActor, actionResult.text, [characterId], actionResult.locationId, `timelapse_${actionResult.type}`, round, actionResult.visibleToHuman === true);
-                            appendCommittedTimelapseExperience([characterId], `r${round}-action-${characterId}`, actionResult.text, `timelapse_${actionResult.type}`, round);
+                            appendCommittedTimelapseExperience([characterId], `r${round}-action-${characterId}`, actionResult.privateExperienceText || actionResult.text, `timelapse_${actionResult.type}`, round);
                         }
                     }
 

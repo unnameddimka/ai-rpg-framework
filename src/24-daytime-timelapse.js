@@ -566,6 +566,17 @@
                 });
             }
             if (routineAnchorWarnings.length) result.routineAnchorWarnings = routineAnchorWarnings;
+            if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.advanceEveningBoundary === "function") {
+                if (typeof options.onProgress === "function") {
+                    try { options.onProgress({ stage: "evening-boundary", text: "Advancing to Evening…", mode: MODE }); } catch (error) { /* presentation-only */ }
+                }
+                const boundary = setup.WeeklyRhythm.advanceEveningBoundary(currentWorld(), { random: options.random });
+                if (!boundary.ok) {
+                    return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0,
+                        failedStage: "evening-boundary", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(boundary.error) }, "evening-boundary");
+                }
+                result.eveningBoundary = clone(boundary);
+            }
             setTimePhase("evening");
             const validation = setup.Game.validateWorld();
             if (!validation.ok) return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0, failedStage: "wrapper-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(validation.error) }, "wrapper-validation");

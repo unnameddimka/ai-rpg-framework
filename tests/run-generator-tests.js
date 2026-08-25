@@ -75,6 +75,11 @@ rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.input
 rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.inputMaxLength = 5000; }, "inputMaxLength");
 rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.focusedFeedbackText = ""; }, "focusedFeedbackText");
 rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.saturatedFeedbackText = ""; }, "saturatedFeedbackText");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.knowledgeEntries = {}; }, "knowledgeEntries");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.knowledgeEntries[1].id = "chugaister"; }, "duplicate knowledge entry ID");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.knowledgeEntries[0].keywords = []; }, "requires 1 to 32 keywords");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.knowledgeEntries[0].keywords[0] = "chu*haister"; }, "trailing wildcard");
+rejects(function (doc) { doc.itemDefinitions.arcaneKnowledgeSlab.useAction.knowledgeEntries[0].article = ""; }, "article text");
 rejects(function (doc) {
     doc.itemDefinitions.arcaneKnowledgeSlab.useAction.effectId = "utility_query";
     doc.itemDefinitions.arcaneKnowledgeSlab.useAction.utilityPrompt = "";
@@ -87,6 +92,15 @@ rejects(function (doc) {
 rejects(function (doc) { doc.itemDefinitions.memoryStone.description = 42; }, "description must be text");
 rejects(function (doc) { doc.locations.commonRoom.timelapseActions[0].effectId = "execute_arbitrary_code"; }, "references unknown effect");
 rejects(function (doc) { doc.locations.commonRoom.timelapseActions[0].effectParams.destinationInventoryId = "inventory_missing"; }, "references missing destination inventory");
+rejects(function (doc) { doc.characters.roadMerchant.awayable.arrivalSchedule[0].weekday = "Moonday"; }, "invalid weekday");
+rejects(function (doc) { doc.characters.roadMerchant.awayable.arrivalSchedule.push(clone(doc.characters.roadMerchant.awayable.arrivalSchedule[0])); }, "duplicate arrival opportunity");
+rejects(function (doc) { doc.characters.roadMerchant.awayable.travelPeriods = 0; }, "travelPeriods");
+rejects(function (doc) { doc.characters.roadMerchant.awayable.defaultDeparture.relativeToArrival = "whenever"; }, "relativeToArrival=next_morning");
+rejects(function (doc) { doc.characters.roadMerchant.awayable.onArrival[0].action = "execute_code"; }, "unsupported action");
+rejects(function (doc) { doc.characters.roadMerchant.awayable.onArrival[0].targetInventoryId = "inventory_missing"; }, "invalid targetInventoryId");
+rejects(function (doc) { doc.characters.roadMerchant.awayable.onArrival[0].entries[0].definitionId = "missing"; }, "invalid item definition");
+rejects(function (doc) { doc.characters.roadMerchant.awayable.onArrival[0].entries[0].chance = 2; }, "chance");
+rejects(function (doc) { doc.characters.roadMerchant.weeklyPresence = { presentWeekdayIndexes: [1], arrivalLocationId: "marketSquare", arrivalSublocationId: "marketSquareCenter" }; }, "cannot define both weeklyPresence and awayable");
 rejects(function (doc) {
     doc.itemDefinitions.cleaningRag = clone(doc.itemDefinitions.cleaningRagType);
     doc.itemDefinitions.cleaningRag.id = "cleaningRag";
@@ -135,6 +149,17 @@ assert(source.locations.secludedCottage.exits.maraCottageGardenLocation.lockId =
     source.locations.secludedCottage.exits.maraCottageGardenLocation.locked === false &&
     source.locations.maraCottageGardenLocation.exits.secludedCottage.locked === false,
     "Mara's cottage entrance should be an initially unlocked reciprocal ordinary lockable passage");
+
+
+const maksym = source.characters.roadMerchant;
+assert(maksym.awayable && !maksym.weeklyPresence && maksym.awayable.travelPeriods === 3 &&
+    maksym.awayable.arrivalSchedule.some(function (entry) { return entry.weekday === "Monday" && entry.phase === "Morning"; }) &&
+    maksym.awayable.arrivalSchedule.some(function (entry) { return entry.weekday === "Woodsday" && entry.phase === "Morning"; }),
+    "Maksym should be authored through generic awayable Monday/Woodsday Morning arrival opportunities with three road periods");
+assert(maksym.awayable.onArrival.length === 1 && maksym.awayable.onArrival[0].action === "restock" &&
+    maksym.awayable.onArrival[0].targetInventoryId === "inventory_merchantSaleChest" &&
+    maksym.tradeLifecycle && maksym.tradeLifecycle.settleAcquiredOnDeparture === true && !maksym.tradeLifecycle.restock,
+    "Maksym restock should be an authored generic arrival hook while acquired-stock settlement remains a separate departure lifecycle");
 
 const modelSource = JSON.parse(fs.readFileSync(path.join(root, "data/model_list.json"), "utf8"));
 function rejectsModelList(mutator, expected) {

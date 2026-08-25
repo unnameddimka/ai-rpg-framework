@@ -4,7 +4,7 @@
 
 ### Mallowstead release profile
 
-- The user-facing product and village name is **Mallowstead**, version `0.1.2b`, created by **Dmytro Turovskiy** and licensed under MIT.
+- The user-facing product and village name is **Mallowstead**, version `0.1.2c-maksym`, created by **Dmytro Turovskiy** and licensed under MIT.
 - `data/world.json` is the committed public canonical world. `data/world.private.json` is a local ignored private world. Default builds are public; explicit `private` builds use isolated staging so private authored/generated data never overwrites tracked public generated source.
 - Public startup shows the full AI-content/privacy/network/cost/export disclosure before AI-key setup; private startup skips that disclosure and goes directly to practical API-key/status setup. Both profiles share gameplay and save schema.
 - Public release packaging is a whitelist ZIP containing exactly `mallowstead.html`, player `README.md`, and `LICENSE`. Build metadata exposes version/profile/commit/build time in About and diagnostics.
@@ -12,9 +12,9 @@
 
 ### Runtime/world
 
-- Canonical weekly rhythm is implemented: `calendar.dayNumber` derives the authored seven-day week, new worlds start Monday evening, and the overnight boundary advances the day exactly once before the new Morning is presented. Generic `weeklyPresence` excludes away characters from local scheduler/timelapse/observations/actions without deleting their persistent state; `presenceOwnerCharacterId` hides associated locations/sublocations from local topology while preserving them canonically.
-- On a fresh Monday evening, Maksym the Wagoner begins seated at the tavern's second table with one tracked filled mug of ale. His later recurring visit lifecycle is unchanged: normal scheduled arrivals use Market Square and his sleep/work behavior remains governed by the existing wagon/weekly-rhythm systems.
-- Narrow trade lifecycle support is implemented for scheduled merchants: deterministic arrival restock, item-level `sale_stock` / `acquired_stock` provenance, merchant-visible external sale values on explicitly authored goods, and departure settlement of eligible acquired goods only.
+- Canonical weekly/coarse rhythm is implemented: `calendar.dayNumber` derives the authored seven-day week, new worlds start Monday evening, overnight reaches the next Morning, and daytime reaches same-day Evening. Simple `weeklyPresence` remains supported, while generic `awayable` characters own save-persisted `awayState` (`present`, current `plannedDeparture`, remaining travel periods). Away characters are excluded from local scheduler/timelapse/observations/actions without deleting persistent state; `presenceOwnerCharacterId` hides associated topology while preserving it canonically.
+- On a fresh Monday evening, Maksym the Wagoner begins seated at the tavern's second table with one tracked filled mug of ale and a canonical Flamesday Morning planned departure. His Monday/Woodsday Morning schedule now defines return opportunities rather than immutable presence. During ordinary ticks he may privately use generic `defer_departure` to move an imminent departure one coarse period; after actual departure he needs three fully completed periods before a later opportunity can be used.
+- Generic validated `onArrival` hooks are implemented for true `away -> present` transitions, with deterministic authored `restock` as the first hook type. Maksym restocks his Market Square sale chest only on a true return, never merely because Monday/Woodsday occurs while he remains present. Item-level `sale_stock` / `acquired_stock` provenance, merchant-visible external sale values on explicitly authored goods, and separate departure settlement of eligible acquired goods remain in place.
 - Generic atomic `transfer_items` supports explicit multi-item character→character, character→accessible-container, and accessible-container→character transfers for Human and AI controllers.
 - Generic writable paper is implemented: `Paper Sheet.content` is one persistent mixed string, `*...*` denotes drawing metadata, reusable accessible `Writing Set` enables `write_paper` without consumption, and `read_paper` exposes content only through a grounded read. Written Paper Sheet instances use one shared UI-only preview label across inventory, transfer/action pickers, Advanced Actions, and container/surface lists; canonical item names/content remain unchanged.
 
@@ -37,7 +37,7 @@
 ### Authored world
 
 - The local week is Sunday → Monday → Flamesday → Flowday → Woodsday → Goldsday → Earthsday; fresh worlds begin Monday evening.
-- Market Square is permanent. Maksym the Wagoner, a young armed road merchant/adventurer, visits Monday and Woodsday; by Flamesday/Goldsday morning he and his conditional armored wagon topology are already away. He participates as an ordinary AI character in both local timelapses while present and receives ordinary maintenance before the departure boundary. Villagers know and generally enjoy his visits for goods/news/stories without special intimacy; he knows them as familiar customers/acquaintances and is not preoccupied with Mara/demon gossip.
+- Market Square is permanent. Maksym the Wagoner, a young armed road merchant/adventurer, has regular Monday Morning and Woodsday Morning return opportunities, a following-Morning default departure after each true return, and three full road periods after actual departure. He can remain beyond that default only by ordinary formal defers before the relevant timelapse; delaying too far can miss the next return opportunity. He participates normally in local simulation while present, and his off-map life is not simulated.
 - Maksym's four-ox armored wagon is a normal keyed location with a cramped sleeping bunk/cargo/private keyed chest. A separate locked sales chest sits on Market Square while he is present, uses the existing `requiredKeyItemId` container contract, and is stocked on arrival with variable regional/town goods including salt, cloth/clothing, sewing/household goods, paper, Writing Sets, small jewelry/luxuries and specialized tools. Bought local goods remain in his personal carried inventory.
 - Squirrel Pelts, Healing Salve and Stamina Potion currently have narrow merchant-visible external sale values for this first material-wage liquidation loop; no universal price/common-knowledge economy is implied.
 
@@ -50,6 +50,7 @@
 - Deterministic `abstract_study` authored item effect: bounded `use_item.input_text` -> committed item use -> authored private study feedback with `{inputText}` interpolation. Reader progress is owned by the physical item instance and keyed independently per character; related consecutive queries classify as `survey`, `focused`, then `saturated`, while unrelated questions reset that reader's thread. No Utility/model request occurs.
 - Generic `utility_query` authored item effect remains available for genuinely model-backed information sources: bounded `input_text` -> committed physical item use -> deferred Utility-model information request -> private grounded result observation to the reader, with optional per-item output-token cap.
 - **Slab of Full Arcane Knowledge** authored inside Mara's keyed private chest and implemented through `abstract_study`. A reader freely chooses a question/topic. The first consultation gives broad orientation, a related follow-up gives focused theoretical understanding, and a third related consultation reports diminishing returns and points toward practice or a genuinely different question. The slab still does not generate classifications, mechanisms, schools, spells, dates, recipes, or other new setting facts. It remains non-sentient, grants no instant mastery, and has no oracle access to current hidden facts/future.
+- `abstract_study` now supports optional deterministic authored `knowledgeEntries`: multiple exact/phrase or trailing-wildcard keyword aliases select a canonical private article before the ordinary study-depth mechanism. Mara's slab currently indexes Chugaister lore and the archmages of Veyra's Outer-World Construct Hypothesis. Indexed reads do not invoke a model or advance/reset the reader's generic study thread; timelapse keeps article content private to the reader while exposing only the generic consultation activity publicly.
 
 ### Ordinary AI turns
 
@@ -152,7 +153,7 @@
 The former monolithic GameAPI has been partially extracted while preserving its public facade:
 
 - `10-game-api.js`: deterministic world/action/event facade;
-- `10-weekly-rhythm.js`: calendar derivation, scheduled presence/conditional topology, merchant restock/settlement/provenance hooks;
+- `10-weekly-rhythm.js`: calendar/coarse-boundary lifecycle, fixed weekly presence, generic awayable state/defer/travel/arrival hooks, conditional topology, and trade provenance/settlement integration;
 - `11-save-migration.js`: migration/reconciliation;
 - `07-mind-v3.js`: centralized Mind v3 semantics/config/math;
 - `12-character-context.js`: canonical restricted view + bounded Mind v3 context selection;

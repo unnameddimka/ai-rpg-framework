@@ -4,6 +4,8 @@ Status: world-content / authoring specification
 Scope: concrete village content built on the companion engine specification  
 Engine dependency: `docs/engine/weekly-rhythm-scheduled-presence-bulk-transfer-paper.md`
 
+> **Superseded lifecycle note (0.1.2c-maksym):** the fixed Monday/Woodsday presence lifecycle in this historical implementation spec has been superseded for Maksym by `docs/engine/awayable-character-lifecycle-arrival-hooks.md` and `docs/world/maksym-awayable-schedule-arrival-restock.md`. Monday/Woodsday are now authored arrival opportunities; canonical runtime `awayState` owns the active visit, planned departure, and travel completion. The historical body below is preserved for implementation history.
+
 ## 1. Purpose
 
 This document defines the concrete world content for the first weekly-rhythm implementation:

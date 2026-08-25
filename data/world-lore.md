@@ -8,13 +8,13 @@ The local seven-day week is:
 
 Sunday → Monday → Flamesday → Flowday → Woodsday → Goldsday → Earthsday.
 
-The current authored starting point is Monday morning.
+The current authored starting point is Monday evening.
 
 ## The Road Merchant
 
 A recurring young road merchant in his early thirties follows a wider circuit through settlements beyond the currently simulated village. He is a wagoner-adventurer as much as a trader: curious, energetic, comfortable with risk, and more attached to life on the road than to accumulating wealth for its own sake. He has already seen serious violence and hardship on the road, so his friendliness is paired with the measured distance and courtesy of an armed man who assumes other people may also be armed.
 
-He reaches this village on Monday mornings and Woodsday mornings. Each visit lasts through that day and evening/night. By the following morning he and his wagon are already gone. While away, his life is deliberately not simulated by the game engine.
+His regular return opportunities are Monday Morning and Woodsday Morning. After a true return, his default planned departure is the following Morning, but while he is locally present he may deliberately defer an imminent departure by one coarse period at a time. After actual departure he needs three fully completed timelapse periods on the road before he can use a later regular return opportunity; an opportunity reached too early is missed rather than replayed later. While away, his life is deliberately not simulated by the game engine.
 
 His broader road life includes moving between villages and larger market towns, buying local goods, selling them farther along his route, acquiring regional and city-made stock, maintaining his wagon and oxen, hearing outside news and rumors, and hiring extra guards when a route looks dangerous.
 
@@ -41,3 +41,11 @@ Do not treat current exact engine-side external sale values as universal cultura
 ## Merchant sale chest
 
 When the road merchant is visiting, he sets a locked sales chest beside the armored wagon on the Market Square. His fresh city/regional stock is kept in that chest, while goods he buys from villagers travel in his personal carried inventory until the visit ends. The chest leaves with the wagon.
+
+## Arcane slab indexed lore
+
+Mara's Slab of Full Arcane Knowledge has a growing authored reference index layered over its broader abstract-study behavior. Indexed subjects return canonical text rather than model-generated lore.
+
+**Chugaister.** Old woodland bestiaries describe the Chugaister as a large shaggy forest being generally friendly or indifferent toward people and fiercely hostile to predatory forest wraiths. Some traditions say it challenges lone travelers to dance, and repeated reports associate its resting or dancing places with broad trampled clearings. Reliable sightings are rare; scholars disagree whether the name describes a species, a class of forest spirit, or one exceptionally long-lived being. This lore does not itself reveal Mallowstead's secret glade or prove a Chugaister is currently present there.
+
+**Outer-World Construct Hypothesis.** A small and unfashionable school among the archmages of Veyra proposes that experienced reality may be a self-sustaining magical construct, or in a stranger formulation the dream of such a construct. The hypothesis permits entities originating outside the construct to enter it under rare conditions while carrying properties native magic can observe without fully explaining. No known divination, planar experiment, soul-reading, or causal test can currently prove or refute the hypothesis by distinguishing an underlying reality from a sufficiently complete construct. It remains philosophical speculation rather than accepted cosmology.

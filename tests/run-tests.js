@@ -254,8 +254,11 @@ assert(world.itemDefinitions.arcaneKnowledgeSlab.useAction &&
     world.itemDefinitions.arcaneKnowledgeSlab.useAction.aiInstructions.includes("action.input_text") &&
     !Object.prototype.hasOwnProperty.call(world.itemDefinitions.arcaneKnowledgeSlab.useAction, "utilityPrompt") &&
     !Object.prototype.hasOwnProperty.call(world.itemDefinitions.arcaneKnowledgeSlab.useAction, "utilityMaxTokens") &&
+    Array.isArray(world.itemDefinitions.arcaneKnowledgeSlab.useAction.knowledgeEntries) &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.knowledgeEntries.some(function (entry) { return entry.id === "chugaister" && entry.keywords.includes("chuhaister"); }) &&
+    world.itemDefinitions.arcaneKnowledgeSlab.useAction.knowledgeEntries.some(function (entry) { return entry.id === "outer_world_construct_hypothesis" && entry.keywords.includes("otherworld*"); }) &&
     !Object.prototype.hasOwnProperty.call(world.entities.arcaneKnowledgeSlab_01, "migrationObservation"),
-    "the slab should expose deterministic abstract study without model-generated lore or story-specific migration metadata");
+    "the slab should expose deterministic abstract study plus authored keyword articles without model-generated lore or story-specific migration metadata");
 perform("player", { type: "move", destination_id: "street" }, "arcane-slab fixture walks to the village street");
 perform("player", { type: "move", destination_id: "villageEdge" }, "arcane-slab fixture walks to the village edge");
 perform("player", { type: "move", destination_id: "maraCottageGardenLocation" }, "arcane-slab fixture enters Mara's garden");
@@ -310,6 +313,26 @@ assert(slabUseResult.events.length === 1 && slabUseResult.events[0].type === "it
     !slabUseResult.feedback[0].text.includes("resonance") &&
     world.entities.arcaneKnowledgeSlab_01.definitionId === "arcaneKnowledgeSlab",
     "first consultation on a study thread should return deterministic survey feedback without invoking a model or transforming the item");
+const slabProgressBeforeArticle = JSON.stringify(world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.player);
+const chugaisterArticle = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "What is a chuhaister?" },
+    "arcane-slab fixture requests an authored indexed article by an alias keyword");
+assert(chugaisterArticle.feedback.length === 1 && chugaisterArticle.modelRequests.length === 0 &&
+    chugaisterArticle.feedback[0].code === "ITEM_AUTHORED_KNOWLEDGE_RESULT" &&
+    chugaisterArticle.feedback[0].data.knowledgeEntryId === "chugaister" &&
+    chugaisterArticle.feedback[0].data.matchedKeyword === "chuhaister" &&
+    chugaisterArticle.feedback[0].data.studyStage === "article" &&
+    chugaisterArticle.feedback[0].text.includes("trampled clearings") &&
+    JSON.stringify(world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.player) === slabProgressBeforeArticle,
+    "an authored keyword article should return canonical private reference text and bypass ordinary study-depth progression");
+const otherworldArticle = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "Can otherworldly entities enter this world?" },
+    "arcane-slab fixture requests an authored article through a trailing-wildcard keyword");
+assert(otherworldArticle.feedback[0].code === "ITEM_AUTHORED_KNOWLEDGE_RESULT" &&
+    otherworldArticle.feedback[0].data.knowledgeEntryId === "outer_world_construct_hypothesis" &&
+    otherworldArticle.feedback[0].data.matchedKeyword === "otherworld*" &&
+    otherworldArticle.feedback[0].text.includes("archmages of Veyra") &&
+    otherworldArticle.feedback[0].text.includes("self-sustaining magical construct") &&
+    otherworldArticle.feedback[0].text.includes("resisted proof as stubbornly as refutation"),
+    "trailing-wildcard keywords should deterministically select the authored outer-world construct article");
 const slabFocusedResult = perform("player", { type: "use_item", item_id: "arcaneKnowledgeSlab_01", input_text: "magical methods used to create artificial worlds" },
     "arcane-slab fixture continues a related study thread");
 assert(slabFocusedResult.feedback[0].data.studyStage === "focused" && slabFocusedResult.feedback[0].data.studyDepth === 2 &&
@@ -755,6 +778,8 @@ assert(aura.events.length === 0 && aura.feedback.length === 1 && aura.error === 
 const auraResults = aura.feedback[0].data.results;
 assert(aura.feedback[0].recipientId === "hoodedWoman" && aura.feedback[0].code === "AURA_SCAN_RESULT",
     "aura result should be structured private feedback addressed to the acting character");
+assert(aura.feedback[0].text.includes(world.entities.player.engineFacts.aura) && aura.feedback[0].text.includes(world.entities.innkeeper.engineFacts.aura),
+    "aura feedback text should carry the grounded aura contents so private experienced-memory paths do not lose structured results");
 assert(JSON.stringify(auraResults.map(function (item) { return item.characterId; }).sort()) === JSON.stringify(expectedAuraTargetIds) &&
     auraResults.some(function (item) { return item.characterId === "player"; }) &&
     auraResults.some(function (item) { return item.characterId === "innkeeper"; }) &&
@@ -771,8 +796,8 @@ assert(world.entities.hoodedWoman.mind.pendingObservations.length === 0,
     "a Human-controlled aura actor must not retain scheduler pending observations");
 assert(world.entities.hoodedWoman.mind.verbatimObservations.length > hoodedVerbatimBeforeAura &&
     world.entities.hoodedWoman.mind.verbatimObservations.some(function (item) {
-        return item.kind === "action_feedback" && item.text.includes("aura");
-    }), "aura feedback should remain part of the Human-controlled actor's experienced verbatim history");
+        return item.kind === "action_feedback" && item.text.includes(world.entities.player.engineFacts.aura);
+    }), "aura feedback should preserve the actual grounded aura contents in the Human-controlled actor's experienced verbatim history");
 assert(world.entities.player.mind.pendingObservations.length === playerInboxBeforeAura,
     "aura feedback must not enter the target inbox");
 assert(world.entities.innkeeper.mind.pendingObservations.length === innkeeperInboxBeforeAura,

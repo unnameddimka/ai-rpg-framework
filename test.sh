@@ -34,6 +34,7 @@ TEST_FILES=(
     tests/run-mind-retrieval-tests.js
     tests/run-night-timelapse-tests.js
     tests/run-daytime-tests.js
+    tests/run-awayable-tests.js
     tests/run-weekly-merchant-tests.js
     tests/run-release-profile-tests.js
 )

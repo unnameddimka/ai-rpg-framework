@@ -51,7 +51,7 @@ async function main() {
     assert(!blockedTurn.ok && blockedTurn.error.code === "PLAYER_SETUP_INCOMPLETE" && blockedTurn.turnConsumed === false && !blockedWave.ok && blockedWave.error.code === "PLAYER_SETUP_INCOMPLETE",
         "fresh-world startup must hard-block Human turns and AI waves before disclaimer + Traveler choice complete");
     let world = fresh();
-    Object.values(setup.GeneratedWorldData.characters).forEach(function (authored) {
+    Object.values(setup.GeneratedWorldData.characters).filter(function (authored) { return authored.deferredActivation !== true; }).forEach(function (authored) {
         assert(world.entities[authored.id].defaultControllerId === authored.defaultControllerId &&
             world.control.assignments[authored.id] === authored.initialControllerId,
         `runtime controllers for ${authored.id} should match the authoritative world fixture`);
@@ -1052,10 +1052,17 @@ async function main() {
         memoryUpdates: emptyUpdates()
     }); } };
     const actionResult = await setup.AIController.takeNextTurn(singleAction);
+    const groundedPlayerAura = world.entities.player.engineFacts.aura;
     assert(actionResult.ok && actionResult.stages === 1 && actionResult.actionResult.feedback[0].code === "AURA_SCAN_RESULT" && stage === 1 &&
+        actionResult.actionResult.feedback[0].text.includes(groundedPlayerAura) &&
         setup.AITurnQueue.peek().characterId === "hoodedWoman" &&
-        world.entities.hoodedWoman.mind.pendingObservations.some(function (item) { return item.kind === "action_result" || item.kind === "action_feedback"; }),
-        "single-request action turn should execute one formal action and queue its grounded result for a later reaction");
+        world.entities.hoodedWoman.mind.pendingObservations.some(function (item) {
+            return item.kind === "action_feedback" && item.code === "AURA_SCAN_RESULT" && item.text.includes(groundedPlayerAura);
+        }) &&
+        world.entities.hoodedWoman.mind.verbatimObservations.some(function (item) {
+            return item.kind === "action_feedback" && item.text.includes(groundedPlayerAura);
+        }),
+        "single-request aura action should queue and remember the grounded aura contents, not only a generic success marker");
 
     world = queueHooded(); stage = 0;
     const selectiveClient = { chat: async function () {

@@ -594,6 +594,7 @@
         });
         if (useChildren.length) groups.here.push({ kind: "action-group", label: "Use item ▸", title: "Use item", children: useChildren });
 
+        if (view.available_actions.defer_departure) groups.here.push({ kind: "action", label: "Stay another period", action: { type: "defer_departure" } });
         if (view.available_actions.go_hunting) groups.here.push({ kind: "action", label: "Go hunting", action: { type: "go_hunting" } });
         if (view.available_actions.sleep) groups.here.push({ kind: "action", label: view.self.controller_id === "human" ? "Sleep till morning" : "Sleep", action: { type: "sleep" } });
         discoverAvailableAbilities(view).forEach(function (ability) { groups.here.push({ kind: "action", label: ability.name, action: { type: ability.actionType } }); });

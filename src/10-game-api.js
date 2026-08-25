@@ -2,8 +2,8 @@
     "use strict";
 
     const LEGACY_WORLD_VERSION = 6;
-    const WORLD_SCHEMA_VERSION = 16;
-    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, 9, 10, 11, 12, 13, 14, 15, WORLD_SCHEMA_VERSION]);
+    const WORLD_SCHEMA_VERSION = 17;
+    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, WORLD_SCHEMA_VERSION]);
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
     const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden", "shout"]);
@@ -61,6 +61,7 @@
         world.abilities = clone(document.abilities);
         world.itemDefinitions = clone(document.itemDefinitions);
         world.dayActivities = clone(document.dayActivities || {});
+        world.randomOutcomeTables = clone(document.randomOutcomeTables || {});
         world.calendar = {
             weekdayNames: clone(document.calendar && document.calendar.weekdayNames || ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"]),
             initialWeekdayIndex: Number.isInteger(document.calendar && document.calendar.initialWeekdayIndex) ? document.calendar.initialWeekdayIndex : 0,
@@ -106,6 +107,7 @@
         }
 
         for (const [characterId, sourceCharacter] of Object.entries(document.characters)) {
+            if (sourceCharacter && sourceCharacter.deferredActivation === true) continue;
             const character = clone(sourceCharacter);
             character.id = characterId;
             character.type = "character";
@@ -117,6 +119,8 @@
             delete character.mind.recentMemories;
             character.mind.pendingObservations = [];
             character.recentDialogue = [];
+            character.discoveredCharacterIds = [];
+            character.playerControllable = character.playerControllable !== false;
             character.discoveredLocationIds = Array.isArray(character.initialDiscoveredLocationIds)
                 ? Array.from(new Set(character.initialDiscoveredLocationIds.filter(function (locationId) {
                     const location = world.entities[locationId];
@@ -189,6 +193,8 @@
             inventories: {},
             itemDefinitions: {},
             dayActivities: {},
+            randomOutcomeTables: {},
+            consumedAuthoredOutcomeIds: [],
             environment: {
                 timePhase: "evening",
                 weatherNarrative: "The air is mild and still beneath an unremarkable sky.",
@@ -445,6 +451,51 @@
         return ids;
     }
 
+
+    function characterRequiresDiscovery(characterOrId, world) {
+        const w = world || getWorld();
+        const character = typeof characterOrId === "string" ? getCharacter(characterOrId, w) : characterOrId;
+        return Boolean(character && character.type === "character" && character.requiresDiscovery === true);
+    }
+
+    function characterHasDiscoveredCharacter(observerOrId, targetOrId, world) {
+        const w = world || getWorld();
+        const target = typeof targetOrId === "string" ? getCharacter(targetOrId, w) : targetOrId;
+        if (!target) return false;
+        if (!characterRequiresDiscovery(target, w)) return true;
+        const observer = typeof observerOrId === "string" ? getCharacter(observerOrId, w) : observerOrId;
+        if (observer && observer.id === target.id) return true;
+        return Boolean(observer && Array.isArray(observer.discoveredCharacterIds) && observer.discoveredCharacterIds.includes(target.id));
+    }
+
+    function grantCharacterDiscovery(observerOrId, targetOrId, world) {
+        const w = world || getWorld();
+        const observer = typeof observerOrId === "string" ? getCharacter(observerOrId, w) : observerOrId;
+        const target = typeof targetOrId === "string" ? getCharacter(targetOrId, w) : targetOrId;
+        if (!observer || !target || !characterRequiresDiscovery(target, w)) return false;
+        if (!Array.isArray(observer.discoveredCharacterIds)) observer.discoveredCharacterIds = [];
+        if (observer.discoveredCharacterIds.includes(target.id)) return false;
+        observer.discoveredCharacterIds.push(target.id);
+        return true;
+    }
+
+    function normalizeCharacterDiscoveriesByCharacter(character, world, savedIds) {
+        if (!character) return [];
+        const seen = new Set();
+        const ids = [];
+        function add(characterId) {
+            if (typeof characterId !== "string" || seen.has(characterId) || characterId === character.id) return;
+            const target = getCharacter(characterId, world);
+            if (!target || !characterRequiresDiscovery(target, world)) return;
+            seen.add(characterId);
+            ids.push(characterId);
+        }
+        (Array.isArray(character.discoveredCharacterIds) ? character.discoveredCharacterIds : []).forEach(add);
+        (Array.isArray(savedIds) ? savedIds : []).forEach(add);
+        character.discoveredCharacterIds = ids;
+        return ids;
+    }
+
     function locationExitEntriesForActor(location, actor, world) {
         const w = world || getWorld();
         return locationExitEntries(location, w).filter(function (transition) {
@@ -468,6 +519,19 @@
         const w = world || getWorld();
         return eventLocationIds(event, w).some(function (locationId) {
             return locationRequiresDiscovery(locationId, w) && !characterHasDiscoveredLocation(characterOrId, locationId, w);
+        });
+    }
+
+    function eventTouchesUndiscoveredCharacter(event, characterOrId, world) {
+        const w = world || getWorld();
+        const observer = typeof characterOrId === "string" ? getCharacter(characterOrId, w) : characterOrId;
+        if (!observer) return false;
+        const ids = [event && event.actorId, event && event.targetId, event && event.discoveredCharacterId].filter(function (id, index, values) {
+            return typeof id === "string" && id && id !== observer.id && values.indexOf(id) === index;
+        });
+        return ids.some(function (characterId) {
+            const target = getCharacter(characterId, w);
+            return Boolean(target && characterRequiresDiscovery(target, w) && !characterHasDiscoveredCharacter(observer, target, w));
         });
     }
 
@@ -615,6 +679,159 @@
         return item;
     }
 
+
+    function createGeneratedItemInstance(definitionId, inventoryId, world) {
+        const definition = world.itemDefinitions && world.itemDefinitions[definitionId];
+        const inventory = world.inventories && world.inventories[inventoryId];
+        if (!definition || !inventory) throw new Error("Generated item definition or destination inventory is missing.");
+        if (!Number.isInteger(world.nextGeneratedItemId) || world.nextGeneratedItemId < 1) world.nextGeneratedItemId = 1;
+        let id;
+        do { id = `generated_${definition.id}_${world.nextGeneratedItemId++}`; } while (world.entities[id]);
+        world.entities[id] = { id: id, type: "item", definitionId: definition.id, name: definition.name, containerId: inventory.id };
+        inventory.itemIds.push(id);
+        return id;
+    }
+
+    function renderAuthoredOutcomeText(template, actor, details) {
+        const values = Object.assign({ actorName: actor && actor.name || "Someone" }, details || {});
+        return String(template || "").replace(/\{([A-Za-z][A-Za-z0-9_]*)\}/g, function (_, key) {
+            return Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : `{${key}}`;
+        });
+    }
+
+    function authoredOutcomeEffectApplicable(effect, actor, world) {
+        if (!effect || typeof effect !== "object") return false;
+        if (effect.type === "emit_observation") return typeof effect.text === "string" && Boolean(effect.text.trim());
+        if (effect.type === "reveal_location") {
+            return Boolean(getLocation(effect.locationId, world) && locationRequiresDiscovery(effect.locationId, world) &&
+                !characterHasDiscoveredLocation(actor, effect.locationId, world));
+        }
+        if (effect.type === "encounter_character") {
+            const target = getCharacter(effect.characterId, world);
+            return Boolean(target && characterRequiresDiscovery(target, world) && !characterHasDiscoveredCharacter(actor, target, world) &&
+                target.locationId === actor.locationId && (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(target, world)));
+        }
+        if (effect.type === "modify_wallet") {
+            return effect.target === "actor" && Number.isInteger(effect.amount) && effect.amount !== 0 &&
+                Number.isInteger(actor.wallet) && actor.wallet + effect.amount >= 0;
+        }
+        if (effect.type === "create_item") {
+            return effect.destination === "actor_inventory" && Boolean(world.itemDefinitions && world.itemDefinitions[effect.itemDefinitionId]) &&
+                Number.isInteger(effect.quantity || 1) && (effect.quantity || 1) > 0 && Boolean(world.inventories[actor.inventoryId]);
+        }
+        return false;
+    }
+
+    function authoredOutcomeApplicable(outcome, actor, world) {
+        return Boolean(outcome && Array.isArray(outcome.effects) && outcome.effects.length > 0 &&
+            outcome.effects.every(function (effect) { return authoredOutcomeEffectApplicable(effect, actor, world); }));
+    }
+
+    function eligibleAuthoredOutcomeRecords(actor, table, world) {
+        const consumed = new Set(Array.isArray(world.consumedAuthoredOutcomeIds) ? world.consumedAuthoredOutcomeIds : []);
+        return (table && Array.isArray(table.outcomes) ? table.outcomes : []).filter(function (outcome) {
+            return outcome && !(outcome.once === true && consumed.has(outcome.id)) && authoredOutcomeApplicable(outcome, actor, world);
+        });
+    }
+
+    function authoredOutcomeTableCanAffect(actor, table, world) {
+        return Boolean(table && eligibleAuthoredOutcomeRecords(actor, table, world).length > 0);
+    }
+
+    function executeAuthoredOutcomeEffects(actor, outcome, world, context) {
+        const events = [];
+        const createdItemIds = [];
+        (outcome.effects || []).forEach(function (effect) {
+            if (!authoredOutcomeEffectApplicable(effect, actor, world)) throw new Error(`Authored outcome effect '${String(effect.type)}' is not applicable.`);
+            if (effect.type === "emit_observation") {
+                events.push({
+                    type: "authored_outcome_observed", actorId: actor.id, locationId: actor.locationId, sublocationId: actor.sublocationId,
+                    actionType: context && context.actionType || "authored_outcome", outcomeId: outcome.id,
+                    authoredInteractionId: context && context.authoredInteractionId || null,
+                    text: renderAuthoredOutcomeText(effect.text, actor, {})
+                });
+            } else if (effect.type === "reveal_location") {
+                const location = getLocation(effect.locationId, world);
+                if (!grantLocationDiscovery(actor, location.id, world)) throw new Error(`Location '${location.id}' could not be discovered.`);
+                events.push({
+                    type: "location_discovered", actorId: actor.id, targetId: actor.id, locationId: actor.locationId,
+                    revealedLocationId: location.id, actionType: context && context.actionType || "authored_outcome", outcomeId: outcome.id,
+                    text: renderAuthoredOutcomeText(effect.observationText || `${actor.name} discovered ${location.name}.`, actor, { locationName: location.name })
+                });
+            } else if (effect.type === "encounter_character") {
+                const target = getCharacter(effect.characterId, world);
+                if (!grantCharacterDiscovery(actor, target, world)) throw new Error(`Character '${target.id}' could not be discovered.`);
+                events.push({
+                    type: "character_discovered", actorId: actor.id, targetId: target.id, locationId: actor.locationId,
+                    discoveredCharacterId: target.id, actionType: context && context.actionType || "authored_outcome", outcomeId: outcome.id,
+                    text: renderAuthoredOutcomeText(effect.observationText || `${actor.name} encounters ${target.name}.`, actor, { characterName: target.name })
+                });
+            } else if (effect.type === "modify_wallet") {
+                actor.wallet += effect.amount;
+            } else if (effect.type === "create_item") {
+                const count = effect.quantity || 1;
+                for (let index = 0; index < count; index++) createdItemIds.push(createGeneratedItemInstance(effect.itemDefinitionId, actor.inventoryId, world));
+            }
+        });
+        return { events: events, createdItemIds: createdItemIds };
+    }
+
+    function restoreWorldObject(target, snapshot) {
+        Object.keys(target).forEach(function (key) { delete target[key]; });
+        Object.assign(target, clone(snapshot));
+    }
+
+    function runAuthoredOutcomeTable(actorOrId, tableId, world, options) {
+        const w = world || ensureWorld();
+        const actor = typeof actorOrId === "string" ? getCharacter(actorOrId, w) : actorOrId;
+        const table = w.randomOutcomeTables && w.randomOutcomeTables[tableId];
+        if (!actor) return fail("OUTCOME_ACTOR_INVALID", "Authored outcome actor does not exist.");
+        if (!table) return fail("OUTCOME_TABLE_INVALID", `Random outcome table '${String(tableId)}' does not exist.`);
+        const eligible = eligibleAuthoredOutcomeRecords(actor, table, w);
+        const noOutcomeWeight = Number(table.noOutcomeWeight || 0);
+        const total = noOutcomeWeight + eligible.reduce(function (sum, outcome) { return sum + Number(outcome.weight || 0); }, 0);
+        if (!(total > 0)) return fail("OUTCOME_NONE_APPLICABLE", "No authored outcome is currently applicable.");
+        const random = options && typeof options.random === "function" ? options.random : Math.random;
+        let roll = Number(random());
+        if (!Number.isFinite(roll)) roll = 0;
+        roll = Math.max(0, Math.min(roll, 0.9999999999999999)) * total;
+        if (roll < noOutcomeWeight) return ok({ selectedOutcomeId: null, noOutcome: true, events: [], createdItemIds: [] });
+        roll -= noOutcomeWeight;
+        let selected = null;
+        for (const outcome of eligible) {
+            if (roll < outcome.weight) { selected = outcome; break; }
+            roll -= outcome.weight;
+        }
+        selected = selected || eligible[eligible.length - 1];
+        if (!selected) return ok({ selectedOutcomeId: null, noOutcome: true, events: [], createdItemIds: [] });
+
+        const snapshot = clone(w);
+        try {
+            const liveActor = getCharacter(actor.id, w);
+            if (!liveActor) throw Object.assign(new Error("Authored outcome actor disappeared before execution."), { code: "OUTCOME_ACTOR_INVALID" });
+            const executed = executeAuthoredOutcomeEffects(liveActor, selected, w, options || {});
+            if (selected.once === true) {
+                if (!Array.isArray(w.consumedAuthoredOutcomeIds)) w.consumedAuthoredOutcomeIds = [];
+                if (!w.consumedAuthoredOutcomeIds.includes(selected.id)) w.consumedAuthoredOutcomeIds.push(selected.id);
+            }
+            const invariant = validateWorld(w);
+            if (!invariant.ok) throw Object.assign(new Error(invariant.error.message), { code: invariant.error.code || "OUTCOME_WORLD_INVALID" });
+            return ok({ selectedOutcomeId: selected.id, noOutcome: false, events: executed.events, createdItemIds: executed.createdItemIds });
+        } catch (error) {
+            restoreWorldObject(w, snapshot);
+            return fail(error && error.code || "OUTCOME_EXECUTION_FAILED", error && error.message || "Authored outcome execution failed.");
+        }
+    }
+
+    function authoredInteractionRecords(actor, world) {
+        const sublocation = getSublocation(actor && actor.sublocationId, world);
+        if (!sublocation || !Array.isArray(sublocation.interactions)) return [];
+        return sublocation.interactions.filter(function (interaction) {
+            const table = world.randomOutcomeTables && world.randomOutcomeTables[interaction.outcomeTableId];
+            return interaction && interaction.effectId === "random_outcome" && table && authoredOutcomeTableCanAffect(actor, table, world);
+        });
+    }
+
     function sublocationOccupants(sublocationId, world, excludedCharacterId) {
         return getCharacters(world).filter(function (character) {
             return character.id !== excludedCharacterId && character.sublocationId === sublocationId &&
@@ -640,6 +857,7 @@
         if (!actor || !target || actor.locationId !== target.locationId) {
             return false;
         }
+        if (!characterHasDiscoveredCharacter(actor, target, world)) return false;
         if (setup.WeeklyRhythm && (!setup.WeeklyRhythm.isCharacterPresent(actor, world) || !setup.WeeklyRhythm.isCharacterPresent(target, world))) {
             return false;
         }
@@ -757,6 +975,9 @@
             }
 
             if (controllerId === "human") {
+                if (character.playerControllable === false) {
+                    return fail("CHARACTER_NOT_PLAYER_CONTROLLABLE", `Character ${character.id} cannot be assigned to HumanController.`);
+                }
                 humanIds.push(character.id);
             }
         }
@@ -781,15 +1002,15 @@
 
         let chosenHumanId = null;
         const previousHumans = characters.filter(function (character) {
-            return previous[character.id] === "human";
+            return previous[character.id] === "human" && character.playerControllable !== false;
         });
 
         if (previousHumans.length === 1) {
             chosenHumanId = previousHumans[0].id;
-        } else if (getCharacter("player", world)) {
+        } else if (getCharacter("player", world) && getCharacter("player", world).playerControllable !== false) {
             chosenHumanId = "player";
-        } else if (characters.length > 0) {
-            chosenHumanId = characters[0].id;
+        } else if (characters.some(function (character) { return character.playerControllable !== false; })) {
+            chosenHumanId = characters.find(function (character) { return character.playerControllable !== false; }).id;
         }
 
         for (const character of characters) {
@@ -880,6 +1101,45 @@
                     if (typeof action.inputLabel !== "string" || !action.inputLabel.trim()) return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} ${action.effectId} requires inputLabel.`);
                     if (action.inputPlaceholder !== undefined && typeof action.inputPlaceholder !== "string") return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} inputPlaceholder must be text.`);
                     if (action.inputMaxLength !== undefined && (!Number.isInteger(action.inputMaxLength) || action.inputMaxLength < 1 || action.inputMaxLength > 2000)) return fail("ITEM_TEXT_INPUT_INVALID", `Item definition ${definitionId} inputMaxLength must be an integer from 1 to 2000.`);
+                }
+                if (action.effectId === "abstract_study" && action.knowledgeEntries !== undefined) {
+                    if (!Array.isArray(action.knowledgeEntries) || action.knowledgeEntries.length > 500) {
+                        return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} knowledgeEntries must be an array with at most 500 entries.`);
+                    }
+                    const knowledgeEntryIds = new Set();
+                    for (const entry of action.knowledgeEntries) {
+                        if (!entry || typeof entry !== "object" || Array.isArray(entry) || typeof entry.id !== "string" || !entry.id.trim() || entry.id.length > 120 || knowledgeEntryIds.has(entry.id)) {
+                            return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} has an invalid or duplicate knowledge entry ID.`);
+                        }
+                        knowledgeEntryIds.add(entry.id);
+                        if (entry.title !== undefined && (typeof entry.title !== "string" || !entry.title.trim() || entry.title.length > 240)) {
+                            return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} knowledge entry ${entry.id} has an invalid title.`);
+                        }
+                        if (typeof entry.article !== "string" || !entry.article.trim() || entry.article.length > 8000) {
+                            return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} knowledge entry ${entry.id} must contain article text up to 8000 characters.`);
+                        }
+                        if (entry.priority !== undefined && (!Number.isInteger(entry.priority) || entry.priority < -1000 || entry.priority > 1000)) {
+                            return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} knowledge entry ${entry.id} priority must be an integer from -1000 to 1000.`);
+                        }
+                        if (!Array.isArray(entry.keywords) || entry.keywords.length < 1 || entry.keywords.length > 32) {
+                            return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} knowledge entry ${entry.id} requires 1 to 32 keywords.`);
+                        }
+                        const seenKeywords = new Set();
+                        for (const keyword of entry.keywords) {
+                            if (typeof keyword !== "string" || !keyword.trim() || keyword.length > 120 || seenKeywords.has(keyword)) {
+                                return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} knowledge entry ${entry.id} has an invalid or duplicate keyword.`);
+                            }
+                            seenKeywords.add(keyword);
+                            const starIndex = keyword.indexOf("*");
+                            if (starIndex >= 0 && (starIndex !== keyword.length - 1 || keyword.lastIndexOf("*") !== starIndex)) {
+                                return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} knowledge entry ${entry.id} keyword ${keyword} may use only one trailing wildcard.`);
+                            }
+                            const stem = keyword.endsWith("*") ? keyword.slice(0, -1).trim() : keyword.trim();
+                            if (!stem || knowledgeMatchTokens(stem).length < 1) {
+                                return fail("ITEM_KNOWLEDGE_ENTRIES_INVALID", `Item definition ${definitionId} knowledge entry ${entry.id} contains an unusable keyword.`);
+                            }
+                        }
+                    }
                 }
                 if (action.effectId === "utility_query") {
                     if (typeof action.utilityPrompt !== "string" || !action.utilityPrompt.trim()) return fail("ITEM_UTILITY_QUERY_INVALID", `Item definition ${definitionId} utility_query requires utilityPrompt.`);
@@ -1086,6 +1346,10 @@
             if (typeof character.sleeping !== "boolean") {
                 return fail("CHARACTER_SLEEPING_INVALID", `Character ${character.id} sleeping must be Boolean.`);
             }
+            if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.validateAwayState === "function") {
+                const awayValidation = setup.WeeklyRhythm.validateAwayState(character, world);
+                if (!awayValidation.ok) return awayValidation;
+            }
             if (!Array.isArray(character.discoveredLocationIds) || new Set(character.discoveredLocationIds).size !== character.discoveredLocationIds.length) {
                 return fail("CHARACTER_DISCOVERY_INVALID", `Character ${character.id} discoveredLocationIds must be a unique array.`);
             }
@@ -1097,6 +1361,18 @@
             }
             if (locationRequiresDiscovery(location, world) && !character.discoveredLocationIds.includes(location.id)) {
                 return fail("CHARACTER_DISCOVERY_INVALID", `Character ${character.id} must know the secret location they currently occupy.`);
+            }
+            if (!Array.isArray(character.discoveredCharacterIds) || new Set(character.discoveredCharacterIds).size !== character.discoveredCharacterIds.length) {
+                return fail("CHARACTER_DISCOVERY_INVALID", `Character ${character.id} discoveredCharacterIds must be a unique array.`);
+            }
+            for (const targetCharacterId of character.discoveredCharacterIds) {
+                const targetCharacter = getCharacter(targetCharacterId, world);
+                if (!targetCharacter || targetCharacter.id === character.id || !characterRequiresDiscovery(targetCharacter, world)) {
+                    return fail("CHARACTER_DISCOVERY_INVALID", `Character ${character.id} has invalid discovered character ${String(targetCharacterId)}.`);
+                }
+            }
+            if (typeof character.playerControllable !== "boolean") {
+                return fail("CHARACTER_CONTROLLABLE_INVALID", `Character ${character.id} playerControllable must be Boolean.`);
             }
             if (!CONTROLLER_IDS.has(character.defaultControllerId) || character.defaultControllerId === "human") {
                 return fail("DEFAULT_CONTROLLER_INVALID", `Character ${character.id} has an invalid default controller.`);
@@ -1273,6 +1549,55 @@
         return ok();
     }
 
+    function validateAuthoredOutcomeRuntime(world) {
+        if (!world.randomOutcomeTables || typeof world.randomOutcomeTables !== "object" || Array.isArray(world.randomOutcomeTables)) {
+            return fail("RANDOM_OUTCOME_TABLES_INVALID", "randomOutcomeTables must be an object.");
+        }
+        const onceIds = new Set();
+        const seenOutcomeIds = new Set();
+        for (const [tableId, table] of Object.entries(world.randomOutcomeTables)) {
+            if (!table || typeof table !== "object" || Array.isArray(table) || table.id !== tableId || !Array.isArray(table.outcomes) ||
+                    !Number.isInteger(table.noOutcomeWeight) || table.noOutcomeWeight < 0) {
+                return fail("RANDOM_OUTCOME_TABLE_INVALID", `Random outcome table ${tableId} is malformed.`);
+            }
+            let positiveWeight = table.noOutcomeWeight;
+            for (const outcome of table.outcomes) {
+                if (!outcome || typeof outcome !== "object" || Array.isArray(outcome) || typeof outcome.id !== "string" || !outcome.id ||
+                        seenOutcomeIds.has(outcome.id) || !Number.isInteger(outcome.weight) || outcome.weight <= 0 || typeof outcome.once !== "boolean" ||
+                        !Array.isArray(outcome.effects) || outcome.effects.length === 0) {
+                    return fail("RANDOM_OUTCOME_INVALID", `Random outcome in table ${tableId} is malformed or duplicated.`);
+                }
+                seenOutcomeIds.add(outcome.id);
+                positiveWeight += outcome.weight;
+                if (outcome.once) onceIds.add(outcome.id);
+                for (const effect of outcome.effects) {
+                    if (!effect || typeof effect !== "object" || Array.isArray(effect) || !["emit_observation", "reveal_location", "encounter_character", "modify_wallet", "create_item"].includes(effect.type)) {
+                        return fail("RANDOM_OUTCOME_EFFECT_INVALID", `Random outcome ${outcome.id} contains an unsupported effect.`);
+                    }
+                    if (effect.type === "emit_observation" && (typeof effect.text !== "string" || !effect.text.trim())) return fail("RANDOM_OUTCOME_EFFECT_INVALID", `Random outcome ${outcome.id} has invalid observation text.`);
+                    if (effect.type === "reveal_location" && (!getLocation(effect.locationId, world) || !locationRequiresDiscovery(effect.locationId, world))) return fail("RANDOM_OUTCOME_EFFECT_INVALID", `Random outcome ${outcome.id} has invalid reveal_location target.`);
+                    if (effect.type === "encounter_character") {
+                        const target = getCharacter(effect.characterId, world);
+                        if (!target || !characterRequiresDiscovery(target, world)) return fail("RANDOM_OUTCOME_EFFECT_INVALID", `Random outcome ${outcome.id} has invalid encounter_character target.`);
+                    }
+                    if (effect.type === "modify_wallet" && (effect.target !== "actor" || !Number.isInteger(effect.amount) || effect.amount === 0)) return fail("RANDOM_OUTCOME_EFFECT_INVALID", `Random outcome ${outcome.id} has invalid modify_wallet effect.`);
+                    if (effect.type === "create_item" && (effect.destination !== "actor_inventory" || !world.itemDefinitions[effect.itemDefinitionId] ||
+                            (effect.quantity !== undefined && (!Number.isInteger(effect.quantity) || effect.quantity < 1 || effect.quantity > 100)))) {
+                        return fail("RANDOM_OUTCOME_EFFECT_INVALID", `Random outcome ${outcome.id} has invalid create_item effect.`);
+                    }
+                }
+            }
+            if (!(positiveWeight > 0)) return fail("RANDOM_OUTCOME_TABLE_INVALID", `Random outcome table ${tableId} has no positive weighted result.`);
+        }
+        if (!Array.isArray(world.consumedAuthoredOutcomeIds) || new Set(world.consumedAuthoredOutcomeIds).size !== world.consumedAuthoredOutcomeIds.length) {
+            return fail("RANDOM_OUTCOME_CONSUMED_INVALID", "consumedAuthoredOutcomeIds must be a unique array.");
+        }
+        for (const outcomeId of world.consumedAuthoredOutcomeIds) {
+            if (!onceIds.has(outcomeId)) return fail("RANDOM_OUTCOME_CONSUMED_INVALID", `Consumed authored outcome ${String(outcomeId)} is not a current one-shot outcome.`);
+        }
+        return ok();
+    }
+
     function validateWorld(world) {
         if (!world || typeof world !== "object") {
             return fail("WORLD_MISSING", "World state does not exist.");
@@ -1303,6 +1628,8 @@
         if (!itemResult.ok) return itemResult;
         const environmentResult = validateEnvironmentAndDaytime(world);
         if (!environmentResult.ok) return environmentResult;
+        const randomOutcomeResult = validateAuthoredOutcomeRuntime(world);
+        if (!randomOutcomeResult.ok) return randomOutcomeResult;
 
         ensureAIState(world);
         for (const [characterId, continuation] of Object.entries(world.ai.continuations)) {
@@ -1347,7 +1674,23 @@
         if (!world.daytime || typeof world.daytime !== "object" || Array.isArray(world.daytime)) world.daytime = { pendingOffer: null, activeActivity: null };
         if (!Object.prototype.hasOwnProperty.call(world.daytime, "pendingOffer")) world.daytime.pendingOffer = null;
         if (!Object.prototype.hasOwnProperty.call(world.daytime, "activeActivity")) world.daytime.activeActivity = null;
-        getCharacters(world).forEach(function (character) { normalizeCharacterDiscoveries(character, world); });
+        getCharacters(world).forEach(function (character) {
+            normalizeCharacterDiscoveries(character, world);
+            normalizeCharacterDiscoveriesByCharacter(character, world);
+            character.playerControllable = character.playerControllable !== false;
+        });
+        if (!world.randomOutcomeTables || typeof world.randomOutcomeTables !== "object" || Array.isArray(world.randomOutcomeTables)) {
+            world.randomOutcomeTables = clone(setup.GeneratedWorldData.randomOutcomeTables || {});
+        }
+        const validOnceOutcomeIds = new Set();
+        Object.values(world.randomOutcomeTables || {}).forEach(function (table) {
+            (table && Array.isArray(table.outcomes) ? table.outcomes : []).forEach(function (outcome) {
+                if (outcome && outcome.once === true && typeof outcome.id === "string") validOnceOutcomeIds.add(outcome.id);
+            });
+        });
+        world.consumedAuthoredOutcomeIds = Array.from(new Set((Array.isArray(world.consumedAuthoredOutcomeIds) ? world.consumedAuthoredOutcomeIds : []).filter(function (id) {
+            return typeof id === "string" && validOnceOutcomeIds.has(id);
+        })));
 
         if (!world.control || !world.control.assignments) {
             repairControlInvariant(world, "missing control state");
@@ -1428,6 +1771,13 @@
 
         if (!target) {
             return fail("CHARACTER_NOT_FOUND", "Character does not exist.");
+        }
+        if (target.playerControllable === false) {
+            return fail("CHARACTER_NOT_PLAYER_CONTROLLABLE", "This character cannot be assigned to HumanController.");
+        }
+        const currentHuman = getCharacter(getHumanCharacterId(world), world);
+        if (target.requiresDiscovery === true && currentHuman && target.id !== currentHuman.id && !characterHasDiscoveredCharacter(currentHuman, target, world)) {
+            return fail("CHARACTER_UNDISCOVERED", "This character has not been discovered by the current Human-controlled character.");
         }
 
         const previousAssignments = world.control.assignments;
@@ -1522,7 +1872,8 @@
         return getCharacters(world).filter(function (character) {
             return character.id !== actor.id &&
                 (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(character, world)) &&
-                character.locationId === actor.locationId;
+                character.locationId === actor.locationId &&
+                characterHasDiscoveredCharacter(actor, character, world);
         });
     }
 
@@ -1650,6 +2001,67 @@
         return useAction.feedbackText;
     }
 
+    function knowledgeMatchTokens(text) {
+        return String(text || "").normalize("NFKC").toLowerCase()
+            .replace(/[^a-z0-9\u00c0-\u024f\u0400-\u04ff]+/g, " ")
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean);
+    }
+
+    function knowledgeKeywordMatch(inputText, keyword) {
+        const raw = typeof keyword === "string" ? keyword.normalize("NFKC").trim().toLowerCase() : "";
+        if (!raw) return null;
+        const wildcard = raw.endsWith("*");
+        const stem = wildcard ? raw.slice(0, -1).trim() : raw;
+        if (!stem || stem.includes("*")) return null;
+        const patternTokens = knowledgeMatchTokens(stem);
+        const inputTokens = knowledgeMatchTokens(inputText);
+        if (!patternTokens.length || inputTokens.length < patternTokens.length) return null;
+        for (let start = 0; start <= inputTokens.length - patternTokens.length; start += 1) {
+            let matched = true;
+            for (let offset = 0; offset < patternTokens.length; offset += 1) {
+                const expected = patternTokens[offset];
+                const actual = inputTokens[start + offset];
+                const last = offset === patternTokens.length - 1;
+                if (wildcard && last ? !actual.startsWith(expected) : actual !== expected) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                return {
+                    keyword: raw,
+                    wildcard: wildcard,
+                    specificity: patternTokens.reduce(function (sum, token) { return sum + token.length; }, 0) * 2 + (wildcard ? 0 : 1)
+                };
+            }
+        }
+        return null;
+    }
+
+    function matchingKnowledgeEntry(useAction, inputText) {
+        const entries = useAction && Array.isArray(useAction.knowledgeEntries) ? useAction.knowledgeEntries : [];
+        let best = null;
+        entries.forEach(function (entry, entryIndex) {
+            if (!entry || !Array.isArray(entry.keywords)) return;
+            let bestKeyword = null;
+            entry.keywords.forEach(function (keyword) {
+                const match = knowledgeKeywordMatch(inputText, keyword);
+                if (match && (!bestKeyword || match.specificity > bestKeyword.specificity)) bestKeyword = match;
+            });
+            if (!bestKeyword) return;
+            const priority = Number.isInteger(entry.priority) ? entry.priority : 0;
+            const candidate = { entry: entry, entryIndex: entryIndex, keywordMatch: bestKeyword, priority: priority };
+            if (!best || candidate.priority > best.priority ||
+                    (candidate.priority === best.priority && candidate.keywordMatch.specificity > best.keywordMatch.specificity) ||
+                    (candidate.priority === best.priority && candidate.keywordMatch.specificity === best.keywordMatch.specificity && candidate.entryIndex < best.entryIndex)) {
+                best = candidate;
+            }
+        });
+        return best;
+    }
+
     const ItemEffectRegistry = {
         report_memory_counts: {
             execute: function (actor, item, definition, useAction) {
@@ -1699,6 +2111,34 @@
         abstract_study: {
             execute: function (actor, item, definition, useAction, world, action) {
                 const inputText = action && typeof action.input_text === "string" ? action.input_text.trim() : "";
+                const knowledgeMatch = matchingKnowledgeEntry(useAction, inputText);
+                if (knowledgeMatch) {
+                    const entry = knowledgeMatch.entry;
+                    return {
+                        feedback: [{
+                            recipientId: actor.id,
+                            kind: "observation",
+                            code: "ITEM_AUTHORED_KNOWLEDGE_RESULT",
+                            text: renderItemActionText(entry.article, {
+                                actorName: actor.name,
+                                itemName: definition.name,
+                                inputText: inputText,
+                                articleTitle: entry.title || ""
+                            }),
+                            data: {
+                                itemId: item.id,
+                                effectId: useAction.effectId,
+                                inputText: inputText,
+                                studyStage: "article",
+                                studyDepth: 0,
+                                relatedToPrevious: false,
+                                knowledgeEntryId: entry.id,
+                                knowledgeEntryTitle: entry.title || null,
+                                matchedKeyword: knowledgeMatch.keywordMatch.keyword
+                            }
+                        }]
+                    };
+                }
                 const stage = abstractStudyStage(actor, item, inputText);
                 const feedbackTemplate = abstractStudyFeedbackTemplate(useAction, stage);
                 return {
@@ -2008,6 +2448,8 @@
             if (!validation.ok) return validation;
             return ok({
                 actorId: actorId, locationId: locationId, type: "study_item", itemId: item.id, inputText: inputText, studyStage: stage,
+                knowledgeEntryId: feedback && feedback.data && feedback.data.knowledgeEntryId || null,
+                privateExperienceText: feedback && feedback.data && feedback.data.knowledgeEntryId ? feedback.text : null,
                 text: `${actor.name} consulted ${definition.name}, studying “${inputText}” (${stage}).`
             });
         }
@@ -3023,6 +3465,38 @@
             }
         },
 
+        authored_interaction: {
+            description: "Perform one authored physical interaction available at the actor's current position. interaction_id must be one of this action's listed interaction IDs.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "authored_interaction" }, interaction_id: { type: "string" } },
+                required: ["type", "interaction_id"],
+                additionalProperties: false
+            },
+            getOptions: function (actor, world) {
+                const interactions = authoredInteractionRecords(actor, world).map(function (interaction) {
+                    return { id: interaction.id, action_label: interaction.actionLabel, outcome_table_id: interaction.outcomeTableId };
+                });
+                return { interaction_ids: interactions.map(function (entry) { return entry.id; }), interactions: interactions };
+            },
+            validate: function (actor, action, world) {
+                const interaction = authoredInteractionRecords(actor, world).find(function (entry) { return entry.id === action.interaction_id; });
+                if (!interaction) return fail("AUTHORED_INTERACTION_UNAVAILABLE", "That authored interaction is not available at the actor's current position.");
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const interaction = authoredInteractionRecords(actor, world).find(function (entry) { return entry.id === action.interaction_id; });
+                if (!interaction) throw new Error("Authored interaction became unavailable before execution.");
+                const result = runAuthoredOutcomeTable(actor, interaction.outcomeTableId, world, {
+                    random: Math.random,
+                    actionType: "authored_interaction",
+                    authoredInteractionId: interaction.id
+                });
+                if (!result.ok) throw new Error(result.error.message);
+                return { events: result.events || [], feedback: [] };
+            }
+        },
+
         offer_day_work: {
             description: "Formally offer the Human-controlled Traveler one of your available full-day jobs. Use this only when you have actually decided to offer work. A neutral stranger who asks reasonably for simple work should usually be acceptable, but your personality, memories, relationships, and recent context may justify refusal. You may offer proactively when there is a natural reason, but do not repeatedly offer work without context. The player will separately accept or decline.",
             schema: {
@@ -3130,6 +3604,42 @@
             }
         },
 
+        defer_departure: {
+            description: "Delay this visit's imminent planned departure by exactly one timelapse period.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "defer_departure" } },
+                required: ["type"],
+                additionalProperties: false
+            },
+            getOptions: function (actor, world) {
+                return setup.WeeklyRhythm && typeof setup.WeeklyRhythm.deferOptions === "function"
+                    ? setup.WeeklyRhythm.deferOptions(actor, world)
+                    : {};
+            },
+            validate: function (actor, action, world) {
+                if (!setup.WeeklyRhythm || typeof setup.WeeklyRhythm.canDeferDeparture !== "function" ||
+                        !setup.WeeklyRhythm.canDeferDeparture(actor, world)) {
+                    return fail("DEPARTURE_DEFER_NOT_IMMINENT", "Departure can only be deferred when it is the boundary reached by the next timelapse.");
+                }
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const result = setup.WeeklyRhythm.deferDeparture(actor, world);
+                if (!result.ok) throw new Error(result.error.message);
+                return { events: [], feedback: [{
+                    recipientId: actor.id,
+                    kind: "observation",
+                    code: "DEPARTURE_DEFERRED",
+                    text: result.text,
+                    data: {
+                        previousPlannedDeparture: clone(result.previousPlannedDeparture),
+                        plannedDeparture: clone(result.plannedDeparture)
+                    }
+                }] };
+            }
+        },
+
         read_aura: {
             description: "Read every currently perceivable character's aura.",
             schema: {
@@ -3160,11 +3670,16 @@
                         aura: authoredAura || "You perceive nothing unusual."
                     };
                 });
+                const feedbackText = results.length > 0
+                    ? ["You read the nearby auras."].concat(results.map(function (result) {
+                        return `${result.name}: ${result.aura}`;
+                    })).join("\n")
+                    : "You sense no other auras nearby.";
                 return { events: [], feedback: [{
                     recipientId: actor.id,
                     kind: "observation",
                     code: "AURA_SCAN_RESULT",
-                    text: results.length > 0 ? "You read the nearby auras." : "You sense no other auras nearby.",
+                    text: feedbackText,
                     data: { results: results }
                 }] };
             }
@@ -3244,6 +3759,10 @@
             aiDescription: "Use an accessible item through its authored tracked item-specific effect.",
             aiPrerequisites: ["The relevant item must be accessible to or equipped by the actor.", "Any item-specific input requirements must be satisfied."],
         },
+        authored_interaction: {
+            aiDescription: "Perform an authored physical interaction available at the actor's exact current position.",
+            aiPrerequisites: ["The interaction must be authored at the actor's current sublocation and currently applicable."],
+        },
         offer_day_work: {
             aiDescription: "Formally offer the Human-controlled Traveler an authored full-day sponsored job.",
             aiPrerequisites: ["It must be Morning.", "No other daytime activity may be pending or active.", "The Traveler must be reachable.", "The actor must sponsor the offered job."],
@@ -3255,6 +3774,10 @@
         sleep: {
             aiDescription: "Enter tracked sleeping state while positioned on a bed.",
             aiPrerequisites: ["The actor must be at a sublocation with the sleep capability.", "For the Human-controlled character, overnight sleep is available in Evening."],
+        },
+        defer_departure: {
+            aiDescription: "Privately defer the current visit's imminent planned departure by exactly one coarse timelapse period.",
+            aiPrerequisites: ["The actor must be authored as awayable and currently present.", "The current planned departure must be exactly the boundary reached by the next timelapse transition.", "This action is available only during ordinary Morning or Evening gameplay, never inside timelapse planning."],
         },
         read_aura: {
             aiDescription: "Use the actor's formal aura-reading ability to request private engine-grounded aura information for currently perceivable characters.",
@@ -3282,6 +3805,9 @@
             if (type === "sleep" && world.control.assignments[actor.id] === "human" && world.environment.timePhase !== "evening") continue;
             grant(type, { kind: "sublocation", id: sublocation.id });
         }
+        authoredInteractionRecords(actor, world).forEach(function (interaction) {
+            grant("authored_interaction", { kind: "environment_interaction", id: interaction.id, label: interaction.actionLabel });
+        });
         const environmentCapabilities = new Set(sublocation.capabilities || []);
         const actorInventory = world.inventories[actor.inventoryId];
         for (const itemId of actorInventory ? actorInventory.itemIds : []) {
@@ -3353,6 +3879,10 @@
                 });
             });
         });
+
+        if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.canDeferDeparture === "function" && setup.WeeklyRhythm.canDeferDeparture(actor, world)) {
+            grant("defer_departure", { kind: "awayable_lifecycle" });
+        }
 
         if (world.environment.timePhase === "morning" && world.daytime && !world.daytime.pendingOffer && !world.daytime.activeActivity) {
             const humanId = getHumanCharacterId(world);
@@ -3643,7 +4173,8 @@
             target_id: "target_ids",
             target_inventory_id: "target_inventory_ids",
             activity_id: "activity_ids",
-            location_id: "location_ids"
+            location_id: "location_ids",
+            interaction_id: "interaction_ids"
         };
         Object.entries(optionKeys).forEach(function (entry) {
             const propertyKey = entry[0];
@@ -3853,7 +4384,7 @@
         }
         if (targetId) {
             const target = getCharacter(targetId, world);
-            if (!target || target.locationId !== narrativeLocationId) {
+            if (!target || target.locationId !== narrativeLocationId || !characterHasDiscoveredCharacter(actor, target, world)) {
                 return fail("TARGET_NOT_NEARBY", "Narrative target is not nearby.");
             }
         }
@@ -4025,10 +4556,18 @@
         characterHasDiscoveredLocation: characterHasDiscoveredLocation,
         grantLocationDiscovery: grantLocationDiscovery,
         normalizeCharacterDiscoveries: normalizeCharacterDiscoveries,
+        characterRequiresDiscovery: characterRequiresDiscovery,
+        characterHasDiscoveredCharacter: characterHasDiscoveredCharacter,
+        grantCharacterDiscovery: grantCharacterDiscovery,
+        normalizeCharacterDiscoveriesByCharacter: normalizeCharacterDiscoveriesByCharacter,
+        runAuthoredOutcomeTable: runAuthoredOutcomeTable,
+        eligibleAuthoredOutcomeRecords: eligibleAuthoredOutcomeRecords,
+        authoredOutcomeTableCanAffect: authoredOutcomeTableCanAffect,
         locationExitEntries: locationExitEntries,
         locationExitEntriesForActor: locationExitEntriesForActor,
         eventLocationIds: eventLocationIds,
         eventTouchesUndiscoveredLocation: eventTouchesUndiscoveredLocation,
+        eventTouchesUndiscoveredCharacter: eventTouchesUndiscoveredCharacter,
         inventoryItems: inventoryItems,
         canAccessInventory: canAccessInventory,
         actorDirectlyCarriesItem: actorDirectlyCarriesItem,

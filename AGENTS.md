@@ -83,7 +83,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
   - Character: ordinary AIController decisions.
   - Utility: timelapse planning/replanning/intents/resolver, reflection, consolidation, authored non-character information-source queries.
   - Narrator: optional presentation prose plus explicitly bounded non-mechanical rendering jobs such as canonical weather prose. A bounded Narrator job may render engine-supplied facts but may not invent tracked mechanics or additional world changes.
-- Current shipped role defaults are Character = DeepSeek V4 Pro (DeepSeek V4 Flash is the supported lower-cost alternative), Utility = DeepSeek V4 Flash, Narrator = Euryale 3.3 70B Nitro. Role selectors must remain catalog-driven so future supported models can be tested without code-path changes. If an invalid/unavailable configured Utility model cannot be resolved locally, fall back safely to Character role where the workflow supports fallback.
+- Current shipped role defaults are Character = DeepSeek V4 Flash (DeepSeek V4 Pro remains a supported Character alternative), Utility = DeepSeek V4 Flash, Narrator = Euryale 3.3 70B Nitro. Role selectors must remain catalog-driven so future supported models can be tested without code-path changes. If an invalid/unavailable configured Utility model cannot be resolved locally, fall back safely to Character role where the workflow supports fallback.
 - Ordinary character decisions retain the Character model.
 - OpenRouter routing defaults to `provider.sort = "latency"` with fallbacks enabled.
 - Use stable non-secret `session_id` values for sticky routing/cache locality.

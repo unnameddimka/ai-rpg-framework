@@ -43,7 +43,7 @@ catch (error) { missingPrivateRejected = /Private build requires local data\/wor
 assert(missingPrivateRejected, "a missing private world should fail with an actionable private-build error");
 
 const product = json(path.join(root, "data", "product.json"));
-assert(product.productName === "Mallowstead" && product.version === "0.1.2b" && product.author === "Dmytro Turovskiy" &&
+assert(product.productName === "Mallowstead" && product.version === "0.1.2c-maksym" && product.author === "Dmytro Turovskiy" &&
     product.currentSaveId === "mallowstead" && product.legacySaveIds.includes("ai-rpg-framework-mvp") && product.legacySaveIds.includes("ai-rpg-framework-poc"),
     "shared product metadata should define Mallowstead identity, author, version, and legacy save aliases");
 const models = json(path.join(root, "data", "model_list.json"));
@@ -66,13 +66,13 @@ if (fs.existsSync(privateWorldPath)) {
 }
 
 const fixedBuildInfo = BuildInfo.buildInfo("private", "2026-08-21T00:00:00.000Z");
-assert(fixedBuildInfo.productName === "Mallowstead" && fixedBuildInfo.version === "0.1.2b" && fixedBuildInfo.author === "Dmytro Turovskiy" &&
+assert(fixedBuildInfo.productName === "Mallowstead" && fixedBuildInfo.version === "0.1.2c-maksym" && fixedBuildInfo.author === "Dmytro Turovskiy" &&
     fixedBuildInfo.profile === "private" && typeof fixedBuildInfo.commit === "string" && fixedBuildInfo.builtAt === "2026-08-21T00:00:00.000Z",
     "build metadata should expose product/version/author/profile/commit/builtAt");
 
 function loadGame(profile) {
     const context = vm.createContext({
-        setup: { BuildInfo: { profile: profile, productName: "Mallowstead", version: "0.1.2b", publicDisclosureVersion: 1 } },
+        setup: { BuildInfo: { profile: profile, productName: "Mallowstead", version: "0.1.2c-maksym", publicDisclosureVersion: 1 } },
         State: { variables: {}, passage: "The Tavern" },
         Engine: { play: function () {}, show: function () {} },
         console: console

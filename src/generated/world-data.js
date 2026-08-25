@@ -1608,95 +1608,8 @@
       "initialControllerId": "ai",
       "defaultControllerId": "ai",
       "abilityIds": [],
-      "weeklyPresence": {
-        "presentWeekdayIndexes": [
-          1,
-          4
-        ],
-        "arrivalLocationId": "marketSquare",
-        "arrivalSublocationId": "marketSquareCenter",
-        "initialLocationId": "commonRoom",
-        "initialSublocationId": "commonRoomTableTwo"
-      },
       "tradeLifecycle": {
-        "settleAcquiredOnDeparture": true,
-        "restock": {
-          "entries": [
-            {
-              "definitionId": "saltPouch",
-              "min": 3,
-              "max": 6,
-              "chance": 1
-            },
-            {
-              "definitionId": "dyedCloth",
-              "min": 1,
-              "max": 3,
-              "chance": 0.85
-            },
-            {
-              "definitionId": "townShirt",
-              "min": 0,
-              "max": 2,
-              "chance": 0.65
-            },
-            {
-              "definitionId": "leatherBelt",
-              "min": 0,
-              "max": 2,
-              "chance": 0.6
-            },
-            {
-              "definitionId": "sewingKit",
-              "min": 1,
-              "max": 2,
-              "chance": 0.9
-            },
-            {
-              "definitionId": "soapBar",
-              "min": 1,
-              "max": 3,
-              "chance": 0.85
-            },
-            {
-              "definitionId": "brassBrooch",
-              "min": 0,
-              "max": 2,
-              "chance": 0.5
-            },
-            {
-              "definitionId": "paperSheet",
-              "min": 3,
-              "max": 8,
-              "chance": 1
-            },
-            {
-              "definitionId": "writingSet",
-              "min": 1,
-              "max": 2,
-              "chance": 0.8
-            },
-            {
-              "definitionId": "fineFile",
-              "min": 0,
-              "max": 1,
-              "chance": 0.45
-            },
-            {
-              "definitionId": "smallShears",
-              "min": 0,
-              "max": 1,
-              "chance": 0.45
-            },
-            {
-              "definitionId": "glassMirror",
-              "min": 0,
-              "max": 1,
-              "chance": 0.3
-            }
-          ],
-          "targetInventoryId": "inventory_merchantSaleChest"
-        }
+        "settleAcquiredOnDeparture": true
       },
       "engineFacts": {
         "aura": "His aura is ordinary but restless and lively, tightly controlled around the edges like a campfire banked against the wind."
@@ -1755,6 +1668,112 @@
         "schemaVersion": 3,
         "verbatimObservations": [],
         "shortTermMemories": []
+      },
+      "awayable": {
+        "arrivalSchedule": [
+          {
+            "weekday": "Monday",
+            "phase": "Morning"
+          },
+          {
+            "weekday": "Woodsday",
+            "phase": "Morning"
+          }
+        ],
+        "defaultDeparture": {
+          "relativeToArrival": "next_morning"
+        },
+        "travelPeriods": 3,
+        "arrivalLocationId": "marketSquare",
+        "arrivalSublocationId": "marketSquareCenter",
+        "initialState": {
+          "present": true,
+          "plannedDeparture": {
+            "dayOffset": 1,
+            "phase": "Morning"
+          }
+        },
+        "onArrival": [
+          {
+            "action": "restock",
+            "targetInventoryId": "inventory_merchantSaleChest",
+            "entries": [
+              {
+                "definitionId": "saltPouch",
+                "min": 3,
+                "max": 6,
+                "chance": 1
+              },
+              {
+                "definitionId": "dyedCloth",
+                "min": 1,
+                "max": 3,
+                "chance": 0.85
+              },
+              {
+                "definitionId": "townShirt",
+                "min": 0,
+                "max": 2,
+                "chance": 0.65
+              },
+              {
+                "definitionId": "leatherBelt",
+                "min": 0,
+                "max": 2,
+                "chance": 0.6
+              },
+              {
+                "definitionId": "sewingKit",
+                "min": 1,
+                "max": 2,
+                "chance": 0.9
+              },
+              {
+                "definitionId": "soapBar",
+                "min": 1,
+                "max": 3,
+                "chance": 0.85
+              },
+              {
+                "definitionId": "brassBrooch",
+                "min": 0,
+                "max": 2,
+                "chance": 0.5
+              },
+              {
+                "definitionId": "paperSheet",
+                "min": 3,
+                "max": 8,
+                "chance": 1
+              },
+              {
+                "definitionId": "writingSet",
+                "min": 1,
+                "max": 2,
+                "chance": 0.8
+              },
+              {
+                "definitionId": "fineFile",
+                "min": 0,
+                "max": 1,
+                "chance": 0.45
+              },
+              {
+                "definitionId": "smallShears",
+                "min": 0,
+                "max": 1,
+                "chance": 0.45
+              },
+              {
+                "definitionId": "glassMirror",
+                "min": 0,
+                "max": 1,
+                "chance": 0.3
+              }
+            ]
+          }
+        ],
+        "aiDescription": "Your trade stock is kept in your merchant chest at the Market Square. When you want to sell goods, you normally conduct trade there. If someone asks to buy something while you are elsewhere, you may go to the square, arrange to meet them there later, or decline. Your ordinary personal inventory is not automatically merchandise. Practical reasons to continue the road include having little cash remaining, carrying much acquired stock that can be resold elsewhere, having depleted local sale stock, and the opportunity cost of lingering instead of continuing the route. These are motivations rather than commands or numeric thresholds; an important personal, social, or story reason may outweigh them. Your regular return opportunities are Monday Morning and Woodsday Morning, and the road requires three full timelapse periods after actual departure. Early-week delays can consume the margin needed to make Woodsday, while after Woodsday there is more schedule slack before Monday."
       }
     }
   },
@@ -2030,13 +2049,47 @@
         "inputLabel": "Question or topic",
         "inputPlaceholder": "What do you want to learn about?",
         "inputMaxLength": 600,
-        "aiInstructions": "When you choose Consult slab, put the subject or question you want to study in action.input_text. Choose it from your own curiosity, memories, current questions, and circumstances. This interaction records abstract study progress rather than returning concrete reference content. Repeated consultations on a related line move from broad orientation to focused understanding and then diminishing returns; when the slab says a line is saturated, practice or a genuinely different question is more useful than asking the same thing again.",
+        "aiInstructions": "When you choose Consult slab, put the subject or question you want to study in action.input_text. Choose it from your own curiosity, memories, current questions, and circumstances. Some indexed subjects have canonical reference articles; a query matching one of their authored keywords returns that article directly. Other subjects use the ordinary abstract-study progression. Repeated ordinary consultations on a related line move from broad orientation to focused understanding and then diminishing returns; when the slab says a line is saturated, practice or a genuinely different question is more useful than asking the same thing again.",
         "focusedFeedbackText": "You study the slab's material relevant to “{inputText}” in greater depth. The reading gives you a substantially clearer theoretical grasp of this line of inquiry and organizes it within the broader subject. Another close consultation on the same line would mostly consolidate what you have already learned; practical competence would still require practice.",
         "saturatedFeedbackText": "You revisit the slab's material relevant to “{inputText}”. The archive now mostly reinforces and organizes material you have already studied rather than opening a substantially new theoretical direction. Further reading on this same line has diminishing returns; meaningful progress would come from practice or from choosing a different question.",
         "aiDescription": "Consult the slab about a chosen topic and record abstract study progress.",
         "aiPrerequisites": [
           "The slab must be accessible to the actor.",
           "A concrete question or study topic must be supplied as input_text."
+        ],
+        "knowledgeEntries": [
+          {
+            "id": "chugaister",
+            "title": "Chugaister",
+            "priority": 20,
+            "keywords": [
+              "chugaister",
+              "chuhaister",
+              "chuhayster",
+              "chugayster",
+              "чугайстер",
+              "чугайстр*",
+              "чугайст*"
+            ],
+            "article": "Old woodland bestiaries describe the Chugaister as a large, shaggy forest being whose frightening appearance is at odds with most surviving accounts of its temperament. It is usually described as friendly or indifferent toward people and fiercely hostile to predatory forest wraiths and other things that hunt travelers. Some traditions say a Chugaister may challenge a lone passerby to dance, and repeated reports associate its resting or dancing places with broad trampled clearings. Reliable sightings are rare, and scholars still disagree whether the name describes a species, a class of forest spirit, or one exceptionally long-lived being."
+          },
+          {
+            "id": "outer_world_construct_hypothesis",
+            "title": "The Outer-World Construct Hypothesis",
+            "priority": 10,
+            "keywords": [
+              "otherworld*",
+              "other world",
+              "another world",
+              "foreign world",
+              "outside reality",
+              "world outside",
+              "constructed world",
+              "construct hypothesis",
+              "simulation*"
+            ],
+            "article": "Among the archmages of Veyra, a small and unfashionable school has proposed that the experienced world may not be a primary reality at all, but a self-sustaining magical construct — or, in the stranger version of the hypothesis, the dream of such a construct. In that model, beings originating outside the construct could under rare conditions cross into it and carry properties that native magic can observe without fully explaining. The hypothesis has resisted proof as stubbornly as refutation: no known divination, planar experiment, soul-reading, or causal test can distinguish an underlying reality from a sufficiently complete construct. It therefore remains a philosophical possibility rather than accepted cosmology."
+          }
         ]
       }
     },
@@ -2599,6 +2652,211 @@
       "id": "maksymAle_01",
       "definitionId": "mugOfAle",
       "inventoryId": "inventory_roadMerchant"
+    },
+    "maksymInitialStock_01": {
+      "id": "maksymInitialStock_01",
+      "definitionId": "saltPouch",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_02": {
+      "id": "maksymInitialStock_02",
+      "definitionId": "saltPouch",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_03": {
+      "id": "maksymInitialStock_03",
+      "definitionId": "saltPouch",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_04": {
+      "id": "maksymInitialStock_04",
+      "definitionId": "saltPouch",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_05": {
+      "id": "maksymInitialStock_05",
+      "definitionId": "dyedCloth",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_06": {
+      "id": "maksymInitialStock_06",
+      "definitionId": "dyedCloth",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_07": {
+      "id": "maksymInitialStock_07",
+      "definitionId": "townShirt",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_08": {
+      "id": "maksymInitialStock_08",
+      "definitionId": "leatherBelt",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_09": {
+      "id": "maksymInitialStock_09",
+      "definitionId": "sewingKit",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_10": {
+      "id": "maksymInitialStock_10",
+      "definitionId": "soapBar",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_11": {
+      "id": "maksymInitialStock_11",
+      "definitionId": "soapBar",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_12": {
+      "id": "maksymInitialStock_12",
+      "definitionId": "brassBrooch",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_13": {
+      "id": "maksymInitialStock_13",
+      "definitionId": "paperSheet",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      },
+      "content": ""
+    },
+    "maksymInitialStock_14": {
+      "id": "maksymInitialStock_14",
+      "definitionId": "paperSheet",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      },
+      "content": ""
+    },
+    "maksymInitialStock_15": {
+      "id": "maksymInitialStock_15",
+      "definitionId": "paperSheet",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      },
+      "content": ""
+    },
+    "maksymInitialStock_16": {
+      "id": "maksymInitialStock_16",
+      "definitionId": "paperSheet",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      },
+      "content": ""
+    },
+    "maksymInitialStock_17": {
+      "id": "maksymInitialStock_17",
+      "definitionId": "paperSheet",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      },
+      "content": ""
+    },
+    "maksymInitialStock_18": {
+      "id": "maksymInitialStock_18",
+      "definitionId": "writingSet",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_19": {
+      "id": "maksymInitialStock_19",
+      "definitionId": "fineFile",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
+    },
+    "maksymInitialStock_20": {
+      "id": "maksymInitialStock_20",
+      "definitionId": "smallShears",
+      "inventoryId": "inventory_merchantSaleChest",
+      "tradeProvenance": {
+        "ownerCharacterId": "roadMerchant",
+        "role": "sale_stock",
+        "dayNumber": 0
+      }
     }
   },
   "dayActivities": {
@@ -2667,6 +2925,6 @@
     ],
     "initialWeekdayIndex": 1
   },
-  "authoringRevision": "727f37038637d3d1a2a2d8f617e59283d4ea5b566096aa516f90e7d4ba4ebf84"
+  "authoringRevision": "bd7c89c39198ba5d52037173df4c37c6dd5714e5e3e480f6b0a67062fad0d4e7"
 };
 }());

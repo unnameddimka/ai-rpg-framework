@@ -22,6 +22,8 @@
         if (setup.WeeklyRhythm) {
             const schedule = setup.WeeklyRhythm.scheduleSummary(actor, world);
             if (schedule) context.weeklySchedule = schedule;
+            const awayable = typeof setup.WeeklyRhythm.awayableKnowledge === "function" ? setup.WeeklyRhythm.awayableKnowledge(actor, world) : null;
+            if (awayable) context.awayableLifecycle = awayable;
             const trade = setup.WeeklyRhythm.tradeKnowledge(actor, world);
             if (trade) context.tradeKnowledge = trade;
         }

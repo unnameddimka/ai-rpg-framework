@@ -472,6 +472,8 @@
             runtimeObservationsPreserved: 0,
             runtimeObservationsDiscarded: 0,
             runtimeQueueEntriesPreserved: 0,
+            awayStatesPreserved: 0,
+            awayStatesInitialized: 0,
             warnings: [],
             errors: []
         };
@@ -608,6 +610,15 @@
                 }
 
                 normalizeCharacterDiscoveries(character, candidate);
+
+                if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.initializeMigratedAwayState === "function" && character.awayable) {
+                    const awayMigration = setup.WeeklyRhythm.initializeMigratedAwayState(character, savedCharacter, source, candidate);
+                    if (!awayMigration.ok) throw new Error(awayMigration.error.message);
+                    if (awayMigration.changed) {
+                        if (awayMigration.preserved) report.awayStatesPreserved += 1;
+                        else report.awayStatesInitialized += 1;
+                    }
+                }
 
                 const savedControllerId = source.control && source.control.assignments && source.control.assignments[character.id];
                 if (CONTROLLER_IDS.has(savedControllerId)) {

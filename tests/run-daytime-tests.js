@@ -342,6 +342,10 @@ async function main(){
     assert(nellUnlockedCottage&&nellUnlockedCottage.studyItems.some(x=>x.id==="arcaneKnowledgeSlab_01"),"transferring the exact key should immediately grant Nell timelapse access to the protected Slab");
     const study=ok(setup.TimelapseAPI.executeAction("nell","secludedCottage",{type:"study_item",itemId:"arcaneKnowledgeSlab_01",inputText:"protective wards"}),"authorized timelapse study should reuse abstract_study");
     assert(study.type==="study_item"&&world.entities.arcaneKnowledgeSlab_01.abstractStudyProgressByCharacterId.nell.depth===1,"study progress should be stored on the Slab per authorized reader");
+    const articleStudy=ok(setup.TimelapseAPI.executeAction("nell","secludedCottage",{type:"study_item",itemId:"arcaneKnowledgeSlab_01",inputText:"otherworldly visitors"}),"timelapse study should resolve authored slab articles through the same abstract_study path");
+    assert(articleStudy.studyStage==="article"&&articleStudy.knowledgeEntryId==="outer_world_construct_hypothesis"&&
+        articleStudy.privateExperienceText.includes("archmages of Veyra")&&!articleStudy.text.includes("archmages of Veyra"),
+        "timelapse article content should be private reader experience while public activity remains a generic consultation description");
 
     // Timelapse passage traversal respects persistent lock state without synthesizing unlock/relock.
     world=fresh(null);

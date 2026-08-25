@@ -77,7 +77,7 @@
                     if (typeof options.onProgress === "function") {
                         try { options.onProgress({ stage: "day-boundary", text: "Advancing to the next day…", mode: MODE }); } catch (error) { /* presentation-only */ }
                     }
-                    const boundary = setup.WeeklyRhythm.advanceDayBoundary(currentWorld);
+                    const boundary = setup.WeeklyRhythm.advanceDayBoundary(currentWorld, { random: options.random });
                     if (!boundary.ok) {
                         return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: humanId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0,
                             failedStage: "day-boundary", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(boundary.error) }, "day-boundary");

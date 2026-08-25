@@ -4,6 +4,8 @@
 
 Implementation specification for the current AI RPG MVP baseline.
 
+> **Current-runtime supersession note (0.1.2c-maksym):** model defaults and privacy/runtime statements in this historical UX specification are not authoritative where they conflict with later Mallowstead release-profile architecture. Current shipped defaults are Character = DeepSeek V4 Flash, Utility = DeepSeek V4 Flash, Narrator = Euryale 3.3 70B Nitro; DeepSeek V4 Pro remains an available Character alternative. Current data/privacy behavior is governed by the release-profile/onboarding text and `docs/architecture.md`, including explicitly disclosed external/model requests; the old blanket sentence equivalent to “The game does not otherwise transmit your data” is superseded. Preserve the historical body below rather than silently rewriting those earlier decisions.
+
 This patch is a product-facing UX pass. It does not redesign the deterministic RPG engine, mind architecture, grounding rules, or save model. Its purpose is to make the existing systems understandable and pleasant for a normal player while preserving the developer/recovery capabilities already required by the project.
 
 This specification supersedes the authored `travelerProfiles` portion of `belief-consolidation-traveler-initialization.md`. The world keeps one canonical Traveler/player shell, but the list of reusable starting identities becomes a browser-only pre-entry feature and is no longer authored world data.

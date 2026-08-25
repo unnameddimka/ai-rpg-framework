@@ -585,4 +585,62 @@ assert(!failed.ok && failed.error.code === "SAVE_MIGRATION_FAILED",
 assert(JSON.stringify(State.variables.world) === brokenSnapshot,
     "failed migration must leave the original restored world byte-for-byte unchanged as JSON");
 
+
+// Awayable lifecycle migration: legacy fixed-weekly presence becomes canonical awayState without fake travel/restock/teleport.
+function legacyMaksymWorld(dayNumber) {
+    const source = clone(setup.Game.createInitialWorld());
+    source.schemaVersion = 16;
+    source.authoringRevision = "0".repeat(64);
+    source.calendar.dayNumber = dayNumber;
+    source.environment.timePhase = dayNumber === 0 ? "evening" : "morning";
+    const maksym = source.entities.roadMerchant;
+    delete maksym.awayable;
+    delete maksym.awayState;
+    maksym.weeklyPresence = {
+        presentWeekdayIndexes: [1, 4],
+        arrivalLocationId: "marketSquare",
+        arrivalSublocationId: "marketSquareCenter",
+        initialLocationId: "commonRoom",
+        initialSublocationId: "commonRoomTableTwo"
+    };
+    return source;
+}
+
+let legacyMaksymPresent = legacyMaksymWorld(0);
+legacyMaksymPresent.entities.roadMerchant.locationId = "commonRoom";
+legacyMaksymPresent.entities.roadMerchant.sublocationId = "commonRoomTableTwo";
+legacyMaksymPresent.entities.roadMerchant.wallet = 137;
+legacyMaksymPresent.entities.roadMerchant.mind.continuation = undefined;
+const presentStockIdsBefore = legacyMaksymPresent.inventories.inventory_merchantSaleChest.itemIds.slice();
+State.variables.world = legacyMaksymPresent;
+const presentAwayableMigration = setup.SaveMigration.migrate();
+assert(presentAwayableMigration.ok && presentAwayableMigration.migrated, `legacy present Maksym should migrate to awayable lifecycle: ${JSON.stringify(presentAwayableMigration)}`);
+let migratedMaksym = State.variables.world.entities.roadMerchant;
+assert(migratedMaksym.awayState && migratedMaksym.awayState.present === true && migratedMaksym.awayState.travelPeriodsRemaining === 0,
+    "legacy present Maksym should migrate as locally present with no travel countdown");
+assert(migratedMaksym.awayState.plannedDeparture.dayNumber === 1 && migratedMaksym.awayState.plannedDeparture.phase === "Morning",
+    "legacy present Maksym should receive the nearest authored following-Morning planned departure");
+assert(migratedMaksym.locationId === "commonRoom" && migratedMaksym.sublocationId === "commonRoomTableTwo" && migratedMaksym.wallet === 137,
+    "awayable migration must preserve saved position and wallet rather than teleporting or resetting Maksym");
+assert(JSON.stringify(State.variables.world.inventories.inventory_merchantSaleChest.itemIds) === JSON.stringify(presentStockIdsBefore),
+    "creating awayState during migration must not fire the arrival restock hook");
+
+let legacyMaksymAbsent = legacyMaksymWorld(1); // Flamesday: not a legacy scheduled presence day.
+legacyMaksymAbsent.entities.roadMerchant.locationId = "marketSquare";
+legacyMaksymAbsent.entities.roadMerchant.sublocationId = "marketSquareCenter";
+legacyMaksymAbsent.entities.roadMerchant.wallet = 91;
+const absentStockIdsBefore = legacyMaksymAbsent.inventories.inventory_merchantSaleChest.itemIds.slice();
+State.variables.world = legacyMaksymAbsent;
+const absentAwayableMigration = setup.SaveMigration.migrate();
+assert(absentAwayableMigration.ok && absentAwayableMigration.migrated, `legacy absent Maksym should migrate to awayable lifecycle: ${JSON.stringify(absentAwayableMigration)}`);
+migratedMaksym = State.variables.world.entities.roadMerchant;
+assert(migratedMaksym.awayState && migratedMaksym.awayState.present === false && migratedMaksym.awayState.travelPeriodsRemaining === 0 && migratedMaksym.awayState.plannedDeparture === null,
+    "legacy absent Maksym should be treated as road-complete and remain away until a later authored opportunity");
+assert(migratedMaksym.locationId === "marketSquare" && migratedMaksym.sublocationId === "marketSquareCenter" && migratedMaksym.wallet === 91,
+    "legacy absent awayable migration must not force a position change or reset canonical runtime state");
+assert(JSON.stringify(State.variables.world.inventories.inventory_merchantSaleChest.itemIds) === JSON.stringify(absentStockIdsBefore),
+    "legacy absent migration must not synthesize an arrival/restock");
+assert(!setup.WeeklyRhythm.isCharacterPresent("roadMerchant", State.variables.world),
+    "travel-complete migration still waits away between authored arrival opportunities rather than spawning immediately");
+
 console.log("All save-migration tests passed.");
