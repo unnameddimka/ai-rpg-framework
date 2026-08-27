@@ -25,7 +25,7 @@
 
     function getCharacters(world) {
         return I.getCharacters(world).filter(function (character) {
-            return !setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(character, world);
+            return !setup.Presence || setup.Presence.isLocallyPresent(character, world);
         });
     }
 
@@ -41,11 +41,25 @@
         sourceSideMovementWitnesses(event, world).forEach(function (characterId) {
             I.grantLocationDiscovery(characterId, event.toLocationId, world);
         });
+        if (!event || event.type !== "character_moved" || !event.actorId || !event.toLocationId) return;
+        const actor = getCharacter(event.actorId, world);
+        if (!actor) return;
+        const destinationWitnesses = getCharacters(world).filter(function (character) {
+            return character.id !== actor.id && character.locationId === event.toLocationId;
+        });
+        if (I.characterRequiresDiscovery(actor, world)) {
+            destinationWitnesses.forEach(function (witness) { I.grantCharacterDiscovery(witness.id, actor.id, world); });
+        }
+        destinationWitnesses.forEach(function (target) {
+            if (I.characterRequiresDiscovery(target, world)) I.grantCharacterDiscovery(actor.id, target.id, world);
+        });
     }
 
     function filterRecipientsByDiscovery(event, recipientIds, world) {
         return (recipientIds || []).filter(function (characterId) {
-            return !I.eventTouchesUndiscoveredLocation(event, characterId, world);
+            const characterBlocked = I.eventTouchesUndiscoveredCharacter && I.eventTouchesUndiscoveredCharacter(event, characterId, world);
+            const revealsActor = Boolean(event && event.revealsCharacterId && event.actorId === event.revealsCharacterId);
+            return !I.eventTouchesUndiscoveredLocation(event, characterId, world) && (!characterBlocked || revealsActor);
         });
     }
 
@@ -53,7 +67,8 @@
         world = worldOrCurrent(world);
         let recipients;
         if (event.noticeability === "hidden") {
-            recipients = event.targetId ? [event.targetId] : [];
+            const target = event.targetId ? getCharacter(event.targetId, world) : null;
+            recipients = target && (!setup.Presence || setup.Presence.isLocallyPresent(target, world)) ? [target.id] : [];
         } else if (event.noticeability === "shout") {
             const heardLocationIds = new Set([event.locationId].filter(Boolean));
             const source = event.locationId && world.entities[event.locationId];
@@ -86,7 +101,7 @@
     function appendDialogue(recipientId, speakerId, text, turn, interactionId, world) {
         if (typeof text !== "string" || !text.trim()) return null;
         const recipient = getCharacter(recipientId, world);
-        if (!recipient || (setup.WeeklyRhythm && !setup.WeeklyRhythm.isCharacterPresent(recipient, world))) return null;
+        if (!recipient || (setup.Presence && !setup.Presence.isLocallyPresent(recipient, world))) return null;
         if (!Array.isArray(recipient.recentDialogue)) recipient.recentDialogue = [];
         recipient.recentDialogue.push({
             speakerId: speakerId,
@@ -102,7 +117,8 @@
         const copyFields = [
             "type", "locationId", "fromLocationId", "toLocationId", "fromSublocationId", "toSublocationId",
             "destinationId", "sourceLocationId", "destinationLocationId", "lockId", "itemId", "itemIds", "definitionId",
-            "sourceInventoryId", "targetInventoryId", "amount", "interactionId", "actionType", "code", "revealedLocationId"
+            "sourceInventoryId", "targetInventoryId", "amount", "interactionId", "actionType", "code", "revealedLocationId",
+            "discoveredCharacterId", "authoredInteractionId", "outcomeId"
         ];
         const data = {};
         copyFields.forEach(function (field) {

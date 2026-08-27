@@ -2,7 +2,7 @@
     "use strict";
 
     const BOUNDARY_PHASES = new Set(["Morning", "Evening"]);
-    const AWAY_STATE_REVISION = 1;
+    const AWAY_STATE_REVISION = 2;
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -39,16 +39,29 @@
         return world.calendar;
     }
 
+    function calendarDayNumber(world) {
+        const calendar = world && world.calendar;
+        return calendar && Number.isInteger(calendar.dayNumber) && calendar.dayNumber >= 0 ? calendar.dayNumber : 0;
+    }
+
     function weekdayIndex(world, dayNumber) {
-        const calendar = ensureCalendar(world);
-        if (!calendar) return 0;
-        const day = Number.isInteger(dayNumber) ? dayNumber : calendar.dayNumber;
-        return (calendar.initialWeekdayIndex + day) % 7;
+        const calendar = world && world.calendar;
+        const initialWeekdayIndex = calendar && Number.isInteger(calendar.initialWeekdayIndex) && calendar.initialWeekdayIndex >= 0 && calendar.initialWeekdayIndex <= 6
+            ? calendar.initialWeekdayIndex : 0;
+        const currentDay = calendar && Number.isInteger(calendar.dayNumber) && calendar.dayNumber >= 0 ? calendar.dayNumber : 0;
+        const day = Number.isInteger(dayNumber) && dayNumber >= 0 ? dayNumber : currentDay;
+        return (initialWeekdayIndex + day) % 7;
     }
 
     function weekdayName(world, dayNumber) {
-        const calendar = ensureCalendar(world);
-        return calendar ? calendar.weekdayNames[weekdayIndex(world, dayNumber)] : "Sunday";
+        const calendar = world && world.calendar;
+        const authored = authoredCalendar() || {};
+        const names = calendar && Array.isArray(calendar.weekdayNames) && calendar.weekdayNames.length === 7
+            ? calendar.weekdayNames
+            : (Array.isArray(authored.weekdayNames) && authored.weekdayNames.length === 7
+                ? authored.weekdayNames
+                : ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"]);
+        return names[weekdayIndex(world, dayNumber)] || "Sunday";
     }
 
     function fixedSchedule(character) {
@@ -96,8 +109,8 @@
     function ordinaryCurrentBoundary(world) {
         world = worldOrCurrent(world);
         if (!world || !world.environment) return null;
-        if (world.environment.timePhase === "morning") return boundary(ensureCalendar(world).dayNumber, "Morning");
-        if (world.environment.timePhase === "evening") return boundary(ensureCalendar(world).dayNumber, "Evening");
+        if (world.environment.timePhase === "morning") return boundary(calendarDayNumber(world), "Morning");
+        if (world.environment.timePhase === "evening") return boundary(calendarDayNumber(world), "Evening");
         return null;
     }
 
@@ -113,11 +126,18 @@
         return indexes.includes(weekdayIndex(world, dayNumber));
     }
 
+    function initialAwayPresence(character) {
+        const config = awayable(character);
+        if (!config) return true;
+        const initial = config.initialState && typeof config.initialState === "object" && !Array.isArray(config.initialState) ? config.initialState : {};
+        return initial.present !== false;
+    }
+
     function initialAwayState(character, world) {
         const config = awayable(character);
         if (!config) return null;
         const initial = config.initialState && typeof config.initialState === "object" && !Array.isArray(config.initialState) ? config.initialState : {};
-        const present = initial.present !== false;
+        const present = initialAwayPresence(character);
         let plannedDeparture = null;
         let travelPeriodsRemaining = 0;
         if (present) {
@@ -130,12 +150,7 @@
         } else if (Number.isInteger(initial.travelPeriodsRemaining) && initial.travelPeriodsRemaining >= 0) {
             travelPeriodsRemaining = initial.travelPeriodsRemaining;
         }
-        return {
-            present: present,
-            plannedDeparture: plannedDeparture,
-            travelPeriodsRemaining: travelPeriodsRemaining,
-            lifecycleRevision: AWAY_STATE_REVISION
-        };
+        return { plannedDeparture: plannedDeparture, travelPeriodsRemaining: travelPeriodsRemaining, lifecycleRevision: AWAY_STATE_REVISION };
     }
 
     function ensureAwayState(character, world) {
@@ -146,21 +161,35 @@
         return character.awayState;
     }
 
-    function isCharacterPresent(characterOrId, world, dayNumber) {
+    function isSchedulePresent(characterOrId, world, dayNumber) {
         world = worldOrCurrent(world);
         if (!world) return false;
         const character = typeof characterOrId === "string" ? world.entities[characterOrId] : characterOrId;
         if (!character || character.type !== "character") return false;
         if (awayable(character)) {
-            const state = ensureAwayState(character, world);
-            return Boolean(state && state.present === true);
+            return setup.Presence && typeof setup.Presence.stateAllowsPresence === "function"
+                ? setup.Presence.stateAllowsPresence(character, world)
+                : true;
         }
         const weekly = fixedSchedule(character);
         if (!weekly) return true;
         return isFixedCharacterPresentOnDay(character, world, dayNumber);
     }
 
+    function isCharacterPresent(characterOrId, world, dayNumber) {
+        if (setup.Presence && typeof setup.Presence.isLocallyPresent === "function") {
+            return setup.Presence.isLocallyPresent(characterOrId, world, dayNumber);
+        }
+        world = worldOrCurrent(world);
+        const character = typeof characterOrId === "string" && world ? world.entities[characterOrId] : characterOrId;
+        if (!character || character.activationState === "inactive") return false;
+        return isSchedulePresent(character, world, dayNumber);
+    }
+
     function isLocationAvailable(locationOrId, world, dayNumber) {
+        if (setup.Presence && typeof setup.Presence.isLocationAvailable === "function") {
+            return setup.Presence.isLocationAvailable(locationOrId, world, dayNumber);
+        }
         world = worldOrCurrent(world);
         if (!world) return false;
         const location = typeof locationOrId === "string" ? world.entities[locationOrId] : locationOrId;
@@ -170,6 +199,9 @@
     }
 
     function isSublocationAvailable(sublocationOrId, world, dayNumber) {
+        if (setup.Presence && typeof setup.Presence.isSublocationAvailable === "function") {
+            return setup.Presence.isSublocationAvailable(sublocationOrId, world, dayNumber);
+        }
         world = worldOrCurrent(world);
         if (!world) return false;
         const sublocation = typeof sublocationOrId === "string" ? world.entities[sublocationOrId] : sublocationOrId;
@@ -236,21 +268,25 @@
         if (!world || !character) return null;
         const config = awayable(character);
         if (config) {
-            const state = ensureAwayState(character, world);
-            const names = ensureCalendar(world).weekdayNames;
+            const state = character.awayState && typeof character.awayState === "object" && !Array.isArray(character.awayState) ? character.awayState : null;
+            const calendar = world.calendar;
+            const authored = authoredCalendar() || {};
+            const names = calendar && Array.isArray(calendar.weekdayNames) && calendar.weekdayNames.length === 7 ? calendar.weekdayNames :
+                (Array.isArray(authored.weekdayNames) && authored.weekdayNames.length === 7 ? authored.weekdayNames : ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"]);
             const days = Array.from(new Set(arrivalSchedule(character).map(function (entry) { return entry.weekday; })))
                 .sort(function (a, b) { return names.indexOf(a) - names.indexOf(b); });
+            const present = Boolean(setup.Presence && setup.Presence.stateAllowsPresence(character, world));
             const result = {
                 currentWeekday: weekdayName(world),
-                currentDayNumber: ensureCalendar(world).dayNumber,
-                present: Boolean(state && state.present),
+                currentDayNumber: calendarDayNumber(world),
+                present: present,
                 regularPresenceDays: days,
                 arrivalSchedule: clone(arrivalSchedule(character)),
                 roadTimePeriods: config.travelPeriods,
-                plannedDeparture: state && state.present ? clone(state.plannedDeparture) : null,
-                travelPeriodsRemaining: state && !state.present ? state.travelPeriodsRemaining : 0
+                plannedDeparture: state && present ? clone(state.plannedDeparture) : null,
+                travelPeriodsRemaining: state && !present ? state.travelPeriodsRemaining : 0
             };
-            if (state && state.present && validBoundary(state.plannedDeparture)) {
+            if (state && present && validBoundary(state.plannedDeparture)) {
                 const currentReachability = departureReachability(character, world, state.plannedDeparture);
                 const deferredBoundary = nextBoundary(state.plannedDeparture);
                 const deferredReachability = departureReachability(character, world, deferredBoundary);
@@ -268,7 +304,7 @@
                         : ` Delaying this departure by one more period will miss ${formatBoundary(world, deferredReachability.nextRegularArrival)}; the following reachable regular return is ${deferredReachability.nextEligibleArrival ? formatBoundary(world, deferredReachability.nextEligibleArrival) : "not currently known"}.`)
                     : "";
                 result.text = plannedText + currentText + delayText;
-            } else if (state && !state.present) {
+            } else if (state && !present) {
                 const next = findNextArrivalOpportunity(character, world, ordinaryCurrentBoundary(world) || boundary(ensureCalendar(world).dayNumber, "Morning"), function () {
                     return state.travelPeriodsRemaining === 0;
                 });
@@ -549,10 +585,21 @@
             if (!entity || entity.type !== "character") return;
             if (awayable(entity)) {
                 entity.awayState = initialAwayState(entity, world);
-                initialized.push({ characterId: entity.id, awayState: clone(entity.awayState), bootstrap: true });
+                const present = initialAwayPresence(entity);
+                if (setup.Presence && typeof setup.Presence.setLocalPresence === "function") {
+                    const presence = setup.Presence.setLocalPresence(entity, present, world);
+                    if (!presence.ok) throw new Error(presence.error.message);
+                }
+                initialized.push({ characterId: entity.id, awayState: clone(entity.awayState), present: present, bootstrap: true });
                 return;
             }
-            if (!fixedSchedule(entity) || !isCharacterPresent(entity, world)) return;
+            if (!fixedSchedule(entity)) return;
+            const present = isFixedCharacterPresentOnDay(entity, world);
+            if (setup.Presence && typeof setup.Presence.setLocalPresence === "function") {
+                const presence = setup.Presence.setLocalPresence(entity, present, world);
+                if (!presence.ok) throw new Error(presence.error.message);
+            }
+            if (!present) return;
             const placement = placeArrival(entity, world, true);
             if (!placement.ok) throw new Error(placement.error.message);
             const restock = restockCharacter(entity, world);
@@ -562,12 +609,53 @@
         return ok({ weekday: weekdayName(world), dayNumber: ensureCalendar(world).dayNumber, initialized: initialized });
     }
 
+    function preparePresenceState(world) {
+        world = worldOrCurrent(world);
+        if (!world) return fail("WORLD_MISSING", "World state is unavailable.");
+        ensureCalendar(world);
+        for (const character of Object.values(world.entities || {})) {
+            if (!character || character.type !== "character") continue;
+            if (awayable(character)) {
+                const state = character.awayState && typeof character.awayState === "object" && !Array.isArray(character.awayState)
+                    ? character.awayState : null;
+                let present = null;
+                if (state && typeof state.present === "boolean") present = state.present;
+                else if (character.presenceState && typeof character.presenceState.present === "boolean") present = character.presenceState.present;
+                else present = initialAwayPresence(character);
+                const normalized = state || initialAwayState(character, world);
+                delete normalized.present;
+                normalized.lifecycleRevision = AWAY_STATE_REVISION;
+                if (!Number.isInteger(normalized.travelPeriodsRemaining) || normalized.travelPeriodsRemaining < 0) normalized.travelPeriodsRemaining = 0;
+                if (present) {
+                    normalized.travelPeriodsRemaining = 0;
+                    if (!validBoundary(normalized.plannedDeparture)) normalized.plannedDeparture = migrationPresentDeparture(character, world);
+                } else {
+                    normalized.plannedDeparture = null;
+                }
+                character.awayState = normalized;
+                if (setup.Presence && typeof setup.Presence.setLocalPresence === "function") {
+                    const presence = setup.Presence.setLocalPresence(character, present, world);
+                    if (!presence.ok) return presence;
+                }
+                continue;
+            }
+            if (fixedSchedule(character)) {
+                const present = isFixedCharacterPresentOnDay(character, world);
+                if (setup.Presence && typeof setup.Presence.setLocalPresence === "function") {
+                    const presence = setup.Presence.setLocalPresence(character, present, world);
+                    if (!presence.ok) return presence;
+                }
+            }
+        }
+        return ok();
+    }
+
     function canDeferDeparture(characterOrId, world) {
         world = worldOrCurrent(world);
         const character = typeof characterOrId === "string" ? world && world.entities[characterOrId] : characterOrId;
         if (!world || !character || !awayable(character)) return false;
-        const state = ensureAwayState(character, world);
-        if (!state || state.present !== true || !validBoundary(state.plannedDeparture)) return false;
+        const state = character.awayState && typeof character.awayState === "object" && !Array.isArray(character.awayState) ? character.awayState : null;
+        if (!state || !setup.Presence || !setup.Presence.isLocallyPresent(character, world) || !validBoundary(state.plannedDeparture)) return false;
         const imminent = nextTimelapseBoundary(world);
         return Boolean(imminent && compareBoundaries(state.plannedDeparture, imminent) === 0);
     }
@@ -576,7 +664,7 @@
         world = worldOrCurrent(world);
         const character = typeof characterOrId === "string" ? world && world.entities[characterOrId] : characterOrId;
         if (!canDeferDeparture(character, world)) return {};
-        const state = ensureAwayState(character, world);
+        const state = character.awayState;
         const deferred = nextBoundary(state.plannedDeparture);
         return {
             current_planned_departure: clone(state.plannedDeparture),
@@ -605,29 +693,38 @@
     function departAwayable(character, world, targetBoundary) {
         const config = awayable(character);
         const state = ensureAwayState(character, world);
-        if (!config || !state || state.present !== true) return fail("AWAYABLE_DEPARTURE_INVALID", `Awayable departure state for ${character && character.name || "character"} is invalid.`);
+        if (!config || !state || !setup.Presence || !setup.Presence.isLocallyPresent(character, world)) return fail("AWAYABLE_DEPARTURE_INVALID", `Awayable departure state for ${character && character.name || "character"} is invalid.`);
+        const displacedCharacterIds = typeof setup.Presence.collectOwnedTopologyOccupants === "function"
+            ? setup.Presence.collectOwnedTopologyOccupants(character.id, world) : [];
         const settlement = settleDeparture(character, world);
         if (!settlement.ok) return settlement;
-        state.present = false;
+        const presence = setup.Presence.setLocalPresence(character, false, world);
+        if (!presence.ok) return presence;
         state.plannedDeparture = null;
         state.travelPeriodsRemaining = config.travelPeriods;
         state.lifecycleRevision = AWAY_STATE_REVISION;
         character.sleeping = false;
+        const reconciliation = displacedCharacterIds.length && typeof setup.Presence.reconcileOwnedTopologyOccupants === "function"
+            ? setup.Presence.reconcileOwnedTopologyOccupants(character.id, displacedCharacterIds, world)
+            : ok({ relocations: [] });
+        if (!reconciliation.ok) return reconciliation;
         return ok({
             type: "departure",
             characterId: character.id,
             boundary: clone(targetBoundary),
             travelPeriodsRemaining: state.travelPeriodsRemaining,
-            settlement: clone(settlement)
+            settlement: clone(settlement),
+            forcedRelocations: clone(reconciliation.relocations || [])
         });
     }
 
     function arriveAwayable(character, world, targetBoundary, options) {
         const state = ensureAwayState(character, world);
-        if (!state || state.present === true) return fail("AWAYABLE_ARRIVAL_INVALID", `Awayable arrival state for ${character && character.name || "character"} is invalid.`);
+        if (!state || !setup.Presence || setup.Presence.stateAllowsPresence(character, world)) return fail("AWAYABLE_ARRIVAL_INVALID", `Awayable arrival state for ${character && character.name || "character"} is invalid.`);
         const placement = placeArrival(character, world);
         if (!placement.ok) return placement;
-        state.present = true;
+        const presence = setup.Presence.setLocalPresence(character, true, world);
+        if (!presence.ok) return presence;
         state.travelPeriodsRemaining = 0;
         state.plannedDeparture = defaultDepartureFromBoundary(character, world, targetBoundary);
         state.lifecycleRevision = AWAY_STATE_REVISION;
@@ -643,11 +740,11 @@
         });
     }
 
-    function advanceAwayTravelForCompletedPeriod(characters) {
+    function advanceAwayTravelForCompletedPeriod(characters, world) {
         const updates = [];
         characters.forEach(function (character) {
             const state = character.awayState;
-            if (!state || state.present === true || !Number.isInteger(state.travelPeriodsRemaining) || state.travelPeriodsRemaining <= 0) return;
+            if (!state || (setup.Presence && setup.Presence.stateAllowsPresence(character, world)) || !Number.isInteger(state.travelPeriodsRemaining) || state.travelPeriodsRemaining <= 0) return;
             state.travelPeriodsRemaining -= 1;
             updates.push({ characterId: character.id, travelPeriodsRemaining: state.travelPeriodsRemaining });
         });
@@ -675,31 +772,46 @@
 
             // Only characters already away for the period that just completed receive travel credit.
             const awayAtPeriodStart = awayableCharacters.filter(function (character) {
-                return character.awayState && character.awayState.present === false;
+                return character.awayState && setup.Presence && !setup.Presence.stateAllowsPresence(character, world);
             });
-            const travelUpdates = advanceAwayTravelForCompletedPeriod(awayAtPeriodStart);
+            const travelUpdates = advanceAwayTravelForCompletedPeriod(awayAtPeriodStart, world);
 
             // Preserve simple legacy fixed-weekly presence behavior at Morning day boundaries.
             const fixedCharacters = Object.values(world.entities || {}).filter(function (entity) {
                 return entity && entity.type === "character" && !awayable(entity) && fixedSchedule(entity);
             });
+            const fixedDepartureOccupants = new Map();
             if (targetBoundary.phase === "Morning" && targetBoundary.dayNumber === currentDayNumber + 1) {
                 fixedCharacters.forEach(function (character) {
                     const wasPresent = isFixedCharacterPresentOnDay(character, world, currentDayNumber);
                     const willBePresent = isFixedCharacterPresentOnDay(character, world, targetBoundary.dayNumber);
                     if (wasPresent && !willBePresent) {
+                        if (setup.Presence && typeof setup.Presence.collectOwnedTopologyOccupants === "function") {
+                            fixedDepartureOccupants.set(character.id, setup.Presence.collectOwnedTopologyOccupants(character.id, world));
+                        }
                         const settlement = settleDeparture(character, world);
                         if (!settlement.ok) throw new Error(settlement.error.message);
-                        transitions.push({ type: "departure", characterId: character.id, settlement: clone(settlement), legacyFixedWeekly: true });
+                        if (setup.Presence && typeof setup.Presence.setLocalPresence === "function") {
+                            const presence = setup.Presence.setLocalPresence(character, false, world);
+                            if (!presence.ok) throw new Error(presence.error.message);
+                        }
+                        transitions.push({ type: "departure", characterId: character.id, settlement: clone(settlement), forcedRelocations: [], legacyFixedWeekly: true });
                     }
                 });
             }
 
             world.calendar.dayNumber = targetBoundary.dayNumber;
+            fixedDepartureOccupants.forEach(function (occupantIds, characterId) {
+                if (!occupantIds.length || !setup.Presence || typeof setup.Presence.reconcileOwnedTopologyOccupants !== "function") return;
+                const reconciliation = setup.Presence.reconcileOwnedTopologyOccupants(characterId, occupantIds, world);
+                if (!reconciliation.ok) throw new Error(reconciliation.error.message);
+                const transition = transitions.find(function (entry) { return entry.legacyFixedWeekly && entry.characterId === characterId && entry.type === "departure"; });
+                if (transition) transition.forcedRelocations = clone(reconciliation.relocations || []);
+            });
 
             awayableCharacters.forEach(function (character) {
                 const state = ensureAwayState(character, world);
-                if (state.present === true && validBoundary(state.plannedDeparture) && compareBoundaries(state.plannedDeparture, targetBoundary) === 0) {
+                if (setup.Presence && setup.Presence.stateAllowsPresence(character, world) && validBoundary(state.plannedDeparture) && compareBoundaries(state.plannedDeparture, targetBoundary) === 0) {
                     const departure = departAwayable(character, world, targetBoundary);
                     if (!departure.ok) throw new Error(departure.error.message);
                     transitions.push(clone(departure));
@@ -708,7 +820,7 @@
 
             awayableCharacters.forEach(function (character) {
                 const state = ensureAwayState(character, world);
-                if (state.present === false && arrivalOpportunityAt(character, world, targetBoundary) && state.travelPeriodsRemaining === 0) {
+                if (setup.Presence && !setup.Presence.stateAllowsPresence(character, world) && arrivalOpportunityAt(character, world, targetBoundary) && state.travelPeriodsRemaining === 0) {
                     const arrival = arriveAwayable(character, world, targetBoundary, options);
                     if (!arrival.ok) throw new Error(arrival.error.message);
                     transitions.push(clone(arrival));
@@ -722,6 +834,10 @@
                     if (!wasPresent && isPresent) {
                         const placement = placeArrival(character, world);
                         if (!placement.ok) throw new Error(placement.error.message);
+                        if (setup.Presence && typeof setup.Presence.setLocalPresence === "function") {
+                            const presence = setup.Presence.setLocalPresence(character, true, world);
+                            if (!presence.ok) throw new Error(presence.error.message);
+                        }
                         const restock = restockCharacter(character, world, options);
                         if (!restock.ok) throw new Error(restock.error.message);
                         transitions.push({ type: "arrival", characterId: character.id, placement: clone(placement), restock: clone(restock), legacyFixedWeekly: true });
@@ -730,6 +846,10 @@
             }
 
             if (setup.GameInternals && typeof setup.GameInternals.repairAIQueue === "function") setup.GameInternals.repairAIQueue(world);
+            if (setup.GameInternals && typeof setup.GameInternals.validateWorld === "function") {
+                const validation = setup.GameInternals.validateWorld(world);
+                if (!validation.ok) throw validation.error;
+            }
             return ok({
                 dayNumber: world.calendar.dayNumber,
                 weekday: weekdayName(world),
@@ -779,41 +899,47 @@
         world = worldOrCurrent(world);
         if (!world || !character || !awayable(character)) return ok({ characterId: character && character.id || null, changed: false });
         const savedState = savedCharacter && savedCharacter.awayState;
-        if (savedState && typeof savedState === "object" && !Array.isArray(savedState) && typeof savedState.present === "boolean") {
-            if (savedState.present) {
-                const currentFloor = boundary(ensureCalendar(world).dayNumber, "Morning");
-                const savedPlanUsable = validBoundary(savedState.plannedDeparture) && compareBoundaries(savedState.plannedDeparture, currentFloor) >= 0;
-                character.awayState = {
-                    present: true,
-                    plannedDeparture: savedPlanUsable ? clone(savedState.plannedDeparture) : migrationPresentDeparture(character, world),
-                    travelPeriodsRemaining: 0,
-                    lifecycleRevision: AWAY_STATE_REVISION
-                };
-            } else {
-                character.awayState = {
-                    present: false,
-                    plannedDeparture: null,
-                    travelPeriodsRemaining: Number.isInteger(savedState.travelPeriodsRemaining) && savedState.travelPeriodsRemaining >= 0 ? savedState.travelPeriodsRemaining : 0,
-                    lifecycleRevision: AWAY_STATE_REVISION
-                };
-            }
-            return ok({ characterId: character.id, changed: true, preserved: true, awayState: clone(character.awayState) });
+        const savedPresenceState = savedCharacter && savedCharacter.presenceState;
+        let present;
+        if (savedPresenceState && typeof savedPresenceState === "object" && !Array.isArray(savedPresenceState) && typeof savedPresenceState.present === "boolean") {
+            present = savedPresenceState.present;
+        } else if (savedState && typeof savedState === "object" && !Array.isArray(savedState) && typeof savedState.present === "boolean") {
+            present = savedState.present;
+        } else {
+            const legacyPresence = sourceLegacyPresence(savedCharacter, savedWorld);
+            present = legacyPresence === null ? true : legacyPresence;
         }
-
-        const legacyPresence = sourceLegacyPresence(savedCharacter, savedWorld);
-        const present = legacyPresence === null ? true : legacyPresence;
+        const currentFloor = boundary(ensureCalendar(world).dayNumber, "Morning");
+        const savedPlanUsable = savedState && validBoundary(savedState.plannedDeparture) && compareBoundaries(savedState.plannedDeparture, currentFloor) >= 0;
         character.awayState = present ? {
-            present: true,
-            plannedDeparture: migrationPresentDeparture(character, world),
+            plannedDeparture: savedPlanUsable ? clone(savedState.plannedDeparture) : migrationPresentDeparture(character, world),
             travelPeriodsRemaining: 0,
             lifecycleRevision: AWAY_STATE_REVISION
         } : {
-            present: false,
             plannedDeparture: null,
-            travelPeriodsRemaining: 0,
+            travelPeriodsRemaining: savedState && Number.isInteger(savedState.travelPeriodsRemaining) && savedState.travelPeriodsRemaining >= 0 ? savedState.travelPeriodsRemaining : 0,
             lifecycleRevision: AWAY_STATE_REVISION
         };
-        return ok({ characterId: character.id, changed: true, preserved: false, legacyPresence: legacyPresence, awayState: clone(character.awayState) });
+        if (setup.Presence && typeof setup.Presence.setLocalPresence === "function") {
+            const presence = setup.Presence.setLocalPresence(character, present, world);
+            if (!presence.ok) return presence;
+        }
+        return ok({ characterId: character.id, changed: true, preserved: Boolean(savedState || savedPresenceState), awayState: clone(character.awayState), present: present });
+    }
+
+    function initializeMigratedPresenceState(character, savedCharacter, savedWorld, world) {
+        world = worldOrCurrent(world);
+        if (!world || !character || awayable(character) || !fixedSchedule(character)) return ok({ characterId: character && character.id || null, changed: false });
+        const savedPresence = savedCharacter && savedCharacter.presenceState;
+        const legacyPresence = sourceLegacyPresence(savedCharacter || character, savedWorld || world);
+        const present = savedPresence && typeof savedPresence === "object" && !Array.isArray(savedPresence) && typeof savedPresence.present === "boolean"
+            ? savedPresence.present
+            : legacyPresence !== false;
+        if (setup.Presence && typeof setup.Presence.setLocalPresence === "function") {
+            const result = setup.Presence.setLocalPresence(character, present, world);
+            if (!result.ok) return result;
+        }
+        return ok({ characterId: character.id, changed: true, present: present });
     }
 
     function validateAwayState(character, world) {
@@ -823,16 +949,18 @@
             if (state !== undefined) return fail("AWAY_STATE_WITHOUT_AUTHORING", `Character ${character.id} has awayState but is not authored as awayable.`);
             return ok();
         }
-        if (!state || typeof state !== "object" || Array.isArray(state) || typeof state.present !== "boolean" ||
+        if (!state || typeof state !== "object" || Array.isArray(state) || Object.prototype.hasOwnProperty.call(state, "present") ||
                 !Number.isInteger(state.travelPeriodsRemaining) || state.travelPeriodsRemaining < 0 ||
-                !Number.isInteger(state.lifecycleRevision) || state.lifecycleRevision < 1) {
+                !Number.isInteger(state.lifecycleRevision) || state.lifecycleRevision < AWAY_STATE_REVISION) {
             return fail("AWAY_STATE_INVALID", `Character ${character.id} has invalid awayable lifecycle state.`);
         }
-        if (state.present) {
+        const present = setup.Presence && typeof setup.Presence.stateAllowsPresence === "function"
+            ? setup.Presence.stateAllowsPresence(character, world) : false;
+        if (present) {
             if (!validBoundary(state.plannedDeparture) || state.travelPeriodsRemaining !== 0) {
                 return fail("AWAY_STATE_INVALID", `Present awayable character ${character.id} must have a valid planned departure and no remaining travel.`);
             }
-            if (boundaryOrdinal(state.plannedDeparture) < ensureCalendar(world).dayNumber * 2) {
+            if (boundaryOrdinal(state.plannedDeparture) < calendarDayNumber(world) * 2) {
                 return fail("AWAY_STATE_INVALID", `Character ${character.id} has a stale planned departure boundary.`);
             }
         } else if (state.plannedDeparture !== null) {
@@ -888,6 +1016,7 @@
         ensureCalendar: ensureCalendar,
         currentWeekdayIndex: function (world) { return weekdayIndex(worldOrCurrent(world)); },
         currentWeekdayName: function (world) { return weekdayName(worldOrCurrent(world)); },
+        isSchedulePresent: isSchedulePresent,
         isCharacterPresent: isCharacterPresent,
         isLocationAvailable: isLocationAvailable,
         isSublocationAvailable: isSublocationAvailable,
@@ -895,6 +1024,7 @@
         tradeKnowledge: tradeKnowledge,
         awayableKnowledge: awayableKnowledge,
         initializeFreshWorld: initializeFreshWorld,
+        preparePresenceState: preparePresenceState,
         advanceCoarseBoundary: advanceCoarseBoundary,
         advanceEveningBoundary: advanceEveningBoundary,
         advanceDayBoundary: advanceDayBoundary,
@@ -903,6 +1033,7 @@
         deferDeparture: deferDeparture,
         validateAwayState: validateAwayState,
         initializeMigratedAwayState: initializeMigratedAwayState,
+        initializeMigratedPresenceState: initializeMigratedPresenceState,
         runArrivalHooks: runArrivalHooks,
         restockCharacter: restockCharacter,
         settleDeparture: settleDeparture,

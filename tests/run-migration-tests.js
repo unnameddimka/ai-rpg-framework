@@ -28,7 +28,7 @@ function place(world, itemId, inventoryId) {
 
 load("src/generated/world-data.js");
 load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -586,6 +586,25 @@ assert(JSON.stringify(State.variables.world) === brokenSnapshot,
     "failed migration must leave the original restored world byte-for-byte unchanged as JSON");
 
 
+// Fresh-world opening defaults must not teleport compatible saved runtime positions during authoring migration.
+const positionSave = clone(current);
+positionSave.authoringRevision = "2".repeat(64);
+positionSave.entities.player.locationId = "commonRoom"; positionSave.entities.player.sublocationId = "commonRoomTableThree";
+positionSave.entities.hoodedWoman.locationId = "forestMountainStream"; positionSave.entities.hoodedWoman.sublocationId = "forestStreamBank";
+positionSave.entities.nell.locationId = "tavernEntrance"; positionSave.entities.nell.sublocationId = "tavernEntranceFloor";
+positionSave.entities.innkeeper.locationId = "commonRoom"; positionSave.entities.innkeeper.sublocationId = "commonRoomFloor";
+positionSave.entities.roadMerchant.locationId = "marketSquare"; positionSave.entities.roadMerchant.sublocationId = "marketSquareCenter";
+State.variables.world = positionSave;
+const positionMigration = setup.SaveMigration.migrate();
+assert(positionMigration.ok && positionMigration.migrated, `position-preservation authoring migration should succeed: ${JSON.stringify(positionMigration)}`);
+const positionMigrated = State.variables.world.entities;
+assert(positionMigrated.player.locationId === "commonRoom" && positionMigrated.player.sublocationId === "commonRoomTableThree" &&
+    positionMigrated.hoodedWoman.locationId === "forestMountainStream" && positionMigrated.hoodedWoman.sublocationId === "forestStreamBank" &&
+    positionMigrated.nell.locationId === "tavernEntrance" && positionMigrated.nell.sublocationId === "tavernEntranceFloor" &&
+    positionMigrated.innkeeper.locationId === "commonRoom" && positionMigrated.innkeeper.sublocationId === "commonRoomFloor" &&
+    positionMigrated.roadMerchant.locationId === "marketSquare" && positionMigrated.roadMerchant.sublocationId === "marketSquareCenter",
+    "current authored opening positions must not overwrite compatible saved runtime character positions");
+
 // Awayable lifecycle migration: legacy fixed-weekly presence becomes canonical awayState without fake travel/restock/teleport.
 function legacyMaksymWorld(dayNumber) {
     const source = clone(setup.Game.createInitialWorld());
@@ -596,6 +615,7 @@ function legacyMaksymWorld(dayNumber) {
     const maksym = source.entities.roadMerchant;
     delete maksym.awayable;
     delete maksym.awayState;
+    delete maksym.presenceState;
     maksym.weeklyPresence = {
         presentWeekdayIndexes: [1, 4],
         arrivalLocationId: "marketSquare",
@@ -616,7 +636,7 @@ State.variables.world = legacyMaksymPresent;
 const presentAwayableMigration = setup.SaveMigration.migrate();
 assert(presentAwayableMigration.ok && presentAwayableMigration.migrated, `legacy present Maksym should migrate to awayable lifecycle: ${JSON.stringify(presentAwayableMigration)}`);
 let migratedMaksym = State.variables.world.entities.roadMerchant;
-assert(migratedMaksym.awayState && migratedMaksym.awayState.present === true && migratedMaksym.awayState.travelPeriodsRemaining === 0,
+assert(migratedMaksym.awayState && setup.Presence.stateAllowsPresence(migratedMaksym) && !Object.prototype.hasOwnProperty.call(migratedMaksym.awayState, "present") && migratedMaksym.awayState.travelPeriodsRemaining === 0,
     "legacy present Maksym should migrate as locally present with no travel countdown");
 assert(migratedMaksym.awayState.plannedDeparture.dayNumber === 1 && migratedMaksym.awayState.plannedDeparture.phase === "Morning",
     "legacy present Maksym should receive the nearest authored following-Morning planned departure");
@@ -634,7 +654,7 @@ State.variables.world = legacyMaksymAbsent;
 const absentAwayableMigration = setup.SaveMigration.migrate();
 assert(absentAwayableMigration.ok && absentAwayableMigration.migrated, `legacy absent Maksym should migrate to awayable lifecycle: ${JSON.stringify(absentAwayableMigration)}`);
 migratedMaksym = State.variables.world.entities.roadMerchant;
-assert(migratedMaksym.awayState && migratedMaksym.awayState.present === false && migratedMaksym.awayState.travelPeriodsRemaining === 0 && migratedMaksym.awayState.plannedDeparture === null,
+assert(migratedMaksym.awayState && !setup.Presence.stateAllowsPresence(migratedMaksym) && !Object.prototype.hasOwnProperty.call(migratedMaksym.awayState, "present") && migratedMaksym.awayState.travelPeriodsRemaining === 0 && migratedMaksym.awayState.plannedDeparture === null,
     "legacy absent Maksym should be treated as road-complete and remain away until a later authored opportunity");
 assert(migratedMaksym.locationId === "marketSquare" && migratedMaksym.sublocationId === "marketSquareCenter" && migratedMaksym.wallet === 91,
     "legacy absent awayable migration must not force a position change or reset canonical runtime state");
@@ -642,5 +662,50 @@ assert(JSON.stringify(State.variables.world.inventories.inventory_merchantSaleCh
     "legacy absent migration must not synthesize an arrival/restock");
 assert(!setup.WeeklyRhythm.isCharacterPresent("roadMerchant", State.variables.world),
     "travel-complete migration still waits away between authored arrival opportunities rather than spawning immediately");
+
+// Hardening migration: newly materialized inactive characters are added without reveal or proc side effects.
+const preMaterializedChuhaister = clone(current);
+preMaterializedChuhaister.schemaVersion = setup.Game.WORLD_SCHEMA_VERSION - 1;
+preMaterializedChuhaister.authoringRevision = "1".repeat(64);
+delete preMaterializedChuhaister.entities.chugaister;
+delete preMaterializedChuhaister.inventories.inventory_chugaister;
+delete preMaterializedChuhaister.control.assignments.chugaister;
+preMaterializedChuhaister.entities.player.discoveredCharacterIds = [];
+State.variables.world = preMaterializedChuhaister;
+const materializedChuhaisterMigration = setup.SaveMigration.migrate();
+assert(materializedChuhaisterMigration.ok && State.variables.world.entities.chugaister &&
+    State.variables.world.entities.chugaister.activationState === "inactive" &&
+    State.variables.world.entities.chugaister.locationId === null && State.variables.world.inventories.inventory_chugaister &&
+    !(State.variables.world.entities.player.discoveredCharacterIds || []).includes("chugaister"),
+    "migration should fully materialize a missing deferred Character as inactive/off-map without revealing it");
+
+// Existing inactive Chuhaister state, discovery, mind, and ground food survive migration unchanged; migration runs no trigger effects.
+const existingInactiveChuhaister = clone(current);
+existingInactiveChuhaister.authoringRevision = "2".repeat(64);
+existingInactiveChuhaister.entities.chugaister.activationState = "inactive";
+existingInactiveChuhaister.entities.chugaister.locationId = null;
+existingInactiveChuhaister.entities.chugaister.sublocationId = null;
+existingInactiveChuhaister.entities.chugaister.mind.shortTermMemories.push({
+    id: "migration_chuhaister_memory",
+    topic: "Traveler encounter",
+    summary: "I remember the Traveler from an earlier meeting in the glade.",
+    retrievalBrief: "Prior encounter with the Traveler.",
+    importance: 0.8,
+    protected: false
+});
+existingInactiveChuhaister.entities.player.discoveredCharacterIds = ["chugaister"];
+const groundInventory = existingInactiveChuhaister.inventories[existingInactiveChuhaister.entities.trampledGlade.inventoryId];
+const cabinetInventory = existingInactiveChuhaister.inventories.inventory_barDishCabinet;
+const migrationFoodId = cabinetInventory.itemIds.find(function (id) { return existingInactiveChuhaister.entities[id].definitionId === "emptyBowl"; });
+setup.GameInternals.transformItem(existingInactiveChuhaister.entities[migrationFoodId], "bowlOfBanush", existingInactiveChuhaister);
+place(existingInactiveChuhaister, migrationFoodId, groundInventory.id);
+State.variables.world = existingInactiveChuhaister;
+const preservedInactiveMigration = setup.SaveMigration.migrate();
+assert(preservedInactiveMigration.ok && State.variables.world.entities.chugaister.activationState === "inactive" &&
+    State.variables.world.entities.chugaister.mind.shortTermMemories.some(function (memory) { return memory.id === "migration_chuhaister_memory"; }) &&
+    (State.variables.world.entities.player.discoveredCharacterIds || []).includes("chugaister") &&
+    State.variables.world.entities[migrationFoodId].definitionId === "bowlOfBanush" &&
+    State.variables.world.inventories[State.variables.world.entities.trampledGlade.inventoryId].itemIds.includes(migrationFoodId),
+    "migration must preserve inactive Chuhaister mind/discovery and must not run appearance or silent food-consumption events");
 
 console.log("All save-migration tests passed.");

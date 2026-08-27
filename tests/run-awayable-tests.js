@@ -52,11 +52,11 @@ function installGenericAwayable(world, options) {
     };
     delete character.weeklyPresence;
     character.awayState = {
-        present: true,
         plannedDeparture: options.plannedDeparture || { dayNumber: 1, phase: "Morning" },
         travelPeriodsRemaining: 0,
         lifecycleRevision: setup.WeeklyRhythm.AWAY_STATE_REVISION
     };
+    ok(setup.Presence.setLocalPresence(character, true, world), "initialize generic local presence");
     return character;
 }
 
@@ -140,11 +140,11 @@ generic = installGenericAwayable(world, {
 ok(setup.WeeklyRhythm.advanceDayBoundary(world), "depart before too-early Flamesday Evening opportunity");
 assert(generic.awayState.travelPeriodsRemaining === 2, "two road periods should begin after actual departure");
 ok(setup.WeeklyRhythm.advanceEveningBoundary(world), "first travel period reaches too-early opportunity");
-assert(!generic.awayState.present && generic.awayState.travelPeriodsRemaining === 1, "arrival opportunity with incomplete road must be missed");
+assert(!setup.Presence.stateAllowsPresence(generic) && generic.awayState.travelPeriodsRemaining === 1, "arrival opportunity with incomplete road must be missed");
 ok(setup.WeeklyRhythm.advanceDayBoundary(world), "road finishes after missed opportunity");
-assert(!generic.awayState.present && generic.awayState.travelPeriodsRemaining === 0, "finishing road between opportunities must not create catch-up arrival");
+assert(!setup.Presence.stateAllowsPresence(generic) && generic.awayState.travelPeriodsRemaining === 0, "finishing road between opportunities must not create catch-up arrival");
 ok(setup.WeeklyRhythm.advanceEveningBoundary(world), "reach later authored opportunity");
-assert(generic.awayState.present, "later authored opportunity should permit arrival after road is complete");
+assert(setup.Presence.stateAllowsPresence(generic), "later authored opportunity should permit arrival after road is complete");
 
 // Timelapse planner union rejects ordinary defer_departure outright.
 const planCatalog = [{ id: "villageSmithy", beds: [], timelapseActions: [], studyItems: [] }];
@@ -158,11 +158,12 @@ generic = installGenericAwayable(world, {});
 const legacySaved = JSON.parse(JSON.stringify(generic));
 delete legacySaved.awayable;
 delete legacySaved.awayState;
+delete legacySaved.presenceState;
 legacySaved.weeklyPresence = { presentWeekdayIndexes: [1], arrivalLocationId: "villageSmithy", arrivalSublocationId: "smithyForgeArea" };
 const migratedPresent = ok(setup.WeeklyRhythm.initializeMigratedAwayState(generic, legacySaved, world, world), "generic present legacy migration");
-assert(migratedPresent.awayState.present && migratedPresent.awayState.travelPeriodsRemaining === 0, "generic legacy-present fixture should gain present lifecycle state");
+assert(setup.Presence.stateAllowsPresence(generic) && migratedPresent.awayState.travelPeriodsRemaining === 0 && !Object.prototype.hasOwnProperty.call(migratedPresent.awayState, "present"), "generic legacy-present fixture should gain neutral local-presence state");
 world.calendar.dayNumber = 1; // Flamesday: old fixed weekly fixture is absent.
 const migratedAbsent = ok(setup.WeeklyRhythm.initializeMigratedAwayState(generic, legacySaved, world, world), "generic absent legacy migration");
-assert(!migratedAbsent.awayState.present && migratedAbsent.awayState.travelPeriodsRemaining === 0, "generic legacy-absent fixture should be treated road-complete and wait for a later opportunity");
+assert(!setup.Presence.stateAllowsPresence(generic) && migratedAbsent.awayState.travelPeriodsRemaining === 0 && !Object.prototype.hasOwnProperty.call(migratedAbsent.awayState, "present"), "generic legacy-absent fixture should be treated road-complete and wait for a later opportunity");
 
 console.log("All generic awayable lifecycle tests passed.");

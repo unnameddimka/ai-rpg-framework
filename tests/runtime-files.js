@@ -5,7 +5,7 @@
 // scenario list through augment() so shared infrastructure additions have one home.
 const AFTER = new Map([
     ["src/08-mind-validators.js", ["src/09-passage-rules.js", "src/09-world-derived-state.js"]],
-    ["src/10-game-api.js", ["src/10-weekly-rhythm.js"]],
+    ["src/10-game-api.js", ["src/10-weekly-rhythm.js", "src/10-presence.js", "src/10-authored-effects.js", "src/10-triggered-events.js"]],
     ["src/23-ai-protocol.js", ["src/23-mind-consolidation-protocols.js", "src/23-structured-ai-request.js"]],
     ["src/24-ai-request-executor.js", ["src/24-mind-semantic-retrieval.js"]],
     ["src/24-memory-consolidator.js", ["src/24-retrieval-brief-backfill.js"]],

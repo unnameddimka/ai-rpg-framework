@@ -33,7 +33,7 @@ function validDocument() {
             engineFacts: { aura: "Bright." }, futureCharacterField: true,
             initialMind: { schemaVersion: 3, knownFacts: [{ id: "fact", text: "Known", futureFact: 1 }], beliefs: [], relationships: [],
                 verbatimObservations: [], shortTermMemories: [], longTermMemories: [] } } },
-        abilities: { readAura: { id: "readAura", name: "Read aura", actionType: "read_aura",
+        abilities: { readAura: { id: "readAura", name: "Read aura", actionType: "use_ability", effectType: "read_aura",
             playerDescription: "Sense aura.", aiDescription: "Request grounded aura data.", futureAbilityField: true } },
         itemDefinitions: {
             emptyMug: { id: "emptyMug", name: "Empty mug", familyId: "mug", tags: ["empty"],
@@ -54,14 +54,15 @@ function validDocument() {
 assert((html.match(/<!doctype html>/gi) || []).length === 1 && !/<script[^>]+src=|<link[^>]+href=/i.test(html),
     "editor should remain one self-contained offline HTML file");
 assert(html.includes("Characters") && !html.includes("Traveler profiles") && html.includes("Abilities") && html.includes("Item types") &&
-    html.includes("Items") && html.includes("Consumable") && html.includes("Fillable") &&
+    html.includes("Items") && html.includes("Secrets") && html.includes("Random outcomes") && html.includes("Triggered events") && html.includes("Consumable") && html.includes("Fillable") &&
     html.includes("Location inventory") && html.includes("Items in this container") && html.includes("renderEmbeddedInventory") &&
     html.includes("Generic blocked transition") && html.includes("Lock ID") && html.includes("Key lock ID") &&
-    html.includes("Generic use interaction") && html.includes("Engine effect") && html.includes("Public action text") &&
-    html.includes("Locked failure text") && html.includes("Required key item") && html.includes("Requires discovery") && html.includes("Initially discovered secret locations") && html.includes("localStorage.setItem"),
+    html.includes("Generic use interaction") && html.includes("Phase-aware serving actions") && html.includes("Ability effect type") && html.includes("Engine effect") && html.includes("Public action text") &&
+    html.includes("Locked failure text") && html.includes("Required key item") && html.includes("Requires discovery") && html.includes("Initially discovered secret locations") &&
+    html.includes("Presence owner") && html.includes("Presence fallback location") && html.includes("Auto (single external exit)") && html.includes("Auto (parent default position)") && html.includes("localStorage.setItem"),
     "editor should expose character, ability, item-type, global item-instance, and embedded inventory workflows");
 assert(!/[А-Яа-яЁё]/.test(html), "visible editor source introduced by this task should remain English-only");
-assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("read_aura") && core.KNOWN_ACTIONS.includes("lock") && core.KNOWN_ACTIONS.includes("unlock") &&
+assert(core.SCHEMA_VERSION === 2 && core.KNOWN_ACTIONS.includes("use_ability") && core.KNOWN_ACTIONS.includes("lock") && core.KNOWN_ACTIONS.includes("unlock") &&
     core.KNOWN_ITEM_EFFECTS.includes("report_memory_counts") && core.KNOWN_ITEM_EFFECTS.includes("abstract_study") && core.KNOWN_ITEM_EFFECTS.includes("utility_query"),
     "editor should embed schema 2, known actions, and the allowlisted generic item effects");
 assert(html.includes("Short-term memories") && html.includes("Verbatim observations") && html.includes("Retrieval brief") && !html.includes("Recent memories"),
@@ -238,7 +239,7 @@ assert(hasError(twoHumans, "Exactly one"), "multiple initial humans should block
 const badAbility = validDocument(); badAbility.characters.hero.abilityIds = ["missing"];
 assert(hasError(badAbility, "missing ability"), "invalid ability reference should block export");
 const badAction = validDocument(); badAction.abilities.readAura.actionType = "execute_code";
-assert(hasError(badAction, "unknown action"), "unknown ability action type should block export");
+assert(hasError(badAction, "canonical actionType") || hasError(badAction, "use_ability"), "non-canonical ability action type should block export");
 const badItemDefinition = validDocument(); badItemDefinition.itemDefinitions.emptyMug.fillAction.resultDefinitionId = "missing";
 assert(hasError(badItemDefinition, "missing result definition"), "missing item transformation target should block export");
 const badItemInventory = validDocument(); badItemInventory.items.mug1.inventoryId = "missing_inventory";
@@ -269,5 +270,24 @@ assert(core.sublocationDeletionReferences(sublocationItems.locations.room, "room
 const committedWorldDocument = JSON.parse(fs.readFileSync(path.join(root, "data/world.json"), "utf8"));
 assert(core.validateWorldDocument(committedWorldDocument).length === 0,
     "the current committed data/world.json must validate through the same authored validator embedded in the editor");
+const committedRoundTrip = JSON.parse(core.serializeWorldDocument(committedWorldDocument));
+assert(committedRoundTrip.secrets.chugaister && committedRoundTrip.secrets.old_well &&
+    committedRoundTrip.randomOutcomeTables.oldWellBucketDraw && committedRoundTrip.randomOutcomeTables.soloHuntingMystery &&
+    committedRoundTrip.triggeredEvents.chuhaisterFoodAppearance && committedRoundTrip.triggeredEvents.chuhaisterHideAtTimelapse &&
+    committedRoundTrip.characters.chugaister.deferredActivation === true && committedRoundTrip.characters.chugaister.movementConstraint.locationId === "trampledGlade" &&
+    committedRoundTrip.abilities.playSopilka.actionType === "use_ability" && committedRoundTrip.abilities.playSopilka.effectType === "emit_location_observation" &&
+    committedRoundTrip.itemDefinitions.bowlOfBanush.consumeAction.resultDefinitionId === "emptyBowl" &&
+    committedRoundTrip.locations.bar.sublocations.barKitchen.servingActions.some(function (record) { return record.id === "serveBanush" && record.requiredDishDefinitionId === "emptyBowl"; }),
+    "current secrets, random outcomes, triggered events, activation/mobility, abilities, food transforms, and serving authoring must survive editor round-trip");
+assert(core.locationDeletionReferences(committedWorldDocument, "trampledGlade").some(function (x) { return x.includes("triggeredEvents") || x.includes("movementConstraint"); }),
+    "editor reference graph should surface triggered/mobility references before deleting Trampled Glade");
+assert(core.characterDeletionReferences(committedWorldDocument, "chugaister").some(function (x) { return x.includes("triggeredEvents"); }),
+    "editor reference graph should surface triggered-event references before deleting Chuhaister");
+assert(core.abilityDeletionReferences(committedWorldDocument, "playSopilka").some(function (x) { return x.includes("chugaister"); }),
+    "editor should block deleting an ability still assigned to Chuhaister");
+assert(core.itemDefinitionDeletionReferences(committedWorldDocument, "emptyBowl").some(function (x) { return x.includes("requiredDishDefinitionId") || x.includes("resultDefinitionId"); }),
+    "editor reference graph should surface serving/consume references before deleting reusable bowl definition");
+assert(core.referencePaths(committedWorldDocument, "secret", "chugaister").some(function (x) { return x.includes("triggeredEvents.chuhaisterFoodAppearance.secretId"); }),
+    "editor secret deletion should understand triggered-event secret ownership");
 
 console.log("All world editor tests passed.");

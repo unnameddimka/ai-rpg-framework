@@ -45,7 +45,7 @@ function hasAvailable(actorId, type) {
 
 [
     "src/00-model-list.js", "src/generated/world-data.js", "src/07-mind-v3.js", "src/08-mind-validators.js",
-    "src/09-passage-rules.js", "src/09-world-derived-state.js", "src/10-game-api.js", "src/10-weekly-rhythm.js",
+    "src/09-passage-rules.js", "src/09-world-derived-state.js", "src/10-game-api.js", "src/10-weekly-rhythm.js", "src/10-presence.js",
     "src/11-save-migration.js", "src/12-character-context.js", "src/13-character-memory.js", "src/13-verbatim-memory.js",
     "src/14-event-perception.js", "src/17-runtime-diagnostics.js", "src/21-ai-settings.js", "src/21-ai-request-profiles.js",
     "src/22-openrouter-client.js", "src/23-ai-protocol.js", "src/23-structured-ai-request.js", "src/24-ai-request-executor.js"

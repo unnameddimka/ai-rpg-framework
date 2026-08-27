@@ -332,6 +332,11 @@
             const fallbackVerb = action.type === "fill" ? "Fill" : (action.type === "consume" ? "Consume" : "Use");
             return option && option.action_label || `${fallbackVerb} ${item ? itemDisplayName(item) : action.item_id}`;
         }
+        if (action.type === "use_ability") {
+            const options = view.available_actions.use_ability && view.available_actions.use_ability.options && view.available_actions.use_ability.options.abilities || [];
+            const ability = options.find(function (candidate) { return candidate.id === action.ability_id; });
+            return ability && (ability.label || ability.name) || `Use ability ${action.ability_id}`;
+        }
         const ability = view.self.abilities.find(function (candidate) { return candidate.actionType === action.type; });
         const record = view.available_actions[action.type];
         return ability && ability.name || record && record.description || action.type;
@@ -367,6 +372,7 @@
         if (action.type === "write_paper") return (options.item_ids || []).includes(action.item_id) && typeof action.content === "string" && action.content.length <= 12000;
         if (action.type === "place_item") return (options.item_ids || []).includes(action.item_id) && (options.target_inventory_ids || []).includes(action.target_inventory_id);
         if (action.type === "fill" || action.type === "consume" || action.type === "use_item") return (options.item_ids || []).includes(action.item_id);
+        if (action.type === "use_ability") return (options.ability_ids || []).includes(action.ability_id);
         return isZeroInputAbilityAction(view.available_actions[action.type]);
     }
 
@@ -594,10 +600,15 @@
         });
         if (useChildren.length) groups.here.push({ kind: "action-group", label: "Use item ▸", title: "Use item", children: useChildren });
 
+        const serveFoodAction = view.available_actions.serve_food;
+        (serveFoodAction && serveFoodAction.options.actions || []).forEach(function (serving) {
+            groups.here.push({ kind: "action", label: serving.action_label || `Serve ${serving.result_name || "food"}`, action: { type: "serve_food", serving_action_id: serving.id } });
+        });
+
         if (view.available_actions.defer_departure) groups.here.push({ kind: "action", label: "Stay another period", action: { type: "defer_departure" } });
         if (view.available_actions.go_hunting) groups.here.push({ kind: "action", label: "Go hunting", action: { type: "go_hunting" } });
         if (view.available_actions.sleep) groups.here.push({ kind: "action", label: view.self.controller_id === "human" ? "Sleep till morning" : "Sleep", action: { type: "sleep" } });
-        discoverAvailableAbilities(view).forEach(function (ability) { groups.here.push({ kind: "action", label: ability.name, action: { type: ability.actionType } }); });
+        discoverAvailableAbilities(view).forEach(function (ability) { groups.here.push({ kind: "action", label: ability.name, action: { type: "use_ability", ability_id: ability.id } }); });
 
         const moveAction = view.available_actions.move;
         const moveIds = moveAction && moveAction.options.destination_ids || [];
@@ -640,25 +651,10 @@
     }
 
     function discoverAvailableAbilities(view) {
-        if (!view || !view.self || !Array.isArray(view.self.abilities)) {
-            return [];
-        }
-        return view.self.abilities.filter(function (ability) {
-            const actionRecord = view.available_actions && view.available_actions[ability.actionType];
-            return isZeroInputAbilityAction(actionRecord) && actionRecord.sources.some(function (source) {
-                return source.kind === "character_ability" && source.id === ability.id;
-            });
-        }).map(function (ability) {
-            const actionRecord = view.available_actions[ability.actionType];
-            return {
-                id: ability.id,
-                name: ability.name,
-                playerDescription: ability.playerDescription,
-                actionType: ability.actionType,
-                sources: actionRecord.sources.map(function (source) {
-                    return { kind: source.kind, id: source.id || "", name: source.name || "" };
-                })
-            };
+        const actionRecord = view && view.available_actions && view.available_actions.use_ability;
+        const abilities = actionRecord && actionRecord.options && actionRecord.options.abilities || [];
+        return abilities.map(function (ability) {
+            return { id: ability.id, name: ability.label || ability.name || ability.id, playerDescription: ability.player_description || "", actionType: "use_ability" };
         });
     }
 
@@ -1720,11 +1716,22 @@
         }).join("")}</div>`;
     }
 
+    function characterVisibleToCurrentHuman(character, world) {
+        if (!character || character.type !== "character") return false;
+        const humanId = setup.Game.getHumanCharacterId();
+        const human = world.entities[humanId];
+        if (!human) return character.requiresDiscovery !== true;
+        return !setup.GameInternals || !setup.GameInternals.characterHasDiscoveredCharacter ||
+            setup.GameInternals.characterHasDiscoveredCharacter(human, character, world);
+    }
+
     function renderSettingsModal(message) {
         closeSettingsModal();
         ensureGlobalEmergencyDumpControl();
         const world = setup.Game.getWorld();
-        const characters = Object.values(world.entities).filter(function (entity) { return entity && entity.type === "character"; });
+        const characters = Object.values(world.entities).filter(function (entity) {
+            return characterVisibleToCurrentHuman(entity, world);
+        });
         const aiCharacters = characters.filter(function (character) { return world.control && world.control.assignments && world.control.assignments[character.id] === "ai"; });
         const selectedCharacterId = String((document.getElementById("human-character-select") || {}).value || setup.Game.getHumanCharacterId());
         const selectedCharacter = world.entities[selectedCharacterId] || world.entities[setup.Game.getHumanCharacterId()];
@@ -1921,7 +1928,9 @@
         const humanId = setup.Game.getHumanCharacterId();
         const actor = world.entities[humanId];
         const location = world.entities[actor.locationId];
-        const characters = Object.values(world.entities).filter(function (entity) { return entity && entity.type === "character"; });
+        const characters = Object.values(world.entities).filter(function (entity) {
+            return characterVisibleToCurrentHuman(entity, world) && entity.playerControllable !== false;
+        });
         const view = setup.CharacterAPI.getView(humanId);
         const health = aiHealthState();
         root.innerHTML = `<div class="framework-sidebar-block">
@@ -2202,13 +2211,21 @@
         actionRoot.id = "framework-action-panel";
         actionRoot.className = "framework-turn-panel";
 
-        const moveOptions = view.location.exits || [];
-        const takeOptions = view.accessible_inventories.flatMap(function (inventory) { return inventory.items; });
+        const moveAction = view.available_actions.move;
+        const moveDestinationIds = moveAction ? moveAction.options.destination_ids : [];
+        const moveOptions = (view.location.exits || []).filter(function (destination) { return moveDestinationIds.includes(destination.id); });
+        const takeAction = view.available_actions.take_item;
+        const takeItemIds = takeAction ? takeAction.options.item_ids : [];
+        const takeOptions = view.accessible_inventories.flatMap(function (inventory) { return inventory.items; }).filter(function (item) { return takeItemIds.includes(item.id); });
         const ownedItems = view.self.inventory || [];
         const visibleTargets = view.location.characters || [];
         const giveItemAction = view.available_actions.give_item;
         const reachableTargetIds = giveItemAction ? giveItemAction.options.target_ids : [];
         const reachableTargets = visibleTargets.filter(function (target) { return reachableTargetIds.includes(target.id); });
+        const giveMoneyAction = view.available_actions.give_money;
+        const giveMoneyTargetIds = giveMoneyAction ? giveMoneyAction.options.target_ids : [];
+        const giveMoneyTargets = visibleTargets.filter(function (target) { return giveMoneyTargetIds.includes(target.id); });
+        const giveMoneyMaximum = Number(giveMoneyAction && giveMoneyAction.options.maximum_amount || 0);
         const internalAction = view.available_actions.move_within_location;
         const internalDestinations = internalAction ? internalAction.options.destination_ids.map(function (id) {
             const position = view.location.sublocations.find(function (candidate) { return candidate.id === id; });
@@ -2229,7 +2246,7 @@
         const lockDestinations = moveOptions.filter(function (destination) { return lockIds.includes(destination.id); });
         const hiddenLocationOptions = view.available_actions.show_hidden_location && view.available_actions.show_hidden_location.options && view.available_actions.show_hidden_location.options.locations || [];
         const hiddenLocationTargets = hiddenLocationOptions.length ? hiddenLocationOptions[0].targets || [] : [];
-        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "show_hidden_location", "read_paper", "write_paper", "place_item", "fill", "consume", "use_item", "equip", "unequip", "sleep", "go_hunting"]);
+        const knownActionTypes = new Set(["move", "unlock", "lock", "move_within_location", "take_item", "drop_item", "give_item", "give_money", "show_hidden_location", "read_paper", "write_paper", "place_item", "fill", "consume", "use_item", "equip", "unequip", "sleep", "go_hunting", "use_ability"]);
         const zeroInputExtras = Object.entries(view.available_actions).filter(function (entry) {
             return !knownActionTypes.has(entry[0]) && isZeroInputAbilityAction(entry[1]);
         });
@@ -2262,7 +2279,7 @@
             radioField("take_item", "Take item", `<select id="action-take-item"${disabledAttribute}>${optionMarkup(takeOptions, "No items here")}</select>`, takeOptions.length === 0),
             radioField("drop_item", "Drop item", `<select id="action-drop-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select>`, ownedItems.length === 0),
             radioField("give_item", "Give item", `<select id="action-give-item"${disabledAttribute}>${optionMarkup(ownedItems, "Inventory is empty")}</select><select id="action-give-item-target"${disabledAttribute}>${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, ownedItems.length === 0 || reachableTargets.length === 0),
-            radioField("give_money", "Give money", `<input id="action-money-amount" type="number" min="1" step="1" value="1"${disabledAttribute}><select id="action-money-target"${disabledAttribute}>${optionMarkup(reachableTargets, "Nobody reachable")}</select>`, reachableTargets.length === 0),
+            radioField("give_money", "Give money", `<input id="action-money-amount" type="number" min="1" max="${escapeHtml(String(giveMoneyMaximum))}" step="1" value="1"${disabledAttribute}><select id="action-money-target"${disabledAttribute}>${optionMarkup(giveMoneyTargets, "Nobody reachable")}</select>`, giveMoneyMaximum < 1 || giveMoneyTargets.length === 0),
             radioField("show_hidden_location", "Show hidden location", `<select id="action-show-hidden-location"${disabledAttribute}>${optionMarkup(hiddenLocationOptions, "No hidden location to show")}</select><select id="action-show-hidden-target"${disabledAttribute}>${optionMarkup(hiddenLocationTargets, "Nobody to show")}</select>`, hiddenLocationOptions.length === 0),
             radioField("read_paper", "Read paper", `<select id="action-read-paper"${disabledAttribute}>${optionMarkup(readableItems, "No readable paper")}</select>`, readableItems.length === 0),
             radioField("write_paper", "Write / draw on paper", `<select id="action-write-paper"${disabledAttribute}>${optionMarkup(writableItems, "No writable paper")}</select><textarea id="action-write-paper-content" rows="5" maxlength="12000" placeholder="Write text and/or *describe drawings* here"${disabledAttribute}></textarea>`, writableItems.length === 0),

@@ -366,6 +366,16 @@ async function testTurnFlowIntegration() {
             },
             CharacterAPI: {
                 validateActionRequest: function () { return { ok: true }; },
+                preflightIntent: function (actorId, input) {
+                    return { ok: true, plan: {
+                        text: input && typeof input.text === "string" ? input.text.trim() : "",
+                        action: input && input.action || null,
+                        targetId: input && input.target_id || "",
+                        noticeability: input && input.noticeability || "noticeable",
+                        moveSpeechPhase: "origin",
+                        spokenText: input && input.spokenText || ""
+                    } };
+                },
                 submitIntent: function () {
                     return {
                         ok: true,

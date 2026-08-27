@@ -16,6 +16,7 @@
     const getSublocation = I.getSublocation;
     const locationExitEntries = I.locationExitEntries;
     const normalizeCharacterDiscoveries = I.normalizeCharacterDiscoveries;
+    const normalizeCharacterDiscoveriesByCharacter = I.normalizeCharacterDiscoveriesByCharacter;
     const validateWorld = I.validateWorld;
     const synchronizeDerivedItemPlacement = I.synchronizeDerivedItemPlacement;
     const validateControlAssignments = I.validateControlAssignments;
@@ -532,9 +533,43 @@
                 repairs: [],
                 migrationReports: []
             };
+            {
+                const sourceRuntime = source.triggeredEventRuntime && typeof source.triggeredEventRuntime === "object" && !Array.isArray(source.triggeredEventRuntime)
+                    ? source.triggeredEventRuntime : {};
+                const tickId = Number.isInteger(source.ordinaryTickId) && source.ordinaryTickId >= 0
+                    ? source.ordinaryTickId
+                    : (Number.isInteger(sourceRuntime.ordinaryTickCounter) && sourceRuntime.ordinaryTickCounter >= 0 ? sourceRuntime.ordinaryTickCounter : 0);
+                let lastProcessed = Number.isInteger(sourceRuntime.lastProcessedOrdinaryTickId) && sourceRuntime.lastProcessedOrdinaryTickId >= 0
+                    ? sourceRuntime.lastProcessedOrdinaryTickId : 0;
+                if (sourceRuntime.lastProcessedOrdinaryTickByEvent && typeof sourceRuntime.lastProcessedOrdinaryTickByEvent === "object") {
+                    Object.values(sourceRuntime.lastProcessedOrdinaryTickByEvent).forEach(function (value) {
+                        if (Number.isInteger(value) && value >= 0) lastProcessed = Math.max(lastProcessed, value);
+                    });
+                }
+                candidate.ordinaryTickId = tickId;
+                candidate.triggeredEventRuntime = { lastProcessedOrdinaryTickId: Math.min(tickId, lastProcessed) };
+            }
 
             const savedCharacters = Object.values(source.entities || {}).filter(function (entity) {
                 return entity && entity.type === "character";
+            });
+            savedCharacters.forEach(function (savedCharacter) {
+                if (getCharacter(savedCharacter.id, candidate)) return;
+                const authored = setup.GeneratedWorldData && setup.GeneratedWorldData.characters && setup.GeneratedWorldData.characters[savedCharacter.id];
+                if (!authored || authored.deferredActivation !== true) return;
+                let locationId = savedCharacter.locationId;
+                let sublocationId = savedCharacter.sublocationId;
+                if (savedCharacter.activationState === "inactive" || !getLocation(locationId, candidate) || !getSublocation(sublocationId, candidate)) {
+                    locationId = authored.movementConstraint && authored.movementConstraint.locationId || candidate.startLocationId;
+                    const location = getLocation(locationId, candidate);
+                    sublocationId = location && location.defaultSublocationId;
+                }
+                const restored = I.instantiateDeferredCharacter(savedCharacter.id, candidate, { locationId: locationId, sublocationId: sublocationId });
+                if (restored && savedCharacter.activationState === "inactive") {
+                    restored.activationState = "inactive";
+                    restored.locationId = null;
+                    restored.sublocationId = null;
+                }
             });
             const candidateCharacterIds = new Set(getCharacters(candidate).map(function (character) { return character.id; }));
             report.charactersRemoved = savedCharacters.filter(function (character) {
@@ -576,6 +611,7 @@
                 character.mind.pendingObservations = [];
                 character.sleeping = savedCharacter.sleeping === true;
                 normalizeCharacterDiscoveries(character, candidate, savedCharacter.discoveredLocationIds);
+                normalizeCharacterDiscoveriesByCharacter(character, candidate, savedCharacter.discoveredCharacterIds);
                 report.beliefsPreserved += character.mind.beliefs.length;
                 report.relationshipsPreserved += character.mind.relationships.length;
                 report.memoriesPreserved += character.mind.shortTermMemories.length + character.mind.longTermMemories.length;
@@ -586,8 +622,15 @@
                     report.warnings.push(`Character ${character.id} had an invalid saved wallet; current authored wallet was used.`);
                 }
 
-                const savedSublocation = getSublocation(savedCharacter.sublocationId, candidate);
-                if (savedSublocation) {
+                const authoredCharacter = setup.GeneratedWorldData && setup.GeneratedWorldData.characters && setup.GeneratedWorldData.characters[character.id];
+                if (authoredCharacter && authoredCharacter.deferredActivation === true && savedCharacter.activationState === "inactive") {
+                    character.activationState = "inactive";
+                    character.locationId = null;
+                    character.sublocationId = null;
+                } else {
+                    if (authoredCharacter && authoredCharacter.deferredActivation === true) character.activationState = "active";
+                    const savedSublocation = getSublocation(savedCharacter.sublocationId, candidate);
+                    if (savedSublocation) {
                     character.locationId = savedSublocation.locationId;
                     character.sublocationId = savedSublocation.id;
                     if (savedCharacter.locationId !== savedSublocation.locationId) {
@@ -607,9 +650,16 @@
                         report.characterPositionFallbacks += 1;
                         report.warnings.push(`Character ${character.id} was moved to ${savedLocation.defaultSublocationId} because saved sublocation ${String(savedCharacter.sublocationId)} no longer exists.`);
                     }
+                    }
                 }
 
                 normalizeCharacterDiscoveries(character, candidate);
+                normalizeCharacterDiscoveriesByCharacter(character, candidate);
+
+                if (setup.Presence && typeof setup.Presence.initializeMigratedState === "function") {
+                    const presenceMigration = setup.Presence.initializeMigratedState(character, savedCharacter, candidate);
+                    if (!presenceMigration.ok) throw new Error(presenceMigration.error.message);
+                }
 
                 if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.initializeMigratedAwayState === "function" && character.awayable) {
                     const awayMigration = setup.WeeklyRhythm.initializeMigratedAwayState(character, savedCharacter, source, candidate);
@@ -618,6 +668,9 @@
                         if (awayMigration.preserved) report.awayStatesPreserved += 1;
                         else report.awayStatesInitialized += 1;
                     }
+                } else if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.initializeMigratedPresenceState === "function" && character.weeklyPresence) {
+                    const fixedPresenceMigration = setup.WeeklyRhythm.initializeMigratedPresenceState(character, savedCharacter, source, candidate);
+                    if (!fixedPresenceMigration.ok) throw new Error(fixedPresenceMigration.error.message);
                 }
 
                 const savedControllerId = source.control && source.control.assignments && source.control.assignments[character.id];
@@ -743,6 +796,16 @@
                     }
                 });
             });
+
+            const currentOnceOutcomeIds = new Set();
+            Object.values(candidate.randomOutcomeTables || {}).forEach(function (table) {
+                (table && Array.isArray(table.outcomes) ? table.outcomes : []).forEach(function (outcome) {
+                    if (outcome && outcome.once === true && typeof outcome.id === "string") currentOnceOutcomeIds.add(outcome.id);
+                });
+            });
+            candidate.consumedAuthoredOutcomeIds = Array.from(new Set((Array.isArray(source.consumedAuthoredOutcomeIds) ? source.consumedAuthoredOutcomeIds : []).filter(function (id) {
+                return currentOnceOutcomeIds.has(id);
+            })));
 
             restoreSavedPassageLocks(candidate, source, report);
             restoreRuntimeJournal(candidate, source, report);

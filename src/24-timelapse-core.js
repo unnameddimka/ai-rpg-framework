@@ -82,7 +82,7 @@ Return the complete corrected JSON object only. Use exactly the documented field
         const world = setup.Game.getWorld();
         return Object.values(world.entities).filter(function (entity) {
             return entity && entity.type === "character" && world.control.assignments[entity.id] === "ai" &&
-                (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(entity, world));
+                (!setup.Presence || setup.Presence.isLocallyPresent(entity, world));
         }).map(function (character) { return character.id; });
     }
 
@@ -718,7 +718,7 @@ Return the complete corrected JSON object only. Use exactly the documented field
         const world = setup.Game.getWorld();
         const aiIds = aiCharacterIds();
         const allCharacterIds = Object.values(world.entities).filter(function (entity) {
-            return entity && entity.type === "character" && (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(entity, world));
+            return entity && entity.type === "character" && (!setup.Presence || setup.Presence.isLocallyPresent(entity, world));
         }).map(function (entity) { return entity.id; });
         const fixedPlans = options.fixedPlans && typeof options.fixedPlans === "object" ? clone(options.fixedPlans) : {};
         const fixedActorIds = new Set(Object.keys(fixedPlans));

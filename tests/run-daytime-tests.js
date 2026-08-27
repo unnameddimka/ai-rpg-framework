@@ -288,7 +288,7 @@ async function main(){
     assert(huntingView.available_actions.go_hunting,"Go hunting should be available at stream in Morning");
     ok(setup.CharacterAPI.perform("player",{type:"go_hunting"}),"Go hunting should activate solo daytime activity");
     const oldRefresh2=setup.WorldEnvironment.refreshWeather; setup.WorldEnvironment.refreshWeather=async()=>({ok:true});
-    let huntingRandomValues=[0.5,0.09], huntingRandomCalls=0;
+    let huntingRandomValues=[0.5,0.91], huntingRandomCalls=0;
     const huntingRandom=function(){ huntingRandomCalls++; return huntingRandomValues.shift(); };
     const huntResult=await setup.DaytimeTimelapse.run(fakeCharacterClient(),{random:huntingRandom});
     ok(huntResult,"solo hunting should complete");
@@ -296,7 +296,7 @@ async function main(){
     const pelts=world.inventories[world.entities.player.inventoryId].itemIds.filter(id=>world.entities[id]&&world.entities[id].definitionId==="squirrelPelt");
     assert(pelts.length===3,"0.5 RNG should produce three squirrel pelts from 1-5 inclusive");
     assert(huntingRandomCalls===2&&setup.GameInternals.characterHasDiscoveredLocation("player","trampledGlade",world),
-        "a completed undiscovered hunting day should make exactly one reward roll and one discovery roll, with 0.09 succeeding at the 10% threshold");
+        "a completed undiscovered hunting day should make exactly one reward roll and one generic weighted outcome roll, with the final 10 weight units revealing the glade");
     assert(huntResult.hiddenNarrativeEntries.filter(e=>e.kind==="daytime_hunting"&&e.visibleToHuman).length===5&&
         huntResult.hiddenNarrativeEntries.some(e=>e.kind==="location_discovered"&&e.visibleToHuman&&e.text.includes("concealed way")),
         "successful hunting discovery should add one grounded visible result without moving the Traveler");
@@ -306,25 +306,25 @@ async function main(){
     world.environment.timePhase="morning";
     ok(setup.TimelapseAPI.moveToLocation("player","forestMountainStream"),"failed discovery Traveler should reach stream");
     ok(setup.CharacterAPI.perform("player",{type:"go_hunting"}),"failed discovery hunting should activate");
-    huntingRandomValues=[0.5,0.10]; huntingRandomCalls=0;
+    huntingRandomValues=[0.5,0.89]; huntingRandomCalls=0;
     const failedDiscoveryDay=await setup.DaytimeTimelapse.run(fakeCharacterClient(),{random:huntingRandom});
     ok(failedDiscoveryDay,"hunting day with failed discovery roll should still complete");
     world=setup.Game.getWorld();
     assert(huntingRandomCalls===2&&!setup.GameInternals.characterHasDiscoveredLocation("player","trampledGlade",world)&&
         !failedDiscoveryDay.hiddenNarrativeEntries.some(e=>e.kind==="location_discovered"),
-        "the 10% discovery comparison must be strict and a failed roll must not reveal Trampled Glade");
+        "the first 90 weight units must select the generic no-outcome bucket and must not reveal Trampled Glade");
 
     world=fresh(null);
     world.environment.timePhase="morning";
     setup.GameInternals.grantLocationDiscovery("player","trampledGlade",world);
     ok(setup.TimelapseAPI.moveToLocation("player","forestMountainStream"),"already-discovered Traveler should reach stream");
     ok(setup.CharacterAPI.perform("player",{type:"go_hunting"}),"already-discovered hunting should activate");
-    huntingRandomValues=[0.5]; huntingRandomCalls=0;
+    huntingRandomValues=[0.5,0.25]; huntingRandomCalls=0;
     const knownDiscoveryDay=await setup.DaytimeTimelapse.run(fakeCharacterClient(),{random:huntingRandom});
     setup.WorldEnvironment.refreshWeather=oldRefresh2;
     ok(knownDiscoveryDay,"hunting after discovery should still complete normally");
-    assert(huntingRandomCalls===1&&!knownDiscoveryDay.hiddenNarrativeEntries.some(e=>e.kind==="location_discovered"),
-        "once the location is known, hunting should make no further secret-location discovery roll");
+    assert(huntingRandomCalls===2&&!knownDiscoveryDay.hiddenNarrativeEntries.some(e=>e.kind==="location_discovered"),
+        "once the location is known, the reveal outcome is inapplicable; the generic completion table may still resolve its no-outcome bucket without duplicating discovery");
 
     // Timelapse study: a keyed room container exposes its contents only to a direct key holder.
     world=fresh(null);

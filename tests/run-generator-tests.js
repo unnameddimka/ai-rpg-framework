@@ -61,7 +61,7 @@ rejects(function (doc) { doc.locations.guestRoom1.exits.upstairsCorridor.locked 
 rejects(function (doc) { doc.itemDefinitions.guestRoom1KeyType.keyLockId = "missing_lock"; }, "invalid keyLockId");
 rejects(function (doc) { doc.characters.player.inventoryId = doc.locations.bar.inventoryId; }, "Duplicate inventory");
 rejects(function (doc) { doc.characters.player.initialControllerId = "dummy"; }, "Exactly one");
-rejects(function (doc) { doc.abilities.readAura.actionType = "execute_code"; }, "unknown action");
+rejects(function (doc) { doc.abilities.readAura.actionType = "execute_code"; }, "must use canonical actionType 'use_ability'");
 rejects(function (doc) { doc.items.emptyMug_1.definitionId = "missing"; }, "references missing definition");
 rejects(function (doc) { doc.items.emptyMug_1.inventoryId = "inventory_missing"; }, "missing inventory");
 rejects(function (doc) { doc.locations.secludedCottage.sublocations.maraCottageChest.requiredKeyItemId = "missingChestKey"; }, "references missing required key item");

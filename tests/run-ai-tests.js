@@ -36,7 +36,7 @@ function queueHooded() {
     return world;
 }
 
-load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js"); load("src/10-triggered-events.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -85,7 +85,8 @@ async function main() {
     State.variables.world.ai.turnQueue.push({ characterId: "innkeeper" }, { characterId: "missing" });
     assert(setup.AITurnQueue.repair().count === 2, "queue repair should remove duplicate and invalid entries while preserving order");
     State.variables.world.control.assignments.innkeeper = "dummy";
-    assert(setup.AITurnQueue.getStatus().head.characterId === "hoodedWoman", "stale queue head should be removed");
+    assert(setup.AITurnQueue.getStatus().head.characterId === "innkeeper", "queue status reads must not silently repair stale entries");
+    assert(setup.AITurnQueue.repair().head.characterId === "hoodedWoman", "explicit queue repair should remove a stale queue head");
 
     world = fresh();
     world.entities.hoodedWoman.locationId = "tavernEntrance";
@@ -179,6 +180,49 @@ async function main() {
         failedHumanAttempt.intentResult.actionResult.error.message === "The door is locked." && automaticTickCalls === 1 &&
         setup.Game.getWorld().entities.player.locationId === "upstairsCorridor",
         "an authored blocked transition must consume the HumanController turn, preserve location, and start the AI world tick");
+
+    // A Human action that was valid before the tick remains a legitimate attempt if a
+    // committed tick-start trigger changes the world before formal execution.
+    world = fresh();
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "street" }), "trigger-invalidated fixture reaches street");
+    ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "marketSquare" }), "trigger-invalidated fixture reaches market square");
+    const prevalidatedSaleChestAction = { type: "move_within_location", destination_id: "merchantSaleChest" };
+    ok(setup.CharacterAPI.validateActionRequest("player", prevalidatedSaleChestAction), "merchant sale chest action is valid before tick-start trigger");
+    world.triggeredEvents.turnFlowImmediateDeparture = {
+        id: "turnFlowImmediateDeparture",
+        trigger: { type: "ordinary_tick" },
+        prerequisites: [],
+        effects: [{ type: "deactivate_character", characterId: "roadMerchant" }],
+        narrationPolicy: "none"
+    };
+    automaticTickCalls = 0;
+    setup.AITurnScheduler.processAfterSubmit = async function () {
+        automaticTickCalls++;
+        return { ok: true, processedCount: 0, reactedCharacterIds: [], results: [], remainingQueue: setup.AITurnScheduler.getQueueView() };
+    };
+    const triggerInvalidatedAttempt = await setup.TurnFlow.submitHumanIntent({ action: prevalidatedSaleChestAction });
+    setup.AITurnScheduler.processAfterSubmit = originalProcessAfterSubmit;
+    assert(triggerInvalidatedAttempt.ok && triggerInvalidatedAttempt.turnConsumed === true && automaticTickCalls === 1 &&
+        triggerInvalidatedAttempt.intentResult.actionResult && triggerInvalidatedAttempt.intentResult.actionResult.ok === false &&
+        triggerInvalidatedAttempt.intentResult.actionResult.error.code !== "ACTION_CONTRACT_REJECTED" &&
+        setup.Game.getWorld().entities.roadMerchant.activationState === "inactive" &&
+        setup.Game.getWorld().entities.player.locationId === "marketSquare" &&
+        setup.Game.getWorld().entities.player.sublocationId === "marketSquareCenter",
+        `a prevalidated Human action invalidated by a committed tick-start trigger must become a grounded consumed-turn failure: ${JSON.stringify(triggerInvalidatedAttempt)}`);
+
+    // Once the Human action has committed, later reaction-wave mutations cannot rewrite
+    // the already-returned action result as a failure.
+    world = fresh();
+    let committedActionSeenBeforeWave = false;
+    setup.AITurnScheduler.processAfterSubmit = async function () {
+        committedActionSeenBeforeWave = setup.Game.getWorld().entities.player.locationId === "commonRoom";
+        return { ok: true, processedCount: 0, reactedCharacterIds: [], results: [], remainingQueue: setup.AITurnScheduler.getQueueView() };
+    };
+    const finalizedHumanAction = await setup.TurnFlow.submitHumanIntent({ action: { type: "move", destination_id: "commonRoom" } });
+    setup.AITurnScheduler.processAfterSubmit = originalProcessAfterSubmit;
+    assert(finalizedHumanAction.ok && finalizedHumanAction.turnConsumed === true && committedActionSeenBeforeWave &&
+        finalizedHumanAction.intentResult.actionResult && finalizedHumanAction.intentResult.actionResult.ok === true,
+        "a successfully committed Human action must be final before initiative passes to the reaction wave");
 
     // Normal ticks should publish each committed block before the full causal reaction wave resolves.
     world = fresh();
@@ -1046,7 +1090,7 @@ async function main() {
     world = queueHooded();
     let stage = 0;
     const singleAction = { chat: async function () { stage++; return response({
-        action: { type: "read_aura" },
+        action: { type: "use_ability", ability_id: "readAura" },
         publicNarrative: "She concentrates.",
         spokenText: "Curious.",
         memoryUpdates: emptyUpdates()

@@ -2,8 +2,8 @@
     "use strict";
 
     const LEGACY_WORLD_VERSION = 6;
-    const WORLD_SCHEMA_VERSION = 17;
-    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, WORLD_SCHEMA_VERSION]);
+    const WORLD_SCHEMA_VERSION = 18;
+    const SUPPORTED_MIGRATION_SCHEMA_VERSIONS = new Set([LEGACY_WORLD_VERSION, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, WORLD_SCHEMA_VERSION]);
     const CONTROLLER_IDS = new Set(["human", "dummy", "ai"]);
     const BASE_ACTION_TYPES = ["move", "move_within_location", "take_item", "drop_item", "give_item", "give_money"];
     const SPEECH_LOUDNESS_VALUES = Object.freeze(["noticeable", "hidden", "shout"]);
@@ -28,6 +28,16 @@
 
     function clone(value) {
         return JSON.parse(JSON.stringify(value));
+    }
+
+    const worldTransactionDebug = { snapshots: 0 };
+    function snapshotWorld(world) {
+        worldTransactionDebug.snapshots += 1;
+        return clone(world);
+    }
+    function restoreWorldInPlace(world, snapshot) {
+        Object.keys(world).forEach(function (key) { delete world[key]; });
+        Object.assign(world, snapshot);
     }
 
     function createInferenceSessionId() {
@@ -62,6 +72,7 @@
         world.itemDefinitions = clone(document.itemDefinitions);
         world.dayActivities = clone(document.dayActivities || {});
         world.randomOutcomeTables = clone(document.randomOutcomeTables || {});
+        world.triggeredEvents = clone(document.triggeredEvents || {});
         world.calendar = {
             weekdayNames: clone(document.calendar && document.calendar.weekdayNames || ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"]),
             initialWeekdayIndex: Number.isInteger(document.calendar && document.calendar.initialWeekdayIndex) ? document.calendar.initialWeekdayIndex : 0,
@@ -107,7 +118,7 @@
         }
 
         for (const [characterId, sourceCharacter] of Object.entries(document.characters)) {
-            if (sourceCharacter && sourceCharacter.deferredActivation === true) continue;
+            const startsInactive = Boolean(sourceCharacter && sourceCharacter.deferredActivation === true);
             const character = clone(sourceCharacter);
             character.id = characterId;
             character.type = "character";
@@ -121,6 +132,12 @@
             character.recentDialogue = [];
             character.discoveredCharacterIds = [];
             character.playerControllable = character.playerControllable !== false;
+            character.activationState = startsInactive ? "inactive" : "active";
+            if (startsInactive) {
+                character.locationId = null;
+                character.sublocationId = null;
+                character.sleeping = false;
+            }
             character.discoveredLocationIds = Array.isArray(character.initialDiscoveredLocationIds)
                 ? Array.from(new Set(character.initialDiscoveredLocationIds.filter(function (locationId) {
                     const location = world.entities[locationId];
@@ -183,6 +200,67 @@
         }
     }
 
+    function instantiateDeferredCharacter(characterId, world, placement) {
+        const existing = getCharacter(characterId, world);
+        if (existing) return existing;
+        const source = setup.GeneratedWorldData && setup.GeneratedWorldData.characters && setup.GeneratedWorldData.characters[characterId];
+        if (!source || source.deferredActivation !== true) return null;
+        const character = clone(source);
+        character.id = characterId;
+        character.type = "character";
+        character.mind = clone(character.initialMind || {});
+        delete character.initialMind;
+        character.mind.schemaVersion = setup.MindV3.CONFIG.SCHEMA_VERSION;
+        character.mind.verbatimObservations = Array.isArray(character.mind.verbatimObservations) ? character.mind.verbatimObservations : [];
+        character.mind.shortTermMemories = Array.isArray(character.mind.shortTermMemories) ? character.mind.shortTermMemories : [];
+        delete character.mind.recentMemories;
+        character.mind.pendingObservations = [];
+        character.recentDialogue = [];
+        character.discoveredCharacterIds = [];
+        character.playerControllable = character.playerControllable !== false;
+        character.discoveredLocationIds = Array.isArray(character.initialDiscoveredLocationIds)
+            ? Array.from(new Set(character.initialDiscoveredLocationIds.filter(function (locationId) {
+                const location = world.entities[locationId];
+                return location && location.type === "location" && location.requiresDiscovery === true;
+            }))) : [];
+        delete character.initialDiscoveredLocationIds;
+        character.mindRevision = 0;
+        character.mindDiagnostics = { beliefHistoryById: {} };
+        character.mindMaintenanceSnapshots = [];
+        character.mindMaintenanceState = {};
+        character.equippedItems = [];
+        character.sleeping = false;
+        character.activationState = "active";
+        character.locationId = placement && placement.locationId || null;
+        character.sublocationId = placement && placement.sublocationId || null;
+        if (character.locationId) {
+            const startingLocation = getLocation(character.locationId, world);
+            if (startingLocation && startingLocation.requiresDiscovery === true && !character.discoveredLocationIds.includes(startingLocation.id)) {
+                character.discoveredLocationIds.push(startingLocation.id);
+            }
+        }
+        world.entities[characterId] = character;
+        if (world.inventories[character.inventoryId]) throw new Error(`Duplicate inventory ID ${character.inventoryId}.`);
+        world.inventories[character.inventoryId] = { id: character.inventoryId, ownerId: characterId, name: character.name, itemIds: [] };
+        world.control.assignments[characterId] = character.initialControllerId || character.defaultControllerId || "ai";
+        delete character.initialControllerId;
+        for (const [itemId, authoredItem] of Object.entries(setup.GeneratedWorldData.items || {})) {
+            if (world.entities[itemId]) continue;
+            const definition = world.itemDefinitions[authoredItem.definitionId];
+            if (!definition) continue;
+            if (authoredItem.inventoryId === character.inventoryId) {
+                const item = clone(authoredItem);
+                item.id = itemId; item.type = "item"; item.name = definition.name; item.containerId = character.inventoryId; delete item.inventoryId;
+                world.entities[itemId] = item; world.inventories[character.inventoryId].itemIds.push(itemId);
+            } else if (authoredItem.equippedByCharacterId === character.id && Array.isArray(definition.equipSlots) && definition.equipSlots.includes(authoredItem.equippedSlot)) {
+                const item = clone(authoredItem); const slot = item.equippedSlot;
+                item.id = itemId; item.type = "item"; item.name = definition.name; item.containerId = character.id;
+                delete item.equippedByCharacterId; delete item.equippedSlot; world.entities[itemId] = item; character.equippedItems.push({ itemId: itemId, slot: slot, visible: true });
+            }
+        }
+        return character;
+    }
+
     function createInitialWorld() {
         const world = {
             schemaVersion: WORLD_SCHEMA_VERSION,
@@ -194,6 +272,9 @@
             itemDefinitions: {},
             dayActivities: {},
             randomOutcomeTables: {},
+            triggeredEvents: {},
+            ordinaryTickId: 0,
+            triggeredEventRuntime: { lastProcessedOrdinaryTickId: 0 },
             consumedAuthoredOutcomeIds: [],
             environment: {
                 timePhase: "evening",
@@ -224,6 +305,10 @@
             }
         };
         installGeneratedData(world);
+        if (setup.Presence && typeof setup.Presence.initializeFreshWorld === "function") {
+            const presenceInit = setup.Presence.initializeFreshWorld(world);
+            if (!presenceInit.ok) throw new Error(presenceInit.error.message);
+        }
         if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.initializeFreshWorld === "function") {
             const rhythmInit = setup.WeeklyRhythm.initializeFreshWorld(world);
             if (!rhythmInit.ok) throw new Error(rhythmInit.error.message);
@@ -308,15 +393,18 @@
     function isAIQueueEligible(characterId, world) {
         const character = getCharacter(characterId, world);
         return Boolean(character && world.control.assignments[characterId] === "ai" &&
-            (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(character, world)) &&
+            (!setup.Presence || setup.Presence.isLocallyPresent(character, world)) &&
             character.mind && character.mind.pendingObservations.length > 0);
     }
 
     function enqueueAITurn(characterId, reason, world) {
         world = world || ensureWorld();
-        repairAIQueue(world);
+        if (!world.ai || typeof world.ai !== "object" || Array.isArray(world.ai) ||
+                !Array.isArray(world.ai.turnQueue) || !world.ai.continuations || typeof world.ai.continuations !== "object" || Array.isArray(world.ai.continuations)) {
+            return fail("AI_STATE_INVALID", "AI runtime state is missing or malformed.");
+        }
         if (!isAIQueueEligible(characterId, world)) return fail("AI_NOT_ELIGIBLE", "Character is not eligible for an AI turn.");
-        if (!world.ai.turnQueue.some(function (entry) { return entry.characterId === characterId; })) {
+        if (!world.ai.turnQueue.some(function (entry) { return entry && typeof entry === "object" && entry.characterId === characterId; })) {
             world.ai.turnQueue.push({ characterId: characterId, reason: reason || "observation" });
         }
         return ok({ characterId: characterId });
@@ -394,12 +482,12 @@
 
     function getAIQueueStatus(world) {
         world = world || ensureWorld();
-        repairAIQueue(world);
-        const head = world.ai.turnQueue[0] || null;
-        const character = head ? getCharacter(head.characterId, world) : null;
-        return clone({ count: world.ai.turnQueue.length, head: head ? {
-            characterId: head.characterId, name: character.name, reason: head.reason
-        } : null, entries: world.ai.turnQueue });
+        const queue = world.ai && Array.isArray(world.ai.turnQueue) ? world.ai.turnQueue : [];
+        const head = queue[0] && typeof queue[0] === "object" ? queue[0] : null;
+        const character = head && typeof head.characterId === "string" ? getCharacter(head.characterId, world) : null;
+        return clone({ count: queue.length, head: head ? {
+            characterId: head.characterId, name: character && character.name || head.characterId, reason: head.reason
+        } : null, entries: queue });
     }
 
     function getLocation(locationId, world) {
@@ -499,7 +587,10 @@
     function locationExitEntriesForActor(location, actor, world) {
         const w = world || getWorld();
         return locationExitEntries(location, w).filter(function (transition) {
-            return characterHasDiscoveredLocation(actor, transition.destinationId, w);
+            if (!characterHasDiscoveredLocation(actor, transition.destinationId, w)) return false;
+            const constraint = actor && actor.movementConstraint;
+            if (constraint && constraint.type === "location_locked" && actor.locationId === constraint.locationId && transition.destinationId !== constraint.locationId) return false;
+            return true;
         });
     }
 
@@ -539,10 +630,10 @@
     function locationExitEntries(location, world) {
         const entries = setup.PassageRules.locationExitEntries(location);
         const w = world || getWorld();
-        if (!w || !setup.WeeklyRhythm || typeof setup.WeeklyRhythm.isLocationAvailable !== "function") return entries;
+        if (!w || !setup.Presence || typeof setup.Presence.isLocationAvailable !== "function") return entries;
         return entries.filter(function (transition) {
             const destination = getLocation(transition.destinationId, w);
-            return destination && setup.WeeklyRhythm.isLocationAvailable(destination, w);
+            return destination && setup.Presence.isLocationAvailable(destination, w);
         });
     }
     function findLocationExit(location, destinationId) { return setup.PassageRules.findLocationExit(location, destinationId); }
@@ -553,7 +644,7 @@
         const passages = (options.passages || []).filter(function (passage) {
             const destination = getLocation(passage.id, world);
             if (!destination || !characterHasDiscoveredLocation(actor, destination.id, world)) return false;
-            return !setup.WeeklyRhythm || typeof setup.WeeklyRhythm.isLocationAvailable !== "function" || setup.WeeklyRhythm.isLocationAvailable(destination, world);
+            return !setup.Presence || typeof setup.Presence.isLocationAvailable !== "function" || setup.Presence.isLocationAvailable(destination, world);
         });
         return { destination_ids: passages.map(function (passage) { return passage.id; }), passages: passages };
     }
@@ -562,7 +653,7 @@
         if (destination && !characterHasDiscoveredLocation(actor, destination.id, world)) {
             return fail("DESTINATION_UNDISCOVERED", "That destination has not been discovered by this character.");
         }
-        if (destination && setup.WeeklyRhythm && typeof setup.WeeklyRhythm.isLocationAvailable === "function" && !setup.WeeklyRhythm.isLocationAvailable(destination, world)) {
+        if (destination && setup.Presence && typeof setup.Presence.isLocationAvailable === "function" && !setup.Presence.isLocationAvailable(destination, world)) {
             return fail("DESTINATION_NOT_AVAILABLE", "Destination is not currently available in the local world.");
         }
         return setup.PassageRules.validateLockAction(actor, action, world, expectedLockedState, passageDeps());
@@ -679,6 +770,41 @@
         return item;
     }
 
+    function itemConsumePlan(item, world) {
+        const fromDefinition = getItemDefinition(item, world);
+        const consumeAction = fromDefinition && fromDefinition.consumeAction;
+        if (!item || !fromDefinition || !consumeAction) return fail("ITEM_NOT_CONSUMABLE", "This item cannot be consumed in its current state.");
+        if (consumeAction.resultType === "transform") {
+            const resultDefinition = getItemDefinition(consumeAction.resultDefinitionId, world);
+            if (!resultDefinition) return fail("CONSUME_RESULT_INVALID", "The configured consume transform target is invalid.");
+            return ok({ value: { resultType: "transform", fromDefinition: fromDefinition, consumeAction: consumeAction, resultDefinition: resultDefinition } });
+        }
+        if (consumeAction.resultType === "remove") {
+            return ok({ value: { resultType: "remove", fromDefinition: fromDefinition, consumeAction: consumeAction, resultDefinition: null } });
+        }
+        return fail("CONSUME_RESULT_INVALID", "The configured consume result is invalid.");
+    }
+
+    function applyItemConsume(itemOrId, world) {
+        const item = typeof itemOrId === "string" ? world.entities[itemOrId] : itemOrId;
+        const planned = itemConsumePlan(item, world);
+        if (!planned.ok) return planned;
+        const plan = planned.value;
+        const itemId = item.id;
+        const fromDefinitionId = plan.fromDefinition.id;
+        if (plan.resultType === "transform") {
+            transformItem(item, plan.resultDefinition.id, world);
+            return ok({ value: { itemId: itemId, resultType: "transform", fromDefinitionId: fromDefinitionId, toDefinitionId: item.definitionId, removed: false } });
+        }
+        const containerId = item.containerId;
+        const inventory = world.inventories[containerId];
+        if (inventory && Array.isArray(inventory.itemIds)) inventory.itemIds = inventory.itemIds.filter(function (id) { return id !== itemId; });
+        const owner = getCharacter(containerId, world);
+        if (owner && Array.isArray(owner.equippedItems)) owner.equippedItems = owner.equippedItems.filter(function (record) { return record.itemId !== itemId; });
+        delete world.entities[itemId];
+        return ok({ value: { itemId: itemId, resultType: "remove", fromDefinitionId: fromDefinitionId, toDefinitionId: null, removed: true } });
+    }
+
 
     function createGeneratedItemInstance(definitionId, inventoryId, world) {
         const definition = world.itemDefinitions && world.itemDefinitions[definitionId];
@@ -709,7 +835,7 @@
         if (effect.type === "encounter_character") {
             const target = getCharacter(effect.characterId, world);
             return Boolean(target && characterRequiresDiscovery(target, world) && !characterHasDiscoveredCharacter(actor, target, world) &&
-                target.locationId === actor.locationId && (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(target, world)));
+                target.locationId === actor.locationId && (!setup.Presence || setup.Presence.isLocallyPresent(target, world)));
         }
         if (effect.type === "modify_wallet") {
             return effect.target === "actor" && Number.isInteger(effect.amount) && effect.amount !== 0 &&
@@ -744,12 +870,15 @@
         (outcome.effects || []).forEach(function (effect) {
             if (!authoredOutcomeEffectApplicable(effect, actor, world)) throw new Error(`Authored outcome effect '${String(effect.type)}' is not applicable.`);
             if (effect.type === "emit_observation") {
-                events.push({
-                    type: "authored_outcome_observed", actorId: actor.id, locationId: actor.locationId, sublocationId: actor.sublocationId,
-                    actionType: context && context.actionType || "authored_outcome", outcomeId: outcome.id,
-                    authoredInteractionId: context && context.authoredInteractionId || null,
-                    text: renderAuthoredOutcomeText(effect.text, actor, {})
-                });
+                const eventData = setup.AuthoredEffects && setup.AuthoredEffects.createObservationEventData
+                    ? setup.AuthoredEffects.createObservationEventData(Object.assign({}, effect, { text: renderAuthoredOutcomeText(effect.text, actor, {}) }), {
+                        eventType: "authored_outcome_observed", actorId: actor.id, locationId: actor.locationId, sublocationId: actor.sublocationId
+                    })
+                    : { type: "authored_outcome_observed", actorId: actor.id, locationId: actor.locationId, sublocationId: actor.sublocationId, text: renderAuthoredOutcomeText(effect.text, actor, {}), authoredEffectType: "emit_observation" };
+                eventData.actionType = context && context.actionType || "authored_outcome";
+                eventData.outcomeId = outcome.id;
+                eventData.authoredInteractionId = context && context.authoredInteractionId || null;
+                events.push(eventData);
             } else if (effect.type === "reveal_location") {
                 const location = getLocation(effect.locationId, world);
                 if (!grantLocationDiscovery(actor, location.id, world)) throw new Error(`Location '${location.id}' could not be discovered.`);
@@ -835,7 +964,7 @@
     function sublocationOccupants(sublocationId, world, excludedCharacterId) {
         return getCharacters(world).filter(function (character) {
             return character.id !== excludedCharacterId && character.sublocationId === sublocationId &&
-                (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(character, world));
+                (!setup.Presence || setup.Presence.isLocallyPresent(character, world));
         });
     }
 
@@ -858,7 +987,7 @@
             return false;
         }
         if (!characterHasDiscoveredCharacter(actor, target, world)) return false;
-        if (setup.WeeklyRhythm && (!setup.WeeklyRhythm.isCharacterPresent(actor, world) || !setup.WeeklyRhythm.isCharacterPresent(target, world))) {
+        if (setup.Presence && (!setup.Presence.isLocallyPresent(actor, world) || !setup.Presence.isLocallyPresent(target, world))) {
             return false;
         }
         const actorPosition = getSublocation(actor.sublocationId, world);
@@ -1083,10 +1212,19 @@
                     (typeof definition.keyLockId !== "string" || !LOCK_ID_PATTERN.test(definition.keyLockId) || !lockIds.has(definition.keyLockId))) {
                 return fail("ITEM_KEY_LOCK_INVALID", `Item definition ${definitionId} references invalid lock ID ${String(definition.keyLockId)}.`);
             }
-            for (const actionField of ["fillAction", "consumeAction"]) {
-                const action = definition[actionField];
-                if (action && !world.itemDefinitions[action.resultDefinitionId]) {
-                    return fail("ITEM_TRANSFORM_TARGET_INVALID", `Item definition ${definitionId} references missing result definition ${action.resultDefinitionId}.`);
+            if (definition.fillAction && !world.itemDefinitions[definition.fillAction.resultDefinitionId]) {
+                return fail("ITEM_TRANSFORM_TARGET_INVALID", `Item definition ${definitionId} references missing fill result definition ${definition.fillAction.resultDefinitionId}.`);
+            }
+            if (definition.consumeAction) {
+                const consumeAction = definition.consumeAction;
+                if (!["transform", "remove"].includes(consumeAction.resultType)) {
+                    return fail("ITEM_CONSUME_ACTION_INVALID", `Item definition ${definitionId} has invalid consume resultType ${String(consumeAction.resultType)}.`);
+                }
+                if (consumeAction.resultType === "transform" && !world.itemDefinitions[consumeAction.resultDefinitionId]) {
+                    return fail("ITEM_TRANSFORM_TARGET_INVALID", `Item definition ${definitionId} references missing consume result definition ${consumeAction.resultDefinitionId}.`);
+                }
+                if (consumeAction.resultType === "remove" && consumeAction.resultDefinitionId) {
+                    return fail("ITEM_CONSUME_ACTION_INVALID", `Item definition ${definitionId} remove consume action must not define resultDefinitionId.`);
                 }
             }
             if (definition.useAction) {
@@ -1328,13 +1466,25 @@
         }
 
         for (const character of getCharacters(world)) {
+            if (setup.Presence && typeof setup.Presence.validateState === "function") {
+                const presenceValidation = setup.Presence.validateState(character, world);
+                if (!presenceValidation.ok) return presenceValidation;
+            }
+            if (!["active", "inactive"].includes(character.activationState)) {
+                return fail("CHARACTER_ACTIVATION_INVALID", `Character ${character.id} activationState must be active or inactive.`);
+            }
+            const inactive = character.activationState === "inactive";
             const location = getLocation(character.locationId, world);
             const sublocation = getSublocation(character.sublocationId, world);
-            if (!location) {
-                return fail("CHARACTER_LOCATION_INVALID", `Character ${character.id} has an invalid location.`);
-            }
-            if (!sublocation || sublocation.locationId !== location.id) {
-                return fail("CHARACTER_SUBLOCATION_INVALID", `Character ${character.id} has an invalid sublocation.`);
+            if (inactive) {
+                if (character.locationId !== null || character.sublocationId !== null) return fail("CHARACTER_INACTIVE_POSITION_INVALID", `Inactive character ${character.id} must be off-map.`);
+            } else {
+                if (!location) return fail("CHARACTER_LOCATION_INVALID", `Character ${character.id} has an invalid location.`);
+                if (!sublocation || sublocation.locationId !== location.id) return fail("CHARACTER_SUBLOCATION_INVALID", `Character ${character.id} has an invalid sublocation.`);
+                const constraint = character.movementConstraint;
+                if (constraint && constraint.type === "location_locked" && character.locationId !== constraint.locationId) {
+                    return fail("CHARACTER_MOVEMENT_CONSTRAINT_INVALID", `Character ${character.id} is outside its location lock.`);
+                }
             }
             if (!world.inventories[character.inventoryId] ||
                     world.inventories[character.inventoryId].ownerId !== character.id) {
@@ -1349,6 +1499,10 @@
             if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.validateAwayState === "function") {
                 const awayValidation = setup.WeeklyRhythm.validateAwayState(character, world);
                 if (!awayValidation.ok) return awayValidation;
+            }
+            if (!inactive && setup.Presence && typeof setup.Presence.baseLocalPresence === "function" &&
+                    setup.Presence.baseLocalPresence(character, world) && !setup.Presence.validLocalPlacement(character, world)) {
+                return fail("CHARACTER_LOCAL_TOPOLOGY_UNAVAILABLE", `Locally present character ${character.id} occupies unavailable conditional topology.`);
             }
             if (!Array.isArray(character.discoveredLocationIds) || new Set(character.discoveredLocationIds).size !== character.discoveredLocationIds.length) {
                 return fail("CHARACTER_DISCOVERY_INVALID", `Character ${character.id} discoveredLocationIds must be a unique array.`);
@@ -1452,8 +1606,8 @@
         }
 
         for (const [abilityId, ability] of Object.entries(world.abilities || {})) {
-            if (!ability || ability.id !== abilityId || !ActionRegistry[ability.actionType]) {
-                return fail("ABILITY_DEFINITION_INVALID", `Ability ${abilityId} has an invalid registered action type.`);
+            if (!ability || ability.id !== abilityId || ability.actionType !== "use_ability" || !AbilityEffectRegistry[ability.effectType]) {
+                return fail("ABILITY_DEFINITION_INVALID", `Ability ${abilityId} must use canonical use_ability with a registered effectType.`);
             }
         }
 
@@ -1598,6 +1752,111 @@
         return ok();
     }
 
+    function validatePresenceTopologyRuntimeDefinitions(world) {
+        const records = [];
+        Object.values(world.entities || {}).forEach(function (entity) {
+            if (!entity || !["location", "sublocation"].includes(entity.type)) return;
+            if (entity.presenceFallbackPlacement !== undefined && !entity.presenceOwnerCharacterId) {
+                records.push({ ok: false, error: { code: "PRESENCE_FALLBACK_INVALID", message: `${entity.type} ${entity.id} cannot define presenceFallbackPlacement without presenceOwnerCharacterId.` } });
+                return;
+            }
+            if (!entity.presenceOwnerCharacterId) return;
+            if (!getCharacter(entity.presenceOwnerCharacterId, world)) {
+                records.push({ ok: false, error: { code: "PRESENCE_OWNER_INVALID", message: `${entity.type} ${entity.id} references missing presence owner ${String(entity.presenceOwnerCharacterId)}.` } });
+                return;
+            }
+            const fallback = entity.presenceFallbackPlacement;
+            if (fallback !== undefined) {
+                const keys = fallback && typeof fallback === "object" && !Array.isArray(fallback) ? Object.keys(fallback) : [];
+                const location = fallback && getLocation(fallback.locationId, world);
+                const sublocation = fallback && getSublocation(fallback.sublocationId, world);
+                if (!fallback || typeof fallback !== "object" || Array.isArray(fallback) || keys.some(function (key) { return !["locationId", "sublocationId"].includes(key); }) ||
+                        keys.length !== 2 || !location || !sublocation || sublocation.locationId !== location.id ||
+                        location.presenceOwnerCharacterId === entity.presenceOwnerCharacterId || sublocation.presenceOwnerCharacterId === entity.presenceOwnerCharacterId) {
+                    records.push({ ok: false, error: { code: "PRESENCE_FALLBACK_INVALID", message: `${entity.type} ${entity.id} has an invalid presenceFallbackPlacement.` } });
+                }
+                return;
+            }
+            if (entity.type === "sublocation") {
+                const parent = getLocation(entity.locationId, world);
+                const defaultPosition = parent && getSublocation(parent.defaultSublocationId, world);
+                if (!parent || !defaultPosition || defaultPosition.id === entity.id || parent.presenceOwnerCharacterId === entity.presenceOwnerCharacterId ||
+                        defaultPosition.presenceOwnerCharacterId === entity.presenceOwnerCharacterId) {
+                    records.push({ ok: false, error: { code: "PRESENCE_FALLBACK_AMBIGUOUS", message: `Sublocation ${entity.id} requires an explicit presenceFallbackPlacement.` } });
+                }
+                return;
+            }
+            const destinations = Array.from(new Set(locationExitEntries(entity, world).map(function (entry) { return entry.destinationId; }).filter(Boolean)));
+            const destination = destinations.length === 1 ? getLocation(destinations[0], world) : null;
+            const defaultPosition = destination && getSublocation(destination.defaultSublocationId, world);
+            if (destinations.length !== 1 || !destination || !defaultPosition || destination.presenceOwnerCharacterId === entity.presenceOwnerCharacterId ||
+                    defaultPosition.presenceOwnerCharacterId === entity.presenceOwnerCharacterId) {
+                records.push({ ok: false, error: { code: "PRESENCE_FALLBACK_AMBIGUOUS", message: `Location ${entity.id} requires an explicit presenceFallbackPlacement.` } });
+            }
+        });
+        return records.length ? records[0] : ok();
+    }
+
+    function validateTriggeredEventRuntimeDefinitions(world) {
+        if (!world.triggeredEvents || typeof world.triggeredEvents !== "object" || Array.isArray(world.triggeredEvents)) {
+            return fail("TRIGGERED_EVENTS_INVALID", "triggeredEvents must be an object.");
+        }
+        for (const [eventId, event] of Object.entries(world.triggeredEvents)) {
+            if (!event || event.id !== eventId || !event.trigger || !["ordinary_tick", "timelapse_start"].includes(event.trigger.type) ||
+                    !Array.isArray(event.prerequisites) || !Array.isArray(event.effects) || event.effects.length < 1) {
+                return fail("TRIGGERED_EVENT_DEFINITION_INVALID", `Triggered event ${eventId} is malformed.`);
+            }
+            if (event.chance !== undefined && (typeof event.chance !== "number" || !Number.isFinite(event.chance) || event.chance <= 0 || event.chance > 1)) {
+                return fail("TRIGGERED_EVENT_DEFINITION_INVALID", `Triggered event ${eventId} has invalid chance.`);
+            }
+            if (![undefined, "normal", "none"].includes(event.narrationPolicy)) {
+                return fail("TRIGGERED_EVENT_DEFINITION_INVALID", `Triggered event ${eventId} has invalid narrationPolicy.`);
+            }
+            for (const prerequisite of event.prerequisites) {
+                if (!prerequisite || typeof prerequisite.type !== "string") return fail("TRIGGERED_EVENT_PREREQUISITE_INVALID", `Triggered event ${eventId} has malformed prerequisite.`);
+                if (prerequisite.type === "phase_is") {
+                    if (!["Morning", "Evening"].includes(prerequisite.phase)) return fail("TRIGGERED_EVENT_PREREQUISITE_INVALID", `Triggered event ${eventId} has invalid phase prerequisite.`);
+                } else if (prerequisite.type === "location_inventory_contains_tag") {
+                    if (!getLocation(prerequisite.locationId, world) || typeof prerequisite.tag !== "string" || !prerequisite.tag.trim() || (prerequisite.minimum !== undefined && prerequisite.minimum !== 1)) {
+                        return fail("TRIGGERED_EVENT_PREREQUISITE_INVALID", `Triggered event ${eventId} has invalid inventory-tag prerequisite.`);
+                    }
+                } else if (prerequisite.type === "character_activation_is") {
+                    if (!getCharacter(prerequisite.characterId, world) || !["active", "inactive"].includes(prerequisite.value)) return fail("TRIGGERED_EVENT_PREREQUISITE_INVALID", `Triggered event ${eventId} has invalid activation prerequisite.`);
+                } else if (prerequisite.type === "character_locally_present") {
+                    if (!getCharacter(prerequisite.characterId, world) || typeof prerequisite.value !== "boolean") return fail("TRIGGERED_EVENT_PREREQUISITE_INVALID", `Triggered event ${eventId} has invalid local-presence prerequisite.`);
+                } else if (!["character_active", "character_inactive"].includes(prerequisite.type)) {
+                    return fail("TRIGGERED_EVENT_PREREQUISITE_INVALID", `Triggered event ${eventId} has unsupported prerequisite ${String(prerequisite.type)}.`);
+                } else if (!getCharacter(prerequisite.characterId, world)) {
+                    return fail("TRIGGERED_EVENT_PREREQUISITE_INVALID", `Triggered event ${eventId} legacy activation prerequisite references missing character.`);
+                }
+            }
+            for (const effect of event.effects) {
+                if (!effect || !["activate_character", "deactivate_character", "consume_matching_items", "emit_observation"].includes(effect.type)) {
+                    return fail("TRIGGERED_EVENT_EFFECT_INVALID", `Triggered event ${eventId} has unsupported effect ${String(effect && effect.type)}.`);
+                }
+                if ((effect.type === "activate_character" || effect.type === "deactivate_character") && !getCharacter(effect.characterId, world)) {
+                    return fail("TRIGGERED_EVENT_EFFECT_INVALID", `Triggered event ${eventId} references missing character ${String(effect.characterId)}.`);
+                }
+                if (effect.type === "activate_character") {
+                    const target = getCharacter(effect.characterId, world);
+                    const location = getLocation(effect.locationId, world);
+                    const sublocation = effect.sublocationId ? getSublocation(effect.sublocationId, world) : null;
+                    if (!target || target.deferredActivation !== true || !location || (effect.sublocationId && (!sublocation || sublocation.locationId !== location.id))) {
+                        return fail("TRIGGERED_EVENT_EFFECT_INVALID", `Triggered event ${eventId} has invalid activation target/destination.`);
+                    }
+                }
+                if (effect.type === "consume_matching_items" && (!effect.source || effect.source.type !== "location_inventory" || !getLocation(effect.source.locationId, world) ||
+                        typeof effect.itemTag !== "string" || !effect.itemTag.trim() || effect.mode !== "all" || effect.preserveContainers !== true)) {
+                    return fail("TRIGGERED_EVENT_EFFECT_INVALID", `Triggered event ${eventId} has invalid consume-matching effect.`);
+                }
+                if (effect.type === "emit_observation" && (!getLocation(effect.locationId, world) || typeof effect.text !== "string" || !effect.text.trim() || (effect.actorCharacterId && !getCharacter(effect.actorCharacterId, world)))) {
+                    return fail("TRIGGERED_EVENT_EFFECT_INVALID", `Triggered event ${eventId} has invalid observation effect.`);
+                }
+            }
+        }
+        return ok();
+    }
+
     function validateWorld(world) {
         if (!world || typeof world !== "object") {
             return fail("WORLD_MISSING", "World state does not exist.");
@@ -1624,14 +1883,36 @@
 
         const spatialResult = validateSpatialInvariants(world);
         if (!spatialResult.ok) return spatialResult;
+        const presenceTopologyResult = validatePresenceTopologyRuntimeDefinitions(world);
+        if (!presenceTopologyResult.ok) return presenceTopologyResult;
         const itemResult = validateItemInvariants(world);
         if (!itemResult.ok) return itemResult;
         const environmentResult = validateEnvironmentAndDaytime(world);
         if (!environmentResult.ok) return environmentResult;
         const randomOutcomeResult = validateAuthoredOutcomeRuntime(world);
         if (!randomOutcomeResult.ok) return randomOutcomeResult;
+        const triggeredDefinitionResult = validateTriggeredEventRuntimeDefinitions(world);
+        if (!triggeredDefinitionResult.ok) return triggeredDefinitionResult;
+        if (!Number.isInteger(world.ordinaryTickId) || world.ordinaryTickId < 0) return fail("ORDINARY_TICK_ID_INVALID", "ordinaryTickId must be a non-negative integer.");
+        if (!world.triggeredEventRuntime || typeof world.triggeredEventRuntime !== "object" || Array.isArray(world.triggeredEventRuntime) ||
+                !Number.isInteger(world.triggeredEventRuntime.lastProcessedOrdinaryTickId) || world.triggeredEventRuntime.lastProcessedOrdinaryTickId < 0 ||
+                world.triggeredEventRuntime.lastProcessedOrdinaryTickId > world.ordinaryTickId) {
+            return fail("TRIGGERED_EVENT_RUNTIME_INVALID", "Triggered-event runtime bookkeeping is invalid.");
+        }
 
-        ensureAIState(world);
+        if (!world.ai || typeof world.ai !== "object" || Array.isArray(world.ai) ||
+                !Array.isArray(world.ai.turnQueue) || !world.ai.continuations || typeof world.ai.continuations !== "object" || Array.isArray(world.ai.continuations)) {
+            return fail("AI_STATE_INVALID", "AI runtime state is missing or malformed.");
+        }
+        const queuedCharacters = new Set();
+        for (const entry of world.ai.turnQueue) {
+            const characterId = entry && typeof entry === "object" ? entry.characterId : null;
+            if (typeof characterId !== "string" || !getCharacter(characterId, world) || queuedCharacters.has(characterId) ||
+                    typeof entry.reason !== "string") {
+                return fail("AI_TURN_QUEUE_INVALID", "AI turn queue contains a malformed, duplicate, or missing-character entry.");
+            }
+            queuedCharacters.add(characterId);
+        }
         for (const [characterId, continuation] of Object.entries(world.ai.continuations)) {
             if (!getCharacter(characterId, world)) {
                 return fail("AI_CONTINUATION_CHARACTER_INVALID", `AI continuation references missing character ${characterId}.`);
@@ -1660,6 +1941,15 @@
         if (!Array.isArray(world.debug.repairs)) world.debug.repairs = [];
         if (!Array.isArray(world.debug.controllerLog)) world.debug.controllerLog = [];
         if (!Array.isArray(world.debug.migrationReports)) world.debug.migrationReports = [];
+
+        if (setup.Presence && typeof setup.Presence.prepareCurrentWorld === "function") {
+            const presencePreparation = setup.Presence.prepareCurrentWorld(world);
+            if (!presencePreparation.ok) throw new Error(presencePreparation.error.message);
+        }
+        if (setup.WeeklyRhythm && typeof setup.WeeklyRhythm.preparePresenceState === "function") {
+            const schedulePresencePreparation = setup.WeeklyRhythm.preparePresenceState(world);
+            if (!schedulePresencePreparation.ok) throw new Error(schedulePresencePreparation.error.message);
+        }
 
         if (!world.environment || typeof world.environment !== "object" || Array.isArray(world.environment)) {
             world.environment = { timePhase: "evening", weatherNarrative: DEFAULT_WEATHER_NARRATIVE, weatherInitialized: false, weatherSource: "fallback" };
@@ -1729,6 +2019,20 @@
         if (typeof world.ai.inferenceSessionId !== "string" || !world.ai.inferenceSessionId.trim()) {
             world.ai.inferenceSessionId = createInferenceSessionId();
         }
+        if (!world.triggeredEvents || typeof world.triggeredEvents !== "object" || Array.isArray(world.triggeredEvents)) world.triggeredEvents = clone(setup.GeneratedWorldData.triggeredEvents || {});
+        if (!Number.isInteger(world.ordinaryTickId) || world.ordinaryTickId < 0) {
+            const legacyCounter = world.triggeredEventRuntime && Number.isInteger(world.triggeredEventRuntime.ordinaryTickCounter) && world.triggeredEventRuntime.ordinaryTickCounter >= 0
+                ? world.triggeredEventRuntime.ordinaryTickCounter : 0;
+            world.ordinaryTickId = legacyCounter;
+        }
+        if (!world.triggeredEventRuntime || typeof world.triggeredEventRuntime !== "object" || Array.isArray(world.triggeredEventRuntime)) world.triggeredEventRuntime = {};
+        if (!Number.isInteger(world.triggeredEventRuntime.lastProcessedOrdinaryTickId) || world.triggeredEventRuntime.lastProcessedOrdinaryTickId < 0) {
+            const legacyValues = Object.values(world.triggeredEventRuntime.lastProcessedOrdinaryTickByEvent || {}).filter(function (value) { return Number.isInteger(value) && value >= 0; });
+            world.triggeredEventRuntime.lastProcessedOrdinaryTickId = legacyValues.length ? Math.max.apply(Math, legacyValues) : Math.min(world.ordinaryTickId, 0);
+        }
+        if (world.triggeredEventRuntime.lastProcessedOrdinaryTickId > world.ordinaryTickId) world.triggeredEventRuntime.lastProcessedOrdinaryTickId = world.ordinaryTickId;
+        delete world.triggeredEventRuntime.ordinaryTickCounter;
+        delete world.triggeredEventRuntime.lastProcessedOrdinaryTickByEvent;
         synchronizeDerivedItemPlacement(world);
         repairAIQueue(world);
         return world;
@@ -1736,7 +2040,7 @@
 
     function ensureWorld() {
         if (!State.variables.world) {
-            State.variables.world = createInitialWorld();
+            throw new Error("World state has not been bootstrapped.");
         }
         const status = setup.SaveMigration.getStatusForWorld(State.variables.world);
         if (!status.supported) {
@@ -1745,23 +2049,15 @@
         if (status.required) {
             throw new Error("This save must be migrated before gameplay can continue.");
         }
-        return prepareCurrentWorld(State.variables.world);
+        return State.variables.world;
     }
 
     function getHumanCharacterId(world) {
         const result = validateControlAssignments(
-            world.control.assignments,
+            world && world.control && world.control.assignments ? world.control.assignments : {},
             world
         );
-
-        if (!result.ok) {
-            const repaired = repairControlInvariant(world, result.error.message);
-            if (!repaired.ok) {
-                throw new Error(repaired.error.message);
-            }
-            return repaired.humanCharacterId;
-        }
-
+        if (!result.ok) throw new Error(result.error.message);
         return result.humanCharacterId;
     }
 
@@ -1871,7 +2167,7 @@
     function nearbyCharacters(actor, world) {
         return getCharacters(world).filter(function (character) {
             return character.id !== actor.id &&
-                (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(character, world)) &&
+                (!setup.Presence || setup.Presence.isLocallyPresent(character, world)) &&
                 character.locationId === actor.locationId &&
                 characterHasDiscoveredCharacter(actor, character, world);
         });
@@ -2237,7 +2533,7 @@
 
     function bedSublocations(locationId, world) {
         return getSublocations(locationId, world).filter(function (sublocation) {
-            return (!setup.WeeklyRhythm || setup.WeeklyRhythm.isSublocationAvailable(sublocation, world)) &&
+            return (!setup.Presence || setup.Presence.isSublocationAvailable(sublocation, world)) &&
                 Array.isArray(sublocation.capabilities) && sublocation.capabilities.includes("sleep");
         });
     }
@@ -2249,7 +2545,7 @@
     }
 
     function timelapseRoute(actor, destinationId, world) {
-        if (!actor || !getLocation(destinationId, world) || (setup.WeeklyRhythm && (!setup.WeeklyRhythm.isCharacterPresent(actor, world) || !setup.WeeklyRhythm.isLocationAvailable(destinationId, world)))) return null;
+        if (!actor || !getLocation(destinationId, world) || (setup.Presence && !setup.Presence.isLocallyPresent(actor, world)) || (setup.Presence && !setup.Presence.isLocationAvailable(destinationId, world))) return null;
         const startId = actor.locationId;
         const queue = [startId];
         const previous = new Map([[startId, null]]);
@@ -2310,7 +2606,7 @@
         const actor = getCharacter(actorId, world);
         if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
         return Object.values(world.entities).filter(function (entity) {
-            return entity && entity.type === "location" && (!setup.WeeklyRhythm || setup.WeeklyRhythm.isLocationAvailable(entity, world));
+            return entity && entity.type === "location" && (!setup.Presence || setup.Presence.isLocationAvailable(entity, world));
         }).map(function (location) {
             const route = timelapseRoute(actor, location.id, world);
             if (!route) return null;
@@ -2346,10 +2642,14 @@
         if (sublocationOccupants(targetSublocation.id, world, actor.id).length >= targetSublocation.capacity) {
             return fail("SUBLOCATION_FULL", "The destination's default position is full.");
         }
+        const snapshot = snapshotWorld(world);
         actor.locationId = destinationId;
         actor.sublocationId = targetSublocation.id;
         const validation = validateWorld(world);
-        if (!validation.ok) return validation;
+        if (!validation.ok) {
+            restoreWorldInPlace(world, snapshot);
+            return validation;
+        }
         return ok({
             actorId: actorId,
             fromLocationId: fromLocationId,
@@ -2381,12 +2681,12 @@
             return ok({ actorId: actorId, phase: phase, applied: false, skipped: false, route: route });
         }
         const before = { locationId: actor.locationId, sublocationId: actor.sublocationId };
+        const snapshot = snapshotWorld(world);
         actor.locationId = destination.id;
         actor.sublocationId = targetSublocation.id;
         const validation = validateWorld(world);
         if (!validation.ok) {
-            actor.locationId = before.locationId;
-            actor.sublocationId = before.sublocationId;
+            restoreWorldInPlace(world, snapshot);
             return validation;
         }
         return ok({
@@ -2426,10 +2726,14 @@
             if (sublocationOccupants(bed.id, world, actor.id).length >= bed.capacity) {
                 return fail("SUBLOCATION_FULL", "The selected bed is full.");
             }
+            const snapshot = snapshotWorld(world);
             actor.sublocationId = bed.id;
             actor.sleeping = true;
             const validation = validateWorld(world);
-            if (!validation.ok) return validation;
+            if (!validation.ok) {
+                restoreWorldInPlace(world, snapshot);
+                return validation;
+            }
             return ok({ actorId: actorId, locationId: locationId, type: "sleep", bedId: bed.id, text: `${actor.name} went to sleep in ${location.name}.` });
         }
 
@@ -2441,11 +2745,19 @@
             if (!inputText || inputText.length > option.inputMaxLength) return fail("TIMELAPSE_STUDY_INPUT_INVALID", `Study input must contain 1 to ${option.inputMaxLength} characters.`);
             const item = world.entities[action.itemId];
             const definition = getItemDefinition(item, world);
+            const snapshot = snapshotWorld(world);
             const effectResult = ItemEffectRegistry.abstract_study.execute(actor, item, definition, definition.useAction, world, { input_text: inputText });
+            if (effectResult && effectResult.ok === false) {
+                restoreWorldInPlace(world, snapshot);
+                return effectResult;
+            }
             const feedback = effectResult && effectResult.feedback && effectResult.feedback[0];
             const stage = feedback && feedback.data && feedback.data.studyStage || "survey";
             const validation = validateWorld(world);
-            if (!validation.ok) return validation;
+            if (!validation.ok) {
+                restoreWorldInPlace(world, snapshot);
+                return validation;
+            }
             return ok({
                 actorId: actorId, locationId: locationId, type: "study_item", itemId: item.id, inputText: inputText, studyStage: stage,
                 knowledgeEntryId: feedback && feedback.data && feedback.data.knowledgeEntryId || null,
@@ -2459,10 +2771,17 @@
             if (!definition) return fail("TIMELAPSE_ACTION_UNAVAILABLE", "The selected timelapse action is not available in this room.");
             const effect = TimelapseEffectRegistry[definition.effectId];
             if (!effect) return fail("TIMELAPSE_EFFECT_UNKNOWN", "The selected timelapse effect is not supported by the engine.");
+            const snapshot = snapshotWorld(world);
             const result = effect.execute(actor, location, definition, world);
-            if (!result || !result.ok) return result || fail("TIMELAPSE_EFFECT_FAILED", "The timelapse action failed.");
+            if (!result || !result.ok) {
+                restoreWorldInPlace(world, snapshot);
+                return result || fail("TIMELAPSE_EFFECT_FAILED", "The timelapse action failed.");
+            }
             const validation = validateWorld(world);
-            if (!validation.ok) return validation;
+            if (!validation.ok) {
+                restoreWorldInPlace(world, snapshot);
+                return validation;
+            }
             return ok({
                 actorId: actorId,
                 locationId: locationId,
@@ -2491,7 +2810,7 @@
             return entry[1] === destinationId;
         }).map(function (entry) {
             const character = getCharacter(entry[0], world);
-            return character && (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(character, world))
+            return character && (!setup.Presence || setup.Presence.isLocallyPresent(character, world))
                 ? { id: character.id, name: character.name }
                 : null;
         }).filter(Boolean);
@@ -2504,6 +2823,32 @@
         if (!location || !findLocationExit(location, destinationId) || !characterHasDiscoveredLocation(actor, destinationId, world)) return [];
         return observedMoveDestinationTargets(actor, destinationId, world);
     }
+
+    const AbilityEffectRegistry = {
+        read_aura: {
+            execute: function (actor, ability, world) {
+                const visibleCharacters = getCharacterView(actor.id).location.characters;
+                const results = visibleCharacters.map(function (visibleCharacter) {
+                    const target = getCharacter(visibleCharacter.id, world);
+                    const authoredAura = target && target.engineFacts && typeof target.engineFacts.aura === "string" ? target.engineFacts.aura.trim() : "";
+                    return { characterId: visibleCharacter.id, name: visibleCharacter.name, aura: authoredAura || "You perceive nothing unusual." };
+                });
+                const feedbackText = results.length > 0
+                    ? ["You read the nearby auras."].concat(results.map(function (result) { return `${result.name}: ${result.aura}`; })).join("\n")
+                    : "You sense no other auras nearby.";
+                return { events: [], feedback: [{ recipientId: actor.id, kind: "observation", code: "AURA_SCAN_RESULT", text: feedbackText, data: { abilityId: ability.id, results: results } }] };
+            }
+        },
+        emit_location_observation: {
+            execute: function (actor, ability) {
+                const publicText = renderItemActionText(ability.publicText, { actorName: actor.name });
+                return {
+                    events: [{ type: "authored_ability_observation", actorId: actor.id, abilityId: ability.id, locationId: actor.locationId, sublocationId: actor.sublocationId, text: publicText }],
+                    feedback: [{ recipientId: actor.id, kind: "observation", code: "ABILITY_USED", text: ability.feedbackText, data: { abilityId: ability.id } }]
+                };
+            }
+        }
+    };
 
     const ActionRegistry = {
         move: {
@@ -2535,7 +2880,7 @@
                 const location = getLocation(actor.locationId, world);
                 const destination = getLocation(action.destination_id, world);
 
-                if (!destination || (setup.WeeklyRhythm && !setup.WeeklyRhythm.isLocationAvailable(destination, world))) {
+                if (!destination || (setup.Presence && !setup.Presence.isLocationAvailable(destination, world))) {
                     return fail("DESTINATION_NOT_FOUND", "Destination does not exist or is not currently present in the local world.");
                 }
                 if (!characterHasDiscoveredLocation(actor, destination.id, world)) {
@@ -2662,7 +3007,7 @@
                     destination_ids: (current.reachableSublocationIds || []).filter(function (id) {
                         const destination = getSublocation(id, world);
                         return id !== actor.sublocationId && destination &&
-                            (!setup.WeeklyRhythm || setup.WeeklyRhythm.isSublocationAvailable(destination, world)) &&
+                            (!setup.Presence || setup.Presence.isSublocationAvailable(destination, world)) &&
                             sublocationOccupants(id, world, actor.id).length < destination.capacity;
                     })
                 };
@@ -2676,7 +3021,7 @@
                 if (destination.locationId !== actor.locationId) {
                     return fail("SUBLOCATION_WRONG_LOCATION", "Destination position is in another major location.");
                 }
-                if (setup.WeeklyRhythm && !setup.WeeklyRhythm.isSublocationAvailable(destination, world)) {
+                if (setup.Presence && !setup.Presence.isSublocationAvailable(destination, world)) {
                     return fail("SUBLOCATION_NOT_AVAILABLE", "Destination position is not currently available in the local world.");
                 }
                 if (destination.id === actor.sublocationId) {
@@ -3275,42 +3620,29 @@
                     return fail("ITEM_NOT_OWNED", "Actor does not possess this item.");
                 }
                 const item = world.entities[action.item_id];
-                const definition = getItemDefinition(item, world);
-                const consumeAction = definition && definition.consumeAction;
-                if (!consumeAction) {
-                    return fail("ITEM_NOT_CONSUMABLE", "This item cannot be consumed in its current state.");
-                }
-                if (consumeAction.resultType !== "transform" || !getItemDefinition(consumeAction.resultDefinitionId, world)) {
-                    return fail("CONSUME_RESULT_INVALID", "The configured consume result is invalid.");
-                }
-                return ok();
+                return itemConsumePlan(item, world).ok ? ok() : itemConsumePlan(item, world);
             },
             execute: function (actor, action, world) {
                 const item = world.entities[action.item_id];
                 const fromDefinition = getItemDefinition(item, world);
                 const consumeAction = fromDefinition.consumeAction;
-                const fromDefinitionId = fromDefinition.id;
-                transformItem(item, consumeAction.resultDefinitionId, world);
+                const changed = applyItemConsume(item, world);
+                if (!changed.ok) throw new Error(changed.error.message);
+                const value = changed.value;
                 return { events: [{
-                    type: "item_transformed",
+                    type: value.removed ? "item_consumed" : "item_transformed",
                     actorId: actor.id,
-                    itemId: item.id,
+                    itemId: value.itemId,
                     actionType: "consume",
-                    fromDefinitionId: fromDefinitionId,
-                    toDefinitionId: item.definitionId,
+                    fromDefinitionId: value.fromDefinitionId,
+                    toDefinitionId: value.toDefinitionId,
                     locationId: actor.locationId,
                     sublocationId: actor.sublocationId,
-                    text: `${actor.name} drinks the ale from ${fromDefinition.name}.`
+                    text: renderItemActionText(consumeAction.publicText || "{actorName} consumes {itemName}.", { actorName: actor.name, itemName: fromDefinition.name })
                 }], feedback: [{
-                    recipientId: actor.id,
-                    kind: "observation",
-                    code: "ITEM_CONSUMED",
+                    recipientId: actor.id, kind: "observation", code: "ITEM_CONSUMED",
                     text: consumeAction.feedbackText || `You consume ${fromDefinition.name}.`,
-                    data: {
-                        itemId: item.id,
-                        fromDefinitionId: fromDefinitionId,
-                        toDefinitionId: item.definitionId
-                    }
+                    data: clone(value)
                 }] };
             }
         },
@@ -3464,6 +3796,98 @@
                 };
             }
         },
+
+        serve_food: {
+            description: "Serve authored food from the current sublocation using one existing reusable dish.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "serve_food" }, serving_action_id: { type: "string" } },
+                required: ["type", "serving_action_id"]
+            },
+            getOptions: function (actor, world) {
+                const sublocation = getSublocation(actor.sublocationId, world);
+                const inventory = sublocation && sublocation.inventoryId ? world.inventories[sublocation.inventoryId] : null;
+                const phase = world.environment.timePhase === "morning" ? "Morning" : world.environment.timePhase === "evening" ? "Evening" : "";
+                const actions = (sublocation && Array.isArray(sublocation.servingActions) ? sublocation.servingActions : []).map(function (serving) {
+                    if (!phase || !Array.isArray(serving.phases) || !serving.phases.includes(phase) || !inventory) return null;
+                    const dishItem = inventory.itemIds.map(function (itemId) { return world.entities[itemId]; }).find(function (item) {
+                        return item && item.definitionId === serving.requiredDishDefinitionId;
+                    });
+                    if (!dishItem) return null;
+                    const dishDefinition = world.itemDefinitions[serving.requiredDishDefinitionId];
+                    const resultDefinition = world.itemDefinitions[serving.resultDefinitionId];
+                    return {
+                        id: serving.id,
+                        action_label: serving.actionLabel,
+                        required_dish_definition_id: serving.requiredDishDefinitionId,
+                        required_dish_name: dishDefinition && dishDefinition.name || serving.requiredDishDefinitionId,
+                        result_definition_id: serving.resultDefinitionId,
+                        result_name: resultDefinition && resultDefinition.name || serving.resultDefinitionId,
+                        ai_description: serving.aiDescription || "",
+                        ai_prerequisites: clone(serving.aiPrerequisites || [])
+                    };
+                }).filter(Boolean);
+                return { serving_action_ids: actions.map(function (record) { return record.id; }), actions: actions };
+            },
+            validate: function (actor, action, world) {
+                const options = this.getOptions(actor, world);
+                if (!options.serving_action_ids.includes(action.serving_action_id)) return fail("SERVING_ACTION_UNAVAILABLE", "That food cannot currently be served here.");
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const sublocation = getSublocation(actor.sublocationId, world);
+                const serving = (sublocation.servingActions || []).find(function (record) { return record.id === action.serving_action_id; });
+                const cabinet = world.inventories[sublocation.inventoryId];
+                const dishId = cabinet.itemIds.find(function (itemId) {
+                    const item = world.entities[itemId];
+                    return item && item.definitionId === serving.requiredDishDefinitionId;
+                });
+                const dish = world.entities[dishId];
+                const fromDefinition = getItemDefinition(dish, world);
+                transformItem(dish, serving.resultDefinitionId, world);
+                transferItem(dish.id, cabinet, world.inventories[actor.inventoryId], world);
+                const resultDefinition = getItemDefinition(dish, world);
+                return { events: [{
+                    type: "food_served", actorId: actor.id, itemId: dish.id, actionType: "serve_food",
+                    fromDefinitionId: fromDefinition.id, toDefinitionId: resultDefinition.id,
+                    locationId: actor.locationId, sublocationId: actor.sublocationId,
+                    text: `${actor.name} serves ${resultDefinition.name}.`
+                }], feedback: [{ recipientId: actor.id, kind: "observation", code: "FOOD_SERVED", text: `You serve ${resultDefinition.name}.`, data: { itemId: dish.id, servingActionId: serving.id } }] };
+            }
+        },
+
+        use_ability: {
+            description: "Use one currently available authored ability by ability ID.",
+            schema: {
+                type: "object",
+                properties: { type: { const: "use_ability" }, ability_id: { type: "string" } },
+                required: ["type", "ability_id"],
+                additionalProperties: false
+            },
+            getOptions: function (actor, world) {
+                const abilities = (actor.abilityIds || []).map(function (abilityId) { return world.abilities[abilityId]; }).filter(function (ability) {
+                    return ability && ability.actionType === "use_ability" && AbilityEffectRegistry[ability.effectType];
+                }).map(function (ability) {
+                    return { id: ability.id, name: ability.name, label: ability.name, player_description: ability.playerDescription || "", ai_description: ability.aiDescription || "", effect_type: ability.effectType };
+                });
+                return { ability_ids: abilities.map(function (ability) { return ability.id; }), abilities: abilities };
+            },
+            validate: function (actor, action, world) {
+                if (Object.keys(action || {}).some(function (key) { return key !== "type" && key !== "ability_id"; })) {
+                    return fail("INVALID_ACTION_INPUT", "use_ability accepts only ability_id.");
+                }
+                const options = this.getOptions(actor, world);
+                if (!options.ability_ids.includes(action.ability_id)) return fail("ABILITY_NOT_AVAILABLE", "That ability is not owned or currently available to this actor.");
+                return ok();
+            },
+            execute: function (actor, action, world) {
+                const ability = world.abilities[action.ability_id];
+                const effect = ability && AbilityEffectRegistry[ability.effectType];
+                if (!effect) throw new Error("The configured ability effect is not supported by the engine.");
+                return effect.execute(actor, ability, world) || { events: [], feedback: [] };
+            }
+        },
+
 
         authored_interaction: {
             description: "Perform one authored physical interaction available at the actor's current position. interaction_id must be one of this action's listed interaction IDs.",
@@ -3640,50 +4064,7 @@
             }
         },
 
-        read_aura: {
-            description: "Read every currently perceivable character's aura.",
-            schema: {
-                type: "object",
-                properties: { type: { const: "read_aura" } },
-                required: ["type"],
-                additionalProperties: false
-            },
-            getOptions: function () {
-                return {};
-            },
-            validate: function (actor, action, world) {
-                if (Object.keys(action).some(function (key) { return key !== "type"; })) {
-                    return fail("INVALID_ACTION_INPUT", "read_aura does not accept caller-supplied targets or parameters.");
-                }
-                return ok();
-            },
-            execute: function (actor, action, world) {
-                const visibleCharacters = getCharacterView(actor.id).location.characters;
-                const results = visibleCharacters.map(function (visibleCharacter) {
-                    const target = getCharacter(visibleCharacter.id, world);
-                    const authoredAura = target && target.engineFacts && typeof target.engineFacts.aura === "string"
-                        ? target.engineFacts.aura.trim()
-                        : "";
-                    return {
-                        characterId: visibleCharacter.id,
-                        name: visibleCharacter.name,
-                        aura: authoredAura || "You perceive nothing unusual."
-                    };
-                });
-                const feedbackText = results.length > 0
-                    ? ["You read the nearby auras."].concat(results.map(function (result) {
-                        return `${result.name}: ${result.aura}`;
-                    })).join("\n")
-                    : "You sense no other auras nearby.";
-                return { events: [], feedback: [{
-                    recipientId: actor.id,
-                    kind: "observation",
-                    code: "AURA_SCAN_RESULT",
-                    text: feedbackText,
-                    data: { results: results }
-                }] };
-            }
-        }
+
     };
 
     const ACTION_AI_METADATA = Object.freeze({
@@ -3759,6 +4140,15 @@
             aiDescription: "Use an accessible item through its authored tracked item-specific effect.",
             aiPrerequisites: ["The relevant item must be accessible to or equipped by the actor.", "Any item-specific input requirements must be satisfied."],
         },
+        serve_food: {
+            aiDescription: "Serve one currently authored food portion from the current kitchen/fixture using an existing reusable dish.",
+            aiPrerequisites: ["The actor must be at the owning serving sublocation.", "The current Morning/Evening phase must offer that dish.", "The required empty bowl or plate must exist in the local Dish Cabinet."]
+        },
+        use_ability: {
+            aiDescription: "Use one specific owned authored ability by its listed ability_id. The engine returns the grounded result; never invent the result in advance.",
+            aiPrerequisites: ["The selected ability_id must be listed in the current action options and owned by the actor."]
+        },
+
         authored_interaction: {
             aiDescription: "Perform an authored physical interaction available at the actor's exact current position.",
             aiPrerequisites: ["The interaction must be authored at the actor's current sublocation and currently applicable."],
@@ -3779,10 +4169,7 @@
             aiDescription: "Privately defer the current visit's imminent planned departure by exactly one coarse timelapse period.",
             aiPrerequisites: ["The actor must be authored as awayable and currently present.", "The current planned departure must be exactly the boundary reached by the next timelapse transition.", "This action is available only during ordinary Morning or Evening gameplay, never inside timelapse planning."],
         },
-        read_aura: {
-            aiDescription: "Use the actor's formal aura-reading ability to request private engine-grounded aura information for currently perceivable characters.",
-            aiPrerequisites: ["The actor must possess the authored aura-reading ability."],
-        }
+
     });
 
     Object.entries(ACTION_AI_METADATA).forEach(function (entry) {
@@ -3807,6 +4194,10 @@
         }
         authoredInteractionRecords(actor, world).forEach(function (interaction) {
             grant("authored_interaction", { kind: "environment_interaction", id: interaction.id, label: interaction.actionLabel });
+        });
+        const servingOptions = ActionRegistry.serve_food.getOptions(actor, world);
+        (servingOptions.actions || []).forEach(function (serving) {
+            grant("serve_food", { kind: "serving_action", id: serving.id, label: serving.action_label, aiDescription: serving.ai_description, aiPrerequisites: clone(serving.ai_prerequisites || []) });
         });
         const environmentCapabilities = new Set(sublocation.capabilities || []);
         const actorInventory = world.inventories[actor.inventoryId];
@@ -3905,7 +4296,9 @@
 
         for (const abilityId of (actor.abilityIds || [])) {
             const ability = world.abilities[abilityId];
-            if (ability) grant(ability.actionType, { kind: "character_ability", id: ability.id, name: ability.name });
+            if (ability && ability.actionType === "use_ability" && AbilityEffectRegistry[ability.effectType]) {
+                grant("use_ability", { kind: "character_ability", id: ability.id, name: ability.name, label: ability.name, aiDescription: ability.aiDescription || "" });
+            }
         }
         return grants;
     }
@@ -4016,12 +4409,63 @@
         return mechanics;
     }
 
+    function actionHasExecutableInvocation(type, options) {
+        options = options || {};
+        function hasValues(key) { return Array.isArray(options[key]) && options[key].length > 0; }
+        switch (type) {
+            case "move":
+            case "unlock":
+            case "lock":
+            case "move_within_location":
+                return hasValues("destination_ids");
+            case "take_item":
+            case "drop_item":
+            case "read_paper":
+            case "write_paper":
+            case "fill":
+            case "consume":
+            case "unequip":
+            case "use_item":
+                return hasValues("item_ids");
+            case "give_item":
+                return hasValues("item_ids") && hasValues("target_ids");
+            case "transfer_items":
+                return hasValues("routes");
+            case "show_hidden_location":
+                return hasValues("location_ids");
+            case "give_money":
+                return hasValues("target_ids") && Number(options.maximum_amount || 0) > 0;
+            case "place_item":
+                return hasValues("item_ids") && hasValues("target_inventory_ids");
+            case "equip":
+                return Array.isArray(options.items) && options.items.some(function (item) {
+                    return item && Array.isArray(item.slots) && item.slots.length > 0;
+                });
+            case "serve_food":
+                return hasValues("serving_action_ids");
+            case "use_ability":
+                return hasValues("ability_ids");
+            case "authored_interaction":
+                return hasValues("interaction_ids");
+            case "offer_day_work":
+            case "go_hunting":
+                return hasValues("activity_ids");
+            default:
+                // Source-gated zero-input actions (currently sleep/defer_departure) are executable
+                // when granted even though they intentionally expose no option arrays.
+                return true;
+        }
+    }
+
     function getAvailableActions(actorId) {
         const world = ensureWorld();
         const actor = getCharacter(actorId, world);
 
         if (!actor) {
             return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        }
+        if (setup.Presence && !setup.Presence.isLocallyPresent(actor, world)) {
+            return {};
         }
 
         const actions = {};
@@ -4030,10 +4474,12 @@
         for (const [type, sources] of Object.entries(grants)) {
             const definition = ActionRegistry[type];
             if (!definition) continue;
+            const options = definition.getOptions(actor, world);
+            if (!actionHasExecutableInvocation(type, options)) continue;
             actions[type] = {
                 description: definition.description,
                 schema: clone(definition.schema),
-                options: definition.getOptions(actor, world),
+                options: options,
                 sources: clone(sources)
             };
         }
@@ -4047,6 +4493,9 @@
 
         if (!actor) {
             return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        }
+        if (setup.Presence && !setup.Presence.isLocallyPresent(actor, world)) {
+            return fail("ACTOR_NOT_PRESENT", "Actor character is not currently present in the local simulation.");
         }
 
         const location = getLocation(actor.locationId, world);
@@ -4079,7 +4528,8 @@
                         id: ability.id,
                         name: ability.name,
                         playerDescription: ability.playerDescription,
-                        actionType: ability.actionType
+                        actionType: ability.actionType,
+                        effectType: ability.effectType || null
                     } : null;
                 }).filter(Boolean)
             },
@@ -4102,13 +4552,18 @@
                 }),
                 description: clone(location.description || []),
                 sublocations: getSublocations(location.id, world).filter(function (sublocation) {
-                    return !setup.WeeklyRhythm || setup.WeeklyRhythm.isSublocationAvailable(sublocation, world);
+                    return !setup.Presence || setup.Presence.isSublocationAvailable(sublocation, world);
                 }).map(function (sublocation) {
                     return {
                         id: sublocation.id,
                         name: sublocation.name,
                         enter_label: sublocation.enterLabel,
-                        public_text: sublocation.publicText || "",
+                        public_text: (function () {
+                            const phase = world.environment && world.environment.timePhase === "morning" ? "Morning"
+                                : world.environment && world.environment.timePhase === "evening" ? "Evening" : "";
+                            return phase && sublocation.phasePublicText && sublocation.phasePublicText[phase]
+                                || sublocation.publicText || "";
+                        }()),
                         capacity: sublocation.capacity
                     };
                 }),
@@ -4174,7 +4629,9 @@
             target_inventory_id: "target_inventory_ids",
             activity_id: "activity_ids",
             location_id: "location_ids",
-            interaction_id: "interaction_ids"
+            interaction_id: "interaction_ids",
+            ability_id: "ability_ids",
+            serving_action_id: "serving_action_ids"
         };
         Object.entries(optionKeys).forEach(function (entry) {
             const propertyKey = entry[0];
@@ -4217,9 +4674,21 @@
         return errors;
     }
 
+    function normalizeLegacyAbilityAction(actor, action, world) {
+        if (!action || typeof action !== "object") return action;
+        const legacyEffectType = action.type === "read_aura" ? "read_aura" : (action.type === "emit_location_observation" ? "emit_location_observation" : null);
+        if (!legacyEffectType || Object.keys(action).some(function (key) { return key !== "type"; })) return action;
+        const matches = (actor && actor.abilityIds || []).map(function (abilityId) { return world.abilities[abilityId]; }).filter(function (ability) {
+            return ability && ability.actionType === "use_ability" && ability.effectType === legacyEffectType;
+        });
+        return matches.length === 1 ? { type: "use_ability", ability_id: matches[0].id } : action;
+    }
+
     function validateActionRequest(actorId, action) {
-        const actor = getCharacter(actorId, ensureWorld());
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
         if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        action = normalizeLegacyAbilityAction(actor, action, world);
         const available = getAvailableActions(actorId);
         const definition = action && typeof action === "object" ? available[action.type] : null;
         const errors = actionRequestErrors(action, definition);
@@ -4251,8 +4720,34 @@
         return result;
     }
 
+    function executePrevalidatedActionAfterContractChange(actorId, action, contractError, metadata) {
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        if (!actor) return recordGroundedActionFailure(actorId, action, { code: "ACTOR_NOT_FOUND", message: "Actor character does not exist." }, metadata);
+        if (setup.Presence && !setup.Presence.isLocallyPresent(actor, world)) {
+            return recordGroundedActionFailure(actorId, action, { code: "ACTOR_NOT_PRESENT", message: "You are no longer present in the local simulation." }, metadata);
+        }
+        const normalized = normalizeLegacyAbilityAction(actor, action, world);
+        const definition = normalized && ActionRegistry[normalized.type];
+        if (!definition || !grantedActionSources(actor, world)[normalized.type]) {
+            return recordGroundedActionFailure(actorId, normalized || action, { code: "ACTION_NOT_AVAILABLE", message: "The action became unavailable before the attempt could be completed." }, metadata);
+        }
+        const mechanical = definition.validate(actor, normalized, world);
+        if (!mechanical.ok) {
+            // Use the ordinary deterministic execution path so action-specific grounded feedback/events
+            // (for example a locked-passage attempt) remain authoritative.
+            return executeAction(actorId, normalized, metadata);
+        }
+        return recordGroundedActionFailure(actorId, normalized, {
+            code: "ACTION_NOT_AVAILABLE",
+            message: contractError && contractError.message || "The action became unavailable before the attempt could be completed."
+        }, metadata);
+    }
+
     function executeAction(actorId, action, metadata) {
         let world = ensureWorld();
+        metadata = metadata && typeof metadata === "object" ? metadata : {};
+        const transactionOwnedByCaller = metadata.worldTransactionOwned === true;
         const actor = getCharacter(actorId, world);
         const attempted = action && typeof action === "object" ? clone(action) : {};
 
@@ -4262,6 +4757,11 @@
 
         if (!action || typeof action !== "object") {
             return { ok: false, action: attempted, events: [], feedback: [], error: { code: "INVALID_ACTION", message: "Action must be an object." } };
+        }
+        action = normalizeLegacyAbilityAction(actor, action, world);
+
+        if (setup.Presence && !setup.Presence.isLocallyPresent(actor, world)) {
+            return { ok: false, action: attempted, events: [], feedback: [], error: { code: "ACTOR_NOT_PRESENT", message: "Actor character is not currently present in the local simulation." } };
         }
 
         const definition = ActionRegistry[action.type];
@@ -4299,22 +4799,26 @@
             return result;
         }
 
-        const snapshot = clone(world);
+        const snapshot = transactionOwnedByCaller ? null : snapshotWorld(world);
 
         try {
             const raw = definition.execute(actor, action, world);
             const rawEvents = Array.isArray(raw) ? raw : (raw.events || []);
             const feedback = Array.isArray(raw) ? [] : clone(raw.feedback || []);
             const modelRequests = Array.isArray(raw) ? [] : clone(raw.modelRequests || []);
-            const invariantResult = validateWorld(world);
-
-            if (!invariantResult.ok) {
-                throw new Error(invariantResult.error.message);
+            if (!transactionOwnedByCaller) {
+                const invariantResult = validateWorld(world);
+                if (!invariantResult.ok) throw invariantResult.error;
             }
 
             const events = rawEvents.map(function (eventData) {
                 const enriched = Object.assign({}, eventData);
                 if (metadata && metadata.interactionId) enriched.interactionId = metadata.interactionId;
+                if (enriched.authoredEffectType === "emit_observation" && setup.AuthoredEffects && typeof setup.AuthoredEffects.emitObservationEventData === "function") {
+                    const emitted = setup.AuthoredEffects.emitObservationEventData(enriched, world);
+                    if (!emitted.ok) throw new Error(emitted.error.message);
+                    return emitted.event;
+                }
                 return emitEvent(enriched, world);
             });
             routeFeedback(feedback, action, world, metadata);
@@ -4336,9 +4840,10 @@
             world.debug.lastActionResult = result;
             return result;
         } catch (error) {
+            if (transactionOwnedByCaller) throw error;
             State.variables.world = snapshot;
             world = getWorld();
-            const failure = { code: "ACTION_EXECUTION_FAILED", message: error.message };
+            const failure = { code: "ACTION_EXECUTION_FAILED", message: error && error.message || "Action execution failed." };
             if (world.control.assignments[actorId] === "ai") {
                 return recordGroundedActionFailure(actorId, action, failure, metadata);
             }
@@ -4350,10 +4855,14 @@
 
     function submitNarrative(actorId, input, metadata) {
         const world = ensureWorld();
+        const transactionOwnedByCaller = Boolean(metadata && metadata.worldTransactionOwned === true);
         const actor = getCharacter(actorId, world);
 
         if (!actor) {
             return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        }
+        if (setup.Presence && !setup.Presence.isLocallyPresent(actor, world)) {
+            return fail("ACTOR_NOT_PRESENT", "Actor character is not currently present in the local simulation.");
         }
 
         const text = input && typeof input.text === "string"
@@ -4384,11 +4893,13 @@
         }
         if (targetId) {
             const target = getCharacter(targetId, world);
-            if (!target || target.locationId !== narrativeLocationId || !characterHasDiscoveredCharacter(actor, target, world)) {
+            if (!target || target.locationId !== narrativeLocationId || !characterHasDiscoveredCharacter(actor, target, world) ||
+                    (setup.Presence && !setup.Presence.isLocallyPresent(target, world))) {
                 return fail("TARGET_NOT_NEARBY", "Narrative target is not nearby.");
             }
         }
 
+        const snapshot = transactionOwnedByCaller ? null : snapshotWorld(world);
         if (actor.sleeping === true) actor.sleeping = false;
 
         const event = emitEvent({
@@ -4407,23 +4918,106 @@
 
         const result = ok({ event: clone(event) });
         world.debug.lastActionResult = result;
+        if (!transactionOwnedByCaller) {
+            const validation = validateWorld(world);
+            if (!validation.ok) {
+                restoreWorldInPlace(world, snapshot);
+                return validation;
+            }
+        }
         return result;
     }
 
 
-    function submitIntent(actorId, input) {
+    function preflightIntent(actorId, input) {
         const world = ensureWorld();
         const actor = getCharacter(actorId, world);
         if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        if (setup.Presence && !setup.Presence.isLocallyPresent(actor, world)) {
+            return fail("ACTOR_NOT_PRESENT", "Actor character is not currently present in the local simulation.");
+        }
 
-        input = input && typeof input === "object" ? input : {};
+        input = input && typeof input === "object" && !Array.isArray(input) ? input : {};
         const text = typeof input.text === "string" ? input.text.trim() : "";
-        const action = input.action && typeof input.action === "object" ? clone(input.action) : null;
+        const actionSupplied = Object.prototype.hasOwnProperty.call(input, "action") && input.action !== null && input.action !== undefined;
+        if (actionSupplied && (typeof input.action !== "object" || Array.isArray(input.action))) {
+            return fail("ACTION_CONTRACT_REJECTED", "Action must be a structured object.");
+        }
+        let action = actionSupplied ? clone(input.action) : null;
         if (!text && !action) return fail("EMPTY_INTENT", "Submit a narrative, one formal action, or both.");
 
         if (action) {
             const contractValidation = validateActionRequest(actorId, action);
             if (!contractValidation.ok) return contractValidation;
+            action = clone(contractValidation.action);
+        }
+
+        const parsed = text ? setup.EventPerception.parseStructuredNarrative(text) : { spokenText: "", publicNarrative: "" };
+        const spokenText = Object.prototype.hasOwnProperty.call(input, "spokenText")
+            ? (typeof input.spokenText === "string" ? input.spokenText.trim() : "")
+            : parsed.spokenText;
+        const targetId = typeof input.target_id === "string" ? input.target_id : "";
+        const noticeability = SPEECH_LOUDNESS_VALUES.includes(input.noticeability) ? input.noticeability : "noticeable";
+
+        if (noticeability === "shout") {
+            if (targetId) return fail("SHOUT_TARGET_FORBIDDEN", "A shout cannot have an addressee.");
+            if (action && action.type === "move") return fail("SHOUT_MOVE_FORBIDDEN", "A shout cannot be combined with movement.");
+            if (!spokenText) return fail("SHOUT_SPEECH_REQUIRED", "Shout requires spoken text.");
+        }
+
+        let moveSpeechPhase = "origin";
+        if (text && targetId && action && action.type === "move") {
+            const target = getCharacter(targetId, world);
+            const targetInOrigin = Boolean(target && target.locationId === actor.locationId &&
+                (!setup.Presence || setup.Presence.isLocallyPresent(target, world)) && characterHasDiscoveredCharacter(actor, target, world));
+            const availableActions = getAvailableActions(actorId);
+            const moveOptions = availableActions.move && availableActions.move.options || {};
+            const knownDestinationTargets = moveOptions.speech_targets_by_destination && moveOptions.speech_targets_by_destination[action.destination_id] || [];
+            const targetKnownInDestination = knownDestinationTargets.some(function (candidate) { return candidate.id === targetId; });
+            if (!targetInOrigin && !targetKnownInDestination) {
+                return fail("SPEECH_TARGET_NOT_GROUNDED", "That addressee is neither nearby nor known to be at the selected destination.");
+            }
+            if (!targetInOrigin && targetKnownInDestination) moveSpeechPhase = "destination";
+        } else if (text && targetId) {
+            const target = getCharacter(targetId, world);
+            if (!target || target.locationId !== actor.locationId || !characterHasDiscoveredCharacter(actor, target, world) ||
+                    (setup.Presence && !setup.Presence.isLocallyPresent(target, world))) {
+                return fail("TARGET_NOT_NEARBY", "Narrative target is not nearby.");
+            }
+        }
+
+        return ok({
+            plan: {
+                text: text,
+                action: action,
+                targetId: targetId,
+                noticeability: noticeability,
+                moveSpeechPhase: moveSpeechPhase,
+                spokenText: spokenText
+            }
+        });
+    }
+
+
+    function submitIntent(actorId, input, options) {
+        options = options && typeof options === "object" ? options : {};
+        const world = ensureWorld();
+        const actor = getCharacter(actorId, world);
+        if (!actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+
+        input = input && typeof input === "object" ? input : {};
+        const preflightPlan = options.preflightPlan && typeof options.preflightPlan === "object" ? options.preflightPlan : null;
+        const text = preflightPlan ? preflightPlan.text : (typeof input.text === "string" ? input.text.trim() : "");
+        const action = preflightPlan && preflightPlan.action ? clone(preflightPlan.action) : (input.action && typeof input.action === "object" ? clone(input.action) : null);
+        if (!text && !action) return fail("EMPTY_INTENT", "Submit a narrative, one formal action, or both.");
+
+        let postStartContractFailure = null;
+        if (action) {
+            const contractValidation = validateActionRequest(actorId, action);
+            if (!contractValidation.ok) {
+                if (options.actionWasPrevalidated === true) postStartContractFailure = clone(contractValidation.error);
+                else return contractValidation;
+            }
         }
 
         const parsed = text ? setup.EventPerception.parseStructuredNarrative(text) : { spokenText: "", publicNarrative: "" };
@@ -4452,7 +5046,7 @@
             if (!targetInOrigin && targetKnownInDestination) moveSpeechPhase = "destination";
         }
 
-        const snapshot = clone(world);
+        const snapshot = snapshotWorld(world);
         const interactionId = world.nextIntentId++;
         let actionResult = null;
         let narrativeResult = null;
@@ -4472,12 +5066,15 @@
             if (text && moveSpeechPhase === "origin") {
                 narrativeResult = submitNarrative(actorId, narrativeInputFor(), {
                     interactionId: interactionId,
-                    locationId: actor.locationId
+                    locationId: actor.locationId,
+                    worldTransactionOwned: true
                 });
                 if (!narrativeResult.ok) throw narrativeResult.error;
             }
             if (action) {
-                actionResult = executeAction(actorId, action, { interactionId: interactionId });
+                actionResult = postStartContractFailure
+                    ? executePrevalidatedActionAfterContractChange(actorId, action, postStartContractFailure, { interactionId: interactionId, worldTransactionOwned: true })
+                    : executeAction(actorId, action, { interactionId: interactionId, worldTransactionOwned: true });
             }
             if (text && moveSpeechPhase === "destination") {
                 const currentWorld = getWorld();
@@ -4489,7 +5086,8 @@
                     : "";
                 narrativeResult = submitNarrative(actorId, narrativeInputFor(directTargetId), {
                     interactionId: interactionId,
-                    locationId: deliveryLocationId
+                    locationId: deliveryLocationId,
+                    worldTransactionOwned: true
                 });
                 if (!narrativeResult.ok) throw narrativeResult.error;
             }
@@ -4527,11 +5125,15 @@
         if (playerDescription.length > 2000) {
             return fail("CHARACTER_DESCRIPTION_INVALID", "Character description must not exceed 2000 characters.");
         }
+        const snapshot = snapshotWorld(world);
         character.name = name;
         character.playerDescription = playerDescription;
         if (world.inventories[character.inventoryId]) world.inventories[character.inventoryId].name = name;
         const validation = validateWorld(world);
-        if (!validation.ok) return validation;
+        if (!validation.ok) {
+            restoreWorldInPlace(world, snapshot);
+            return validation;
+        }
         return ok({
             characterId: characterId,
             name: character.name,
@@ -4548,6 +5150,7 @@
         ok: ok,
         fail: fail,
         createInitialWorld: createInitialWorld,
+        instantiateDeferredCharacter: instantiateDeferredCharacter,
         getCharacters: getCharacters,
         getCharacter: getCharacter,
         getLocation: getLocation,
@@ -4572,6 +5175,11 @@
         canAccessInventory: canAccessInventory,
         actorDirectlyCarriesItem: actorDirectlyCarriesItem,
         itemInstanceDisplayName: itemInstanceDisplayName,
+        transformItem: transformItem,
+        itemConsumePlan: itemConsumePlan,
+        applyItemConsume: applyItemConsume,
+        transferItem: transferItem,
+        renderItemActionText: renderItemActionText,
         observedMoveDestinationTargets: observedMoveDestinationTargets,
         positionText: positionText,
         synchronizeDerivedItemPlacement: synchronizeDerivedItemPlacement,
@@ -4582,6 +5190,10 @@
         hydrateAIQueueFromPendingObservations: hydrateAIQueueFromPendingObservations,
         currentAuthoringRevision: currentAuthoringRevision,
         ensureWorld: ensureWorld,
+        snapshotWorld: snapshotWorld,
+        restoreWorldInPlace: restoreWorldInPlace,
+        resetWorldTransactionDebug: function () { worldTransactionDebug.snapshots = 0; },
+        getWorldTransactionDebug: function () { return clone(worldTransactionDebug); },
         enqueueAITurn: enqueueAITurn,
         pushDebugLog: pushDebugLog,
         enqueueObservation: enqueueObservation,
@@ -4600,6 +5212,7 @@
         WORLD_SCHEMA_VERSION: WORLD_SCHEMA_VERSION,
         ActionRegistry: ActionRegistry,
         ItemEffectRegistry: ItemEffectRegistry,
+        AbilityEffectRegistry: AbilityEffectRegistry,
         TimelapseEffectRegistry: TimelapseEffectRegistry,
         createInitialWorld: createInitialWorld,
         bootstrap: function () {
@@ -4678,10 +5291,10 @@
             return ok({ playerSetup: clone(candidate.playerSetup), character: clone(candidate.entities.player) });
         },
         getWorld: function () {
-            return ensureWorld();
+            return State.variables.world || null;
         },
-        validateWorld: function () {
-            return validateWorld(ensureWorld());
+        validateWorld: function (world) {
+            return validateWorld(world || State.variables.world);
         },
         validateHumanControllerInvariant: function () {
             const world = ensureWorld();
@@ -4731,6 +5344,7 @@
         getAvailableActions: getAvailableActions,
         getRelevantMechanics: getRelevantMechanics,
         validateActionRequest: validateActionRequest,
+        preflightIntent: preflightIntent,
         recordGroundedActionFailure: recordGroundedActionFailure,
         perform: executeAction,
         narrate: submitNarrative,

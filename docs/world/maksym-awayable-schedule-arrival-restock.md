@@ -81,6 +81,18 @@ If he leaves late enough that fewer than three full periods have elapsed by Wood
 
 After Woodsday he naturally has substantially more schedule slack before the next Monday opportunity. This is authored schedule consequence, not a special engine rule.
 
+## 4.1 Wagon departure occupant fallback
+
+Maksym's armored `merchantWagon` is conditional topology owned by his local presence. Its only external location exit leads to `marketSquare`, so the generic conditional-topology fallback is unambiguous and requires no explicit authored override:
+
+```text
+merchantWagon -> marketSquare -> marketSquareCenter
+```
+
+If Maksym departs while another locally present Character remains inside the wagon, that Character is forced outside to `marketSquareCenter` before the departure commits. A sleeping occupant wakes because the supporting wagon bed/topology is no longer locally available, and the displaced Character receives grounded committed experience of the relocation. Maksym himself follows the normal awayable departure path and is not processed as a foreign occupant.
+
+Items, containers, locks, and inventories inside the wagon do **not** spill onto Market Square. They travel with the persisted unavailable wagon topology and are present in the same canonical storage when the wagon returns. This rule does not yet model passengers travelling with Maksym to another city.
+
 ---
 
 # Part B — Fresh-World Monday Evening Bootstrap

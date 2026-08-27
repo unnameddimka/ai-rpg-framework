@@ -29,7 +29,7 @@
     function eligible(characterId) {
         const world = setup.Game.getWorld();
         const actor = world.entities[characterId];
-        return Boolean(actor && actor.type === "character" && (!setup.WeeklyRhythm || setup.WeeklyRhythm.isCharacterPresent(actor, world)) && actor.mind && Array.isArray(actor.mind.verbatimObservations) && actor.mind.verbatimObservations.length > setup.MindV3.CONFIG.STM_TRIGGER_COUNT);
+        return Boolean(actor && actor.type === "character" && (!setup.Presence || setup.Presence.isLocallyPresent(actor, world)) && actor.mind && Array.isArray(actor.mind.verbatimObservations) && actor.mind.verbatimObservations.length > setup.MindV3.CONFIG.STM_TRIGGER_COUNT);
     }
 
     function schedulePump(delay) {

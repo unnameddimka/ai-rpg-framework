@@ -24,7 +24,7 @@ The API key is never stored in world data, game saves, or exported AI exchange l
 
 ## Build profiles
 
-`build.bat` / `build.sh` builds the public Mallowstead world from `data/world.json` and packages `dist/Mallowstead-0.1.2c-maksym.zip`.
+`build.bat` / `build.sh` builds the public Mallowstead world from `data/world.json` and packages a versioned public release ZIP in `dist/`.
 
 `build.bat private` / `build.sh private` builds the local private world from ignored `data/world.private.json`. Private generated artifacts are staged under `.build/` and must not replace tracked public generated files.
 
@@ -88,7 +88,7 @@ Global environment state now exposes coarse time (`Evening`, `Night`, `Morning`,
 
 Key-gated containers deliberately use a simpler rule than doors. A sublocation inventory may reference one concrete ordinary key item instance through `requiredKeyItemId`; only direct possession in the actor's normal inventory reveals/enables protected contents. The key can be transferred with ordinary item mechanics, and there is no separate chest open/closed/lock/unlock state. The authored world now uses this for Garrick's private chest, Harlan's private chest, and Mara's new cottage chest; Mara's Slab begins in her chest. Mara also carries a separate ordinary key for the now-lockable cottage entrance.
 
-Daytime activities are authored in `data/world.json` under `dayActivities`. The initial set is Mara assistance, Harlan forge assistance, and solo squirrel hunting. Sponsors decide whether to offer work through the AI-only formal `offer_day_work` action; the Human resolves a blocking in-game Accept/Decline overlay. Completed jobs settle only after all five rounds: Mara chooses 1-3 Healing Salve/Stamina Potion items, Harlan chooses 3-7 minted salary gold, and hunting produces 1-5 Squirrel Pelts by engine RNG. No buy/sell or price system is introduced.
+Daytime activities are authored in `data/world.json` under `dayActivities`. The initial set is Mara assistance, Harlan forge assistance, and solo squirrel hunting. Sponsors decide whether to offer work through the AI-only formal `offer_day_work` action; the Human resolves a blocking in-game Accept/Decline overlay. Completed jobs settle only after all five rounds: Mara chooses 1-3 Healing Salve/Stamina Potion items, Harlan chooses 3-7 minted salary gold, and hunting produces 1-5 Squirrel Pelts by engine RNG. Maksym provides a narrow merchant loop: selected goods have explicit external-sale values, characters negotiate in dialogue, and exchanges commit through ordinary grounded item and gold transfers. There is still no universal village price model, dedicated shop UI, or atomic `Trade` action.
 
 ## AI request behavior
 

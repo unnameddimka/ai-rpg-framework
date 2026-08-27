@@ -33,8 +33,19 @@
         return w.environment;
     }
 
+    function readShape(target) {
+        const w = target || world();
+        const source = w && w.environment && typeof w.environment === "object" && !Array.isArray(w.environment) ? w.environment : {};
+        return {
+            timePhase: Object.prototype.hasOwnProperty.call(PHASE_LABELS, source.timePhase) ? source.timePhase : "evening",
+            weatherNarrative: typeof source.weatherNarrative === "string" && source.weatherNarrative.trim() ? source.weatherNarrative : FALLBACK_WEATHER,
+            weatherInitialized: source.weatherInitialized === true,
+            weatherSource: typeof source.weatherSource === "string" ? source.weatherSource : "fallback"
+        };
+    }
+
     function timeLabel(phase) {
-        const value = phase || ensureShape().timePhase;
+        const value = phase || readShape().timePhase;
         return PHASE_LABELS[value] || "Evening";
     }
 
@@ -42,11 +53,27 @@
         if (!Object.prototype.hasOwnProperty.call(PHASE_LABELS, phase)) {
             return { ok: false, error: { code: "TIME_PHASE_INVALID", message: `Unknown time phase '${String(phase)}'.` } };
         }
-        ensureShape().timePhase = phase;
+        const w = world();
+        if (!w) return { ok: false, error: { code: "WORLD_MISSING", message: "World state is unavailable." } };
+        const snapshot = setup.GameInternals && typeof setup.GameInternals.snapshotWorld === "function"
+            ? setup.GameInternals.snapshotWorld(w)
+            : clone(w);
+        const previousLegacyTime = typeof State !== "undefined" && State.variables ? State.variables.time : undefined;
+        ensureShape(w).timePhase = phase;
         const label = timeLabel(phase);
         // world.environment.timePhase is authoritative. Keep the legacy SugarCube $time mirror synchronized
         // for old saves/debug dumps and any compatibility UI that still inspects State.variables.time.
         if (typeof State !== "undefined" && State.variables) State.variables.time = label;
+        const validation = setup.Game && typeof setup.Game.validateWorld === "function" ? setup.Game.validateWorld(w) : { ok: true };
+        if (!validation.ok) {
+            if (setup.GameInternals && typeof setup.GameInternals.restoreWorldInPlace === "function") setup.GameInternals.restoreWorldInPlace(w, snapshot);
+            else { Object.keys(w).forEach(function (key) { delete w[key]; }); Object.assign(w, clone(snapshot)); }
+            if (typeof State !== "undefined" && State.variables) {
+                if (previousLegacyTime === undefined) delete State.variables.time;
+                else State.variables.time = previousLegacyTime;
+            }
+            return validation;
+        }
         return { ok: true, value: { timePhase: phase, timeLabel: label } };
     }
 
@@ -307,7 +334,7 @@
         WEATHER_URL: WEATHER_URL,
         PHASE_LABELS: clone(PHASE_LABELS),
         ensureShape: ensureShape,
-        getStatus: function () { return clone(ensureShape()); },
+        getStatus: function () { return clone(readShape()); },
         getWeatherDiagnostics: function () { return clone(lastWeatherDiagnostics); },
         timeLabel: timeLabel,
         setTimePhase: setTimePhase,

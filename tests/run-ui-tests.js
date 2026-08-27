@@ -35,13 +35,16 @@ function viewFor(actorId, abilityIds, grant) {
         self: {
             id: actorId,
             abilities: abilityIds.map(function (id) {
-                return { id: id, name: "Read aura", playerDescription: "Sense nearby auras.", actionType: "read_aura" };
+                return { id: id, name: "Read aura", playerDescription: "Sense nearby auras.", actionType: "use_ability", effectType: "read_aura" };
             })
         },
         available_actions: grant ? {
-            read_aura: {
-                schema: { type: "object", properties: { type: { const: "read_aura" } }, required: ["type"] },
-                sources: [{ kind: "character_ability", id: "readAura", name: "Read aura" }]
+            use_ability: {
+                schema: { type: "object", properties: { type: { const: "use_ability" }, ability_id: { type: "string" } }, required: ["type", "ability_id"] },
+                options: {
+                    ability_ids: abilityIds.slice(),
+                    abilities: abilityIds.map(function (id) { return { id: id, name: id === "readAura" ? "Read aura" : id, label: id === "readAura" ? "Read aura" : id, player_description: "Sense nearby auras.", effect_type: "read_aura" }; })
+                }
             }
         } : {}
     };
@@ -49,7 +52,7 @@ function viewFor(actorId, abilityIds, grant) {
 
 for (const actorId of ["player", "innkeeper", "futureCharacter"]) {
     const buttons = model.discoverAvailableAbilities(viewFor(actorId, ["readAura"], true));
-    assert(buttons.length === 1 && buttons[0].actionType === "read_aura", `${actorId} should receive the same generic ability model`);
+    assert(buttons.length === 1 && buttons[0].actionType === "use_ability", `${actorId} should receive the same generic ability model`);
 }
 const controlledPlayerView = viewFor("player", [], false);
 const controlledInnkeeperView = viewFor("innkeeper", ["readAura"], true);
@@ -61,9 +64,10 @@ assert(model.discoverAvailableAbilities(viewFor("hoodedWoman", [], true)).length
 assert(model.discoverAvailableAbilities(viewFor("hoodedWoman", ["readAura"], false)).length === 0,
     "an assigned but unavailable ability should not render a control");
 const parameterized = viewFor("player", ["readAura"], true);
-parameterized.available_actions.read_aura.schema.properties.target_id = { type: "string" };
-assert(model.discoverAvailableAbilities(parameterized).length === 0,
-    "the milestone renderer should not guess parameters for parameterized actions");
+parameterized.available_actions.use_ability.options.abilities.push({ id: "secondAura", name: "Second aura", label: "Second aura", player_description: "Another ability.", effect_type: "read_aura" });
+parameterized.available_actions.use_ability.options.ability_ids.push("secondAura");
+assert(model.discoverAvailableAbilities(parameterized).length === 2,
+    "generic ability UI should render multiple concrete ability IDs without action-type ambiguity");
 
 const escaped = model.abilityResultMarkup({ ok: true, feedback: [{ code: "AURA_SCAN_RESULT", text: "Read.", data: {
     results: [{ name: "<img src=x onerror=alert(1)>", aura: "<& dangerous>" }]
@@ -168,7 +172,7 @@ const contextualView = {
         name: "Traveler",
         inventory: [{ id: "mug", name: "Empty mug" }, { id: "paper1", name: "Paper Sheet", display_name: "Paper Sheet — Meet me by the old…" }, { id: "memoryStone_01", name: "Memory Stone", description: "A smooth dark stone." }, { id: "chain", name: "Silver chain" }],
         equipped_items: [{ id: "hat", name: "Boonie hat", slot: "head", visible: true }],
-        abilities: [{ id: "readAura", name: "Read aura", playerDescription: "Sense auras.", actionType: "read_aura" }]
+        abilities: [{ id: "readAura", name: "Read aura", playerDescription: "Sense auras.", actionType: "use_ability", effectType: "read_aura" }]
     },
     location: {
         characters: [{ id: "innkeeper", name: "Bartender" }],
@@ -188,11 +192,10 @@ const contextualView = {
         use_item: { description: "Use an owned item.", options: { item_ids: ["memoryStone_01"], items: [{ id: "memoryStone_01", name: "Memory Stone", action_label: "Squeeze in hand", effect_id: "report_memory_counts" }] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
         equip: { description: "Equip item.", options: { item_ids: ["chain"], items: [{ id: "chain", name: "Silver chain", slots: ["neck"] }] }, schema: { properties: { type: {}, item_id: {}, slot: {} }, required: ["type", "item_id", "slot"] } },
         unequip: { description: "Unequip item.", options: { item_ids: ["hat"], items: [{ id: "hat", name: "Boonie hat", slot: "head" }] }, schema: { properties: { type: {}, item_id: {} }, required: ["type", "item_id"] } },
-        read_aura: {
-            description: "Read nearby auras.",
-            options: {},
-            schema: { type: "object", properties: { type: { const: "read_aura" } }, required: ["type"] },
-            sources: [{ kind: "character_ability", id: "readAura", name: "Read aura" }]
+        use_ability: {
+            description: "Use one currently available authored ability by ability ID.",
+            options: { ability_ids: ["readAura"], abilities: [{ id: "readAura", name: "Read aura", label: "Read aura", player_description: "Sense auras.", effect_type: "read_aura" }] },
+            schema: { type: "object", properties: { type: { const: "use_ability" }, ability_id: { type: "string" } }, required: ["type", "ability_id"] }
         }
     }
 };
@@ -301,6 +304,9 @@ assert(uiSource.includes('kind: "give-gold"') && uiSource.includes('label: "Give
     "quick Give gold should reuse the transfer-item picker pattern: configure/select give_money now and spend the turn only through normal Submit");
 assert(!stylesSource.includes(".framework-quick-give-gold"),
     "quick Give gold should not maintain a second custom inline-panel styling path");
+assert(uiSource.includes("const moveAction = view.available_actions.move") && uiSource.includes("moveDestinationIds.includes(destination.id)") &&
+    uiSource.includes("const giveMoneyAction = view.available_actions.give_money") && uiSource.includes("giveMoneyMaximum < 1 || giveMoneyTargets.length === 0"),
+    "Advanced formal controls should derive Move and Give money availability from their own canonical available_actions contracts");
 const preserveDraftHelperSource = uiSource.slice(uiSource.indexOf("function renderActionPanelPreservingNarrativeDraft"), uiSource.indexOf("function renderBulkTransferPicker", uiSource.indexOf("function renderActionPanelPreservingNarrativeDraft")));
 const bulkTransferPickerSource = uiSource.slice(uiSource.indexOf("function renderBulkTransferPicker"), uiSource.indexOf("function renderGiveGoldPicker", uiSource.indexOf("function renderBulkTransferPicker")));
 assert(preserveDraftHelperSource.includes('document.getElementById("action-narrative-text")') && preserveDraftHelperSource.includes("current.value") &&

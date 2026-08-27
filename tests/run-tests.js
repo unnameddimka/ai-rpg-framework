@@ -40,7 +40,7 @@ function perform(actorId, action, message) {
 
 load("src/generated/world-data.js");
 load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -266,8 +266,8 @@ perform("player", { type: "move", destination_id: "secludedCottage" }, "arcane-s
 perform("player", { type: "move_within_location", destination_id: "maraCottageChest" }, "arcane-slab fixture approaches Mara's chest");
 const lockedChestView = setup.CharacterAPI.getView("player");
 assert(!lockedChestView.accessible_inventories.some(function (inventory) { return inventory.id === "inventory_maraCottageChest"; }) &&
-    !lockedChestView.available_actions.take_item.options.item_ids.includes("arcaneKnowledgeSlab_01") &&
-    !lockedChestView.available_actions.place_item.options.target_inventory_ids.includes("inventory_maraCottageChest"),
+    (!lockedChestView.available_actions.take_item || !lockedChestView.available_actions.take_item.options.item_ids.includes("arcaneKnowledgeSlab_01")) &&
+    (!lockedChestView.available_actions.place_item || !lockedChestView.available_actions.place_item.options.target_inventory_ids.includes("inventory_maraCottageChest")),
     "a character without the exact chest key should see no canonical contents or item targets through Mara's keyed chest");
 assertFails(setup.CharacterAPI.perform("player", { type: "take_item", item_id: "arcaneKnowledgeSlab_01" }), "ITEM_NOT_ACCESSIBLE",
     "the slab should not be directly takeable through a keyed chest without its key");
@@ -735,8 +735,13 @@ assert(restoreAuthoringBootstrap.ok && restoreAuthoringBootstrap.migrationRequir
 assertOk(setup.SaveMigration.migrate(), "restoring current authored data should migrate back cleanly");
 world = setup.Game.getWorld();
 world.control.assignments.innkeeper = "human";
-assert(setup.Game.getHumanCharacterId() === "player", "invalid multi-human state should repair to player");
-assertOk(setup.Game.validateWorld(), "world should validate after controller repair");
+let invalidControlReadThrew = false;
+try { setup.Game.getHumanCharacterId(); } catch (error) { invalidControlReadThrew = true; }
+assert(invalidControlReadThrew, "controller getter must not silently repair invalid multi-human state");
+assert(setup.Game.validateWorld().ok === false, "pure validation should report invalid controller state without repairing it");
+assertOk(setup.GameInternals.repairControlInvariant(world, "test explicit repair"), "explicit controller repair");
+assert(setup.Game.getHumanCharacterId() === "player", "explicit repair should restore the canonical HumanController assignment");
+assertOk(setup.Game.validateWorld(), "world should validate after explicit controller repair");
 
 assert(world.entities.player.name === generatedBeforeSaveReconciliation.characters.player.name &&
     world.entities.player.playerDescription === generatedBeforeSaveReconciliation.characters.player.playerDescription,
@@ -746,23 +751,23 @@ assert(world.entities.player.mind && Array.isArray(world.entities.player.mind.pe
 const baseActions = setup.CharacterAPI.getAvailableActions("player");
 assert(baseActions.move.sources.some(function (source) { return source.kind === "base"; }),
     "base action should identify its grant source");
-assert(!baseActions.read_aura, "player should not receive read_aura");
+assert(!baseActions.use_ability, "player should not receive any authored ability action");
 assert(!baseActions.fill, "player outside an ale source should not receive fill");
 assert(baseActions.consume && baseActions.consume.options.item_ids.includes(mugTwo),
     "owned mug of ale should still expose consume outside the bar");
-assertFails(setup.CharacterAPI.perform("player", { type: "read_aura" }),
-    "ACTION_NOT_AVAILABLE", "ungranted aura action should be rejected before hidden data is read");
+assertFails(setup.CharacterAPI.perform("player", { type: "use_ability", ability_id: "readAura" }),
+    "ACTION_NOT_AVAILABLE", "ungranted ability action should be rejected before hidden data is read");
 
 assertOk(setup.Game.takeHumanControl("hoodedWoman"), "hooded woman takeover for aura test");
 const auraActions = setup.CharacterAPI.getAvailableActions("hoodedWoman");
-assert(auraActions.read_aura.sources.some(function (source) {
+assert(auraActions.use_ability.sources.some(function (source) {
     return source.kind === "character_ability" && source.id === "readAura";
-}), "read_aura should identify the individual ability source");
-assert(auraActions.read_aura.schema.required.length === 1 && auraActions.read_aura.schema.required[0] === "type" &&
-    !Object.prototype.hasOwnProperty.call(auraActions.read_aura.schema.properties, "target_id"),
-    "read_aura schema should require no caller input beyond its type");
-assertFails(setup.CharacterAPI.perform("hoodedWoman", { type: "read_aura", target_id: "player" }),
-    "INVALID_ACTION_INPUT", "read_aura should reject caller-supplied targets");
+}), "use_ability should identify the individual ability source");
+assert(auraActions.use_ability.schema.required.includes("ability_id") &&
+    !Object.prototype.hasOwnProperty.call(auraActions.use_ability.schema.properties, "target_id"),
+    "use_ability schema should require ability_id and no caller-supplied target");
+assertFails(setup.CharacterAPI.perform("hoodedWoman", { type: "use_ability", ability_id: "readAura", target_id: "player" }),
+    "INVALID_ACTION_INPUT", "use_ability should reject caller-supplied targets");
 perform("innkeeper", { type: "move", destination_id: "commonRoom" },
     "innkeeper should enter the aura actor's perceivable major location");
 const playerInboxBeforeAura = world.entities.player.mind.pendingObservations.length;
@@ -772,7 +777,7 @@ const expectedAuraTargetIds = setup.CharacterAPI.getView("hoodedWoman").location
     .map(function (character) { return character.id; }).sort();
 const eventCountBeforeAura = world.events.length;
 const positionsBeforeAura = [world.entities.player.locationId, world.entities.hoodedWoman.locationId, world.entities.innkeeper.locationId];
-const aura = perform("hoodedWoman", { type: "read_aura" }, "hooded woman should scan all perceivable auras");
+const aura = perform("hoodedWoman", { type: "use_ability", ability_id: "readAura" }, "hooded woman should scan all perceivable auras");
 assert(aura.events.length === 0 && aura.feedback.length === 1 && aura.error === null,
     "read_aura should be a private feedback-only normalized success");
 const auraResults = aura.feedback[0].data.results;
@@ -804,7 +809,7 @@ assert(world.entities.innkeeper.mind.pendingObservations.length === innkeeperInb
     "aura feedback must not enter a bystander inbox");
 perform("innkeeper", { type: "move", destination_id: "tavernEntrance" },
     "innkeeper should leave the aura actor's perception for exclusion tests");
-const secondAura = perform("hoodedWoman", { type: "read_aura" }, "second scan should use updated perception");
+const secondAura = perform("hoodedWoman", { type: "use_ability", ability_id: "readAura" }, "second scan should use updated perception");
 assert(!secondAura.feedback[0].data.results.some(function (item) { return item.characterId === "innkeeper"; }),
     "characters outside the actor's major location should be excluded from the scan");
 perform("player", { type: "move", destination_id: "tavernEntrance" },
@@ -813,7 +818,7 @@ perform("nell", { type: "move", destination_id: "tavernEntrance" },
     "Nell should leave for empty aura scan test");
 world.entities.roadMerchant.locationId = "marketSquare";
 world.entities.roadMerchant.sublocationId = "marketSquareCenter";
-const emptyAura = perform("hoodedWoman", { type: "read_aura" }, "aura scan with no perceivable characters should succeed");
+const emptyAura = perform("hoodedWoman", { type: "use_ability", ability_id: "readAura" }, "aura scan with no perceivable characters should succeed");
 assert(emptyAura.feedback[0].data.results.length === 0 && emptyAura.feedback[0].text === "You sense no other auras nearby.",
     "empty aura scan should return a grounded private no-target observation");
 perform("player", { type: "move", destination_id: "commonRoom" },

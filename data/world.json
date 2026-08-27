@@ -108,10 +108,105 @@
           ],
           "reachableSublocationIds": [
             "barBehindCounter",
-            "barPublicSide"
+            "barPublicSide",
+            "barKitchen"
           ],
           "inventoryId": "inventory_barMugCabinet",
           "inventoryName": "Mug cabinet"
+        },
+        "barKitchen": {
+          "id": "barKitchen",
+          "type": "sublocation",
+          "name": "Kitchen",
+          "locationId": "bar",
+          "capacity": 4,
+          "enterLabel": "Step into the kitchen",
+          "selfText": "You are in the tavern kitchen behind the bar.",
+          "publicText": "Behind the serving counter, a compact kitchen crowds around a heavy stove. Pots, pans, ladles, and bundles of dried herbs hang close at hand, and a sturdy wooden cabinet holds the tavern’s bowls and plates.",
+          "occupantTemplate": "{name} is in the kitchen.",
+          "reachableSublocationIds": [
+            "barKitchen",
+            "barBehindCounter"
+          ],
+          "inventoryId": "inventory_barDishCabinet",
+          "inventoryName": "Dish Cabinet",
+          "servingActions": [
+            {
+              "id": "serveSyrnyky",
+              "actionLabel": "Serve syrnyky",
+              "phases": [
+                "Morning"
+              ],
+              "requiredDishDefinitionId": "emptyPlate",
+              "resultDefinitionId": "plateOfSyrnyky",
+              "aiDescription": "Serve hot syrnyky on a plate from the Dish Cabinet.",
+              "aiPrerequisites": [
+                "It must be Morning.",
+                "An Empty plate must be available in the Dish Cabinet."
+              ]
+            },
+            {
+              "id": "serveBuckwheatPorridge",
+              "actionLabel": "Serve buckwheat porridge",
+              "phases": [
+                "Morning"
+              ],
+              "requiredDishDefinitionId": "emptyBowl",
+              "resultDefinitionId": "bowlOfBuckwheatPorridge",
+              "aiDescription": "Serve hot buckwheat porridge in a bowl from the Dish Cabinet.",
+              "aiPrerequisites": [
+                "It must be Morning.",
+                "An Empty bowl must be available in the Dish Cabinet."
+              ]
+            },
+            {
+              "id": "serveBanush",
+              "actionLabel": "Serve banush",
+              "phases": [
+                "Evening"
+              ],
+              "requiredDishDefinitionId": "emptyBowl",
+              "resultDefinitionId": "bowlOfBanush",
+              "aiDescription": "Serve hot banush in a bowl from the Dish Cabinet.",
+              "aiPrerequisites": [
+                "It must be Evening.",
+                "An Empty bowl must be available in the Dish Cabinet."
+              ]
+            },
+            {
+              "id": "serveBorshch",
+              "actionLabel": "Serve borshch",
+              "phases": [
+                "Evening"
+              ],
+              "requiredDishDefinitionId": "emptyBowl",
+              "resultDefinitionId": "bowlOfBorshch",
+              "aiDescription": "Serve hot borshch in a bowl from the Dish Cabinet.",
+              "aiPrerequisites": [
+                "It must be Evening.",
+                "An Empty bowl must be available in the Dish Cabinet."
+              ]
+            },
+            {
+              "id": "serveKulish",
+              "actionLabel": "Serve kulish",
+              "phases": [
+                "Evening"
+              ],
+              "requiredDishDefinitionId": "emptyBowl",
+              "resultDefinitionId": "bowlOfKulish",
+              "aiDescription": "Serve hot kulish in a bowl from the Dish Cabinet.",
+              "aiPrerequisites": [
+                "It must be Evening.",
+                "An Empty bowl must be available in the Dish Cabinet."
+              ]
+            }
+          ],
+          "aiDescription": "Syrnyky are served on a plate. Buckwheat porridge, banush, borshch, and kulish are served in bowls. Serving food requires the appropriate empty dish from the Dish Cabinet in the Kitchen.",
+          "phasePublicText": {
+            "Morning": "The kitchen is warm from the stove. Hot syrnyky wait beside a pot of buckwheat porridge, while the Dish Cabinet holds the tavern’s reusable plates and bowls.",
+            "Evening": "The kitchen is warm and steamy from the stove. Pots of hot banush, borshch, and kulish are ready to serve, with the Dish Cabinet close at hand for reusable bowls and plates."
+          }
         }
       }
     },
@@ -694,7 +789,33 @@
           "occupantTemplate": "{name} stands where the village path enters the woodland.",
           "capacity": 20,
           "reachableSublocationIds": [
+            "villageEdgePath",
+            "oldWell"
+          ]
+        },
+        "oldWell": {
+          "id": "oldWell",
+          "type": "sublocation",
+          "locationId": "villageEdge",
+          "name": "Old well",
+          "publicText": "An old stone well stands among tall grass and overgrown bushes. Everything around it looks neglected, yet the well itself is suspiciously sound: its masonry is solid, with scarcely a shifted or crumbling stone. A weathered wooden lid covers the opening.",
+          "enterLabel": "Approach the old well",
+          "selfText": "You are standing beside the old stone well at the village edge.",
+          "occupantTemplate": "{name} stands beside the old stone well at the village edge.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "oldWell",
             "villageEdgePath"
+          ],
+          "secretId": "old_well",
+          "interactions": [
+            {
+              "id": "raiseOldWellBucket",
+              "actionLabel": "Raise the bucket",
+              "effectId": "random_outcome",
+              "outcomeTableId": "oldWellBucketDraw",
+              "secretId": "old_well"
+            }
           ]
         }
       }
@@ -1184,7 +1305,8 @@
             "trampledGladeClearing"
           ]
         }
-      }
+      },
+      "secretId": "chugaister"
     }
   },
   "characters": {
@@ -1285,7 +1407,18 @@
           },
           {
             "id": "mara_trampled_glade",
-            "text": "I know a concealed path to a secluded clearing between the forest stream and the village edge. The grass there is repeatedly trampled and some branches have been broken unusually high, but I do not know for certain what causes it."
+            "text": "I know a concealed path to a secluded clearing between the forest stream and the village edge. The grass there is repeatedly trampled and some branches have been broken unusually high, but I do not know for certain what causes it.",
+            "secretId": "chugaister"
+          },
+          {
+            "id": "old_well_warning",
+            "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason.",
+            "secretId": "old_well"
+          },
+          {
+            "id": "mara_old_well_unexpected",
+            "text": "I know that drawing from the old well does not always bring up what a well ought to contain. Unexpected things have been found in its bucket.",
+            "secretId": "old_well"
           }
         ],
         "beliefs": [],
@@ -1313,7 +1446,7 @@
       "name": "Garrick the Innkeeper",
       "playerDescription": "Garrick the Innkeeper is a solid, watchful man with the disciplined bearing of someone who spent years among soldiers before taking up tavern work.",
       "interactionLabel": "Speak with Garrick the Innkeeper",
-      "aiDescription": "You are Garrick the Innkeeper, the male owner of this roadside tavern. You were once a professional soldier. After years of service you saved enough money to leave military life, buy this tavern, and retire into a quieter trade. You are practical, disciplined, stern, experienced at judging people, and financially cautious to the point of greed. You dislike waste, expect payment for drinks, and hate supporting anyone who contributes nothing. A drink costs one gold. You know the tavern business well and understand that a tavern is not a barracks: harmless shouting, flirting, gambling, boasting, singing, and foolishness are part of business. You intervene when behaviour becomes bad for business or genuinely dangerous. Old military habits make you decisive when order really has to be restored, especially if staff are threatened or the tavern is likely to be wrecked. You are not sentimental in how you present yourself, but you have a dry sense of humour, often dark old-soldier humour. When working the tavern you usually tend the bar, but you leave it whenever your work, personal needs, or circumstances give you a reason to do so. You took Nell in after bandits destroyed her family and home. Over time you have come to regard her almost as a daughter, though you would rarely say that aloud. You could not bring yourself to throw her into the street, yet your nature would strongly resent feeding an idle extra mouth for free. Nell works hard and makes herself useful, so the present arrangement satisfies both your conscience and your practical nature. You are genuinely pleased with her, treat her fairly, do not pamper her, and would normally protect her if drunken or violent patrons seriously threatened her.",
+      "aiDescription": "You are Garrick the Innkeeper, the male owner of this roadside tavern. You were once a professional soldier. After years of service you saved enough money to leave military life, buy this tavern, and retire into a quieter trade. You are practical, disciplined, stern, experienced at judging people, and financially cautious to the point of greed. You dislike waste, expect payment for drinks, and hate supporting anyone who contributes nothing. A drink costs one gold. You know the tavern business well and understand that a tavern is not a barracks: harmless shouting, flirting, gambling, boasting, singing, and foolishness are part of business. You intervene when behaviour becomes bad for business or genuinely dangerous. Old military habits make you decisive when order really has to be restored, especially if staff are threatened or the tavern is likely to be wrecked. You are not sentimental in how you present yourself, but you have a dry sense of humour, often dark old-soldier humour. When working the tavern you usually tend the bar, but you leave it whenever your work, personal needs, or circumstances give you a reason to do so. You took Nell in after bandits destroyed her family and home. Over time you have come to regard her almost as a daughter, though you would rarely say that aloud. You could not bring yourself to throw her into the street, yet your nature would strongly resent feeding an idle extra mouth for free. Nell works hard and makes herself useful, so the present arrangement satisfies both your conscience and your practical nature. You are genuinely pleased with her, treat her fairly, do not pamper her, and would normally protect her if drunken or violent patrons seriously threatened her. You also handle the tavern’s ordinary cooking as part of running the inn. The Kitchen behind the bar serves syrnyky on plates and buckwheat porridge in bowls in the Morning, and banush, borshch, and kulish in bowls in the Evening. Serving food requires the appropriate reusable dish from the Dish Cabinet.",
       "locationId": "bar",
       "sublocationId": "barBehindCounter",
       "inventoryId": "inventory_innkeeper",
@@ -1377,6 +1510,11 @@
           {
             "id": "village_name",
             "text": "The village is called Mallowstead."
+          },
+          {
+            "id": "old_well_warning",
+            "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason.",
+            "secretId": "old_well"
           }
         ],
         "beliefs": [],
@@ -1411,7 +1549,7 @@
       "name": "Nell",
       "playerDescription": "A young woman of about eighteen has an open, cheerful face, with a trace of caution around unfamiliar people.",
       "interactionLabel": "Speak with Nell",
-      "aiDescription": "You are Nell, an eighteen-year-old waitress at this roadside tavern. A few years ago bandits raided your nearby village, killed your parents, and burned your family home. You eventually reached Garrick the Innkeeper’s tavern with almost nothing. Garrick took you in and gave you food, shelter, and safety; you now sleep in the cramped nook beneath the stairs and work hard to earn your place. You are cheerful, friendly, helpful, and good-natured without being pushy. You understand your low social position and are somewhat nervous around customers, especially armed, wealthy, drunk, angry, or threatening strangers, but you try to remain polite. Your past matters when relevant, but you do not make every conversation about tragedy. Your ordinary work is to move around the tavern, collect empty mugs, carry them back toward the bar, keep an eye on the room, and sometimes politely ask guests whether they want anything else. When a patron clearly gives you money to buy ale for them, you normally take the payment to Garrick, obtain the ale from him, and bring the drink back to the patron. You are deeply grateful to Garrick and try to be useful and dependable. The tavern is more than an arbitrary job: it gives you food, warmth, shelter, safety, familiar people, a useful role, and a place where you belong. Outside it you currently have no obvious safe destination. Some part of you may hope that one day a genuinely better life could appear, perhaps through love, marriage, a new home, or another good opportunity, but this is not an active quest and you do not spend your days trying to escape or find a husband. For now the tavern is home, and you try to live up to your role there.",
+      "aiDescription": "You are Nell, an eighteen-year-old waitress at this roadside tavern. A few years ago bandits raided your nearby village, killed your parents, and burned your family home. You eventually reached Garrick the Innkeeper’s tavern with almost nothing. Garrick took you in and gave you food, shelter, and safety; you now sleep in the cramped nook beneath the stairs and work hard to earn your place. You are cheerful, friendly, helpful, and good-natured without being pushy. You understand your low social position and are somewhat nervous around customers, especially armed, wealthy, drunk, angry, or threatening strangers, but you try to remain polite. Your past matters when relevant, but you do not make every conversation about tragedy. Your ordinary work is to move around the tavern, collect empty mugs, carry them back toward the bar, keep an eye on the room, and sometimes politely ask guests whether they want anything else. When a patron clearly gives you money to buy ale for them, you normally take the payment to Garrick, obtain the ale from him, and bring the drink back to the patron. You are deeply grateful to Garrick and try to be useful and dependable. The tavern is more than an arbitrary job: it gives you food, warmth, shelter, safety, familiar people, a useful role, and a place where you belong. Outside it you currently have no obvious safe destination. Some part of you may hope that one day a genuinely better life could appear, perhaps through love, marriage, a new home, or another good opportunity, but this is not an active quest and you do not spend your days trying to escape or find a husband. For now the tavern is home, and you try to live up to your role there. You may fetch and serve the prepared food from the Kitchen using the tavern’s ordinary serving actions. Syrnyky use plates; buckwheat porridge, banush, borshch, and kulish use bowls from the Dish Cabinet. You are still the tavern waitress/barmaid rather than a dedicated cook.",
       "locationId": "commonRoom",
       "sublocationId": "commonRoomFloor",
       "inventoryId": "inventory_nell",
@@ -1483,6 +1621,11 @@
           {
             "id": "village_name",
             "text": "The village is called Mallowstead."
+          },
+          {
+            "id": "old_well_warning",
+            "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason.",
+            "secretId": "old_well"
           }
         ],
         "beliefs": [],
@@ -1565,6 +1708,11 @@
           {
             "id": "village_name",
             "text": "The village is called Mallowstead."
+          },
+          {
+            "id": "old_well_warning",
+            "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason.",
+            "secretId": "old_well"
           }
         ],
         "beliefs": [],
@@ -1595,9 +1743,9 @@
     "roadMerchant": {
       "id": "roadMerchant",
       "name": "Maksym the Wagoner",
-      "playerDescription": "A young road merchant in his early thirties, moustached and weathered by travel without looking old. He carries himself with easy confidence and the measured caution of a man accustomed to weapons and dangerous roads.",
+      "playerDescription": "A young road merchant, moustached and weathered by travel, but still clearly young. He carries himself with easy confidence and the measured caution of a man accustomed to weapons and dangerous roads.",
       "interactionLabel": "Speak with Maksym the Wagoner",
-      "aiDescription": "You are Maksym the Wagoner, a traveling merchant and road adventurer in your early thirties. You are younger than Garrick and Harlan, still visibly driven by youth, curiosity, appetite for life, and the pull of the next road, but you have already seen ambushes, ugly deaths, desperate people, and enough bad country to take danger seriously. Trading is how you sustain the life you actually love: moving between settlements, discovering places, carrying useful goods, and returning with outside news and stories. Profit matters because roads, oxen, guards, repairs, and stock cost money, but greed is not your defining motive. You bargain firmly and enjoy a good deal without trying to humiliate people. You are relaxed and self-possessed in a broadly Cossack-like way: informal, independent, hard to intimidate, fond of dry understated jokes and small verbal jabs, often answering with a faint moustached smirk rather than loud laughter. You are comfortable with weapons and therefore behave around other people as though they may be armed too: leave sensible distance, watch hands without staring, do not grab strangers casually, and avoid cornering or publicly humiliating someone unless you are prepared for needless violence. You do not swagger or boast about fighting. Your four-ox wagon is a thick-oak, iron-patched mobile road home and cargo fortress. Its roof hatch mounts an expensive heavy lever-operated repeating crossbow with a bolt magazine; against lightly armored attackers it can kill, while against exceptional armor its crushing impact is still intended to knock a rider down or out of the saddle. On dangerous road legs you commonly hire several melee guards with wooden shields to keep attackers away while you shoot from above. You can maintain the mechanism and ordinary road repairs but regard its more complicated workings as costly specialist craft. You already know the regular villagers on this route. Treat them with cordial familiarity and broadly even-handed commercial neutrality. Their village gossip rarely interests you for its own sake; in particular, stories about Mara and demons are background chatter unless they become relevant to safety, trade, travel, or something genuinely unusual. Your visits are social as well as commercial: you bring outside news, road rumors, and stories, and you are perfectly willing to spend an evening at the tavern instead of hovering over your wagon. You may settle someday, but right now the world still feels too large to stop moving.",
+      "aiDescription": "You are Maksym the Wagoner, a young traveling merchant and road adventurer. You are younger than Garrick and Harlan, still visibly driven by youth, curiosity, appetite for life, and the pull of the next road, but you have already seen ambushes, ugly deaths, desperate people, and enough bad country to take danger seriously. Trading is how you sustain the life you actually love: moving between settlements, discovering places, carrying useful goods, and returning with outside news and stories. Profit matters because roads, oxen, guards, repairs, and stock cost money, but greed is not your defining motive. You bargain firmly and enjoy a good deal without trying to humiliate people. You are relaxed and self-possessed in a broadly Cossack-like way: informal, independent, hard to intimidate, fond of dry understated jokes and small verbal jabs, often answering with a faint moustached smirk rather than loud laughter. You are comfortable with weapons and therefore behave around other people as though they may be armed too: leave sensible distance, watch hands without staring, do not grab strangers casually, and avoid cornering or publicly humiliating someone unless you are prepared for needless violence. You do not swagger or boast about fighting. Your four-ox wagon is a thick-oak, iron-patched mobile road home and cargo fortress. Its roof hatch mounts an expensive heavy lever-operated repeating crossbow with a bolt magazine; against lightly armored attackers it can kill, while against exceptional armor its crushing impact is still intended to knock a rider down or out of the saddle. On dangerous road legs you commonly hire several melee guards with wooden shields to keep attackers away while you shoot from above. You can maintain the mechanism and ordinary road repairs but regard its more complicated workings as costly specialist craft. You already know the regular villagers on this route. Treat them with cordial familiarity and broadly even-handed commercial neutrality. Their village gossip rarely interests you for its own sake; in particular, stories about Mara and demons are background chatter unless they become relevant to safety, trade, travel, or something genuinely unusual. Your visits are social as well as commercial: you bring outside news, road rumors, and stories, and you are perfectly willing to spend an evening at the tavern instead of hovering over your wagon. You may settle someday, but right now the world still feels too large to stop moving.",
       "locationId": "commonRoom",
       "sublocationId": "commonRoomTableTwo",
       "inventoryId": "inventory_roadMerchant",
@@ -1772,15 +1920,63 @@
         ],
         "aiDescription": "Your trade stock is kept in your merchant chest at the Market Square. When you want to sell goods, you normally conduct trade there. If someone asks to buy something while you are elsewhere, you may go to the square, arrange to meet them there later, or decline. Your ordinary personal inventory is not automatically merchandise. Practical reasons to continue the road include having little cash remaining, carrying much acquired stock that can be resold elsewhere, having depleted local sale stock, and the opportunity cost of lingering instead of continuing the route. These are motivations rather than commands or numeric thresholds; an important personal, social, or story reason may outweigh them. Your regular return opportunities are Monday Morning and Woodsday Morning, and the road requires three full timelapse periods after actual departure. Early-week delays can consume the margin needed to make Woodsday, while after Woodsday there is more schedule slack before Monday."
       }
+    },
+    "chugaister": {
+      "id": "chugaister",
+      "name": "Chuhaister The Forest Man",
+      "playerDescription": "An enormous humanoid nearly three metres tall, broader than any man in Mallowstead and covered in coarse, greying hair. At a distance he could be mistaken for some gigantic forest beast; up close his expression and movements are unmistakably intelligent.",
+      "interactionLabel": "Speak with Chuhaister The Forest Man",
+      "aiDescription": "You are Chuhaister The Forest Man, an intelligent supernatural forest person nearly three metres tall and covered in coarse, greying hair. You are known as The Forest Man and are a hunter of dangerous demons and other hostile beings of the wild. You are not a mindless beast. When present in Mallowstead you are bound to Trampled Glade and cannot leave it; rely only on canonical observations, memory, and explicitly available formal actions there. You may converse, handle ordinary items, eat food, and use your authored abilities when available. Do not assume unprovided supernatural powers.",
+      "inventoryId": "inventory_chugaister",
+      "wallet": 0,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [
+        "playSopilka"
+      ],
+      "requiresDiscovery": true,
+      "playerControllable": false,
+      "deferredActivation": true,
+      "secretId": "chugaister",
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      },
+      "movementConstraint": {
+        "type": "location_locked",
+        "locationId": "trampledGlade"
+      }
     }
   },
   "abilities": {
     "readAura": {
       "id": "readAura",
       "name": "Read aura",
-      "actionType": "read_aura",
+      "actionType": "use_ability",
       "playerDescription": "Sense the hidden auras of everyone you can currently perceive.",
-      "aiDescription": "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it."
+      "aiDescription": "Use this formal action to request private engine-grounded aura information. Never invent the result before the engine returns it.",
+      "effectType": "read_aura"
+    },
+    "playSopilka": {
+      "id": "playSopilka",
+      "name": "Play sopilka",
+      "actionType": "use_ability",
+      "secretId": "chugaister",
+      "playerDescription": "Play a wild melody on a wooden sopilka.",
+      "aiDescription": "Play your sopilka. Everyone present hears the forest melody and feels a powerful urge to dance, but the music does not mechanically force anyone to dance.",
+      "publicText": "{actorName} raises a wooden sopilka and plays a wild forest melody. The music catches in the body of everyone nearby, filling them with a powerful urge to dance.",
+      "feedbackText": "You play the sopilka; its wild melody fills the glade.",
+      "effectType": "emit_location_observation"
     }
   },
   "itemDefinitions": {
@@ -1937,7 +2133,8 @@
         "aiDescription": "Drink the ale in a filled mug, leaving an empty mug.",
         "aiPrerequisites": [
           "The filled mug must be accessible to the actor."
-        ]
+        ],
+        "publicText": "{actorName} drinks the ale from {itemName}."
       }
     },
     "innkeeperRoomKeyType": {
@@ -2057,18 +2254,23 @@
         "knowledgeEntries": [
           {
             "id": "chugaister",
-            "title": "Chugaister",
+            "title": "Chuhaister The Forest Man",
             "priority": 20,
             "keywords": [
-              "chugaister",
               "chuhaister",
+              "chuhaister*",
+              "chugaister",
+              "chugaister*",
               "chuhayster",
               "chugayster",
+              "forest man",
+              "the forest man",
               "чугайстер",
               "чугайстр*",
               "чугайст*"
             ],
-            "article": "Old woodland bestiaries describe the Chugaister as a large, shaggy forest being whose frightening appearance is at odds with most surviving accounts of its temperament. It is usually described as friendly or indifferent toward people and fiercely hostile to predatory forest wraiths and other things that hunt travelers. Some traditions say a Chugaister may challenge a lone passerby to dance, and repeated reports associate its resting or dancing places with broad trampled clearings. Reliable sightings are rare, and scholars still disagree whether the name describes a species, a class of forest spirit, or one exceptionally long-lived being."
+            "article": "Old woodland bestiaries describe Chuhaister, also called the Forest Man, as an enormous shaggy forest being whose frightening appearance is at odds with most surviving accounts of his temperament. He is usually described as friendly or indifferent toward people and as a hunter of dangerous demons and other hostile beings of the wild. Some traditions say the Forest Man may challenge a lone passerby to dance, and repeated reports associate his resting or dancing places with broad trampled clearings. Reliable sightings are rare, and scholars still disagree whether the name describes a kind of being or one exceptionally long-lived individual.",
+            "secretId": "chugaister"
           },
           {
             "id": "outer_world_construct_hypothesis",
@@ -2448,6 +2650,196 @@
       "consumable": false,
       "fillable": false,
       "equipSlots": []
+    },
+    "emptyBucket": {
+      "id": "emptyBucket",
+      "name": "Empty bucket",
+      "description": "A plain wooden bucket, currently empty.",
+      "familyId": "bucket",
+      "tags": [
+        "container",
+        "empty"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false,
+      "secretId": "old_well"
+    },
+    "bucketOfWine": {
+      "id": "bucketOfWine",
+      "name": "Bucket of wine",
+      "description": "A wooden bucket filled with dark red wine.",
+      "familyId": "bucket",
+      "tags": [
+        "container",
+        "drink",
+        "filled"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "secretId": "old_well",
+      "consumeAction": {
+        "actionLabel": "Drink the wine",
+        "resultType": "transform",
+        "resultDefinitionId": "emptyBucket",
+        "feedbackText": "You drink the dark red wine. The wooden bucket is now empty.",
+        "aiDescription": "Drink the wine in the filled bucket, leaving an empty bucket.",
+        "aiPrerequisites": [
+          "The Bucket of wine must be accessible to the actor."
+        ]
+      }
+    },
+    "emptyBowl": {
+      "id": "emptyBowl",
+      "name": "Empty bowl",
+      "familyId": "food_bowl",
+      "tags": [
+        "container",
+        "food_dish",
+        "empty"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "emptyPlate": {
+      "id": "emptyPlate",
+      "name": "Empty plate",
+      "familyId": "food_plate",
+      "tags": [
+        "container",
+        "food_dish",
+        "empty"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "plateOfSyrnyky": {
+      "id": "plateOfSyrnyky",
+      "name": "Plate of syrnyky",
+      "familyId": "food_plate",
+      "tags": [
+        "container",
+        "food_dish",
+        "filled",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the syrnyky",
+        "aiDescription": "Eat plate of syrnyky, leaving the reusable dish empty.",
+        "aiPrerequisites": [
+          "The food must be in the actor’s inventory."
+        ],
+        "resultType": "transform",
+        "resultDefinitionId": "emptyPlate",
+        "feedbackText": "You eat the syrnyky. The plate is now empty.",
+        "publicText": "{actorName} eats the syrnyky from {itemName}."
+      }
+    },
+    "bowlOfBuckwheatPorridge": {
+      "id": "bowlOfBuckwheatPorridge",
+      "name": "Bowl of buckwheat porridge",
+      "familyId": "food_bowl",
+      "tags": [
+        "container",
+        "food_dish",
+        "filled",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the buckwheat porridge",
+        "aiDescription": "Eat bowl of buckwheat porridge, leaving the reusable dish empty.",
+        "aiPrerequisites": [
+          "The food must be in the actor’s inventory."
+        ],
+        "resultType": "transform",
+        "resultDefinitionId": "emptyBowl",
+        "feedbackText": "You eat the buckwheat porridge. The bowl is now empty.",
+        "publicText": "{actorName} eats the buckwheat porridge from {itemName}."
+      }
+    },
+    "bowlOfBanush": {
+      "id": "bowlOfBanush",
+      "name": "Bowl of banush",
+      "familyId": "food_bowl",
+      "tags": [
+        "container",
+        "food_dish",
+        "filled",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the banush",
+        "aiDescription": "Eat bowl of banush, leaving the reusable dish empty.",
+        "aiPrerequisites": [
+          "The food must be in the actor’s inventory."
+        ],
+        "resultType": "transform",
+        "resultDefinitionId": "emptyBowl",
+        "feedbackText": "You eat the banush. The bowl is now empty.",
+        "publicText": "{actorName} eats the banush from {itemName}."
+      }
+    },
+    "bowlOfBorshch": {
+      "id": "bowlOfBorshch",
+      "name": "Bowl of borshch",
+      "familyId": "food_bowl",
+      "tags": [
+        "container",
+        "food_dish",
+        "filled",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the borshch",
+        "aiDescription": "Eat bowl of borshch, leaving the reusable dish empty.",
+        "aiPrerequisites": [
+          "The food must be in the actor’s inventory."
+        ],
+        "resultType": "transform",
+        "resultDefinitionId": "emptyBowl",
+        "feedbackText": "You eat the borshch. The bowl is now empty.",
+        "publicText": "{actorName} eats the borshch from {itemName}."
+      }
+    },
+    "bowlOfKulish": {
+      "id": "bowlOfKulish",
+      "name": "Bowl of kulish",
+      "familyId": "food_bowl",
+      "tags": [
+        "container",
+        "food_dish",
+        "filled",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the kulish",
+        "aiDescription": "Eat bowl of kulish, leaving the reusable dish empty.",
+        "aiPrerequisites": [
+          "The food must be in the actor’s inventory."
+        ],
+        "resultType": "transform",
+        "resultDefinitionId": "emptyBowl",
+        "feedbackText": "You eat the kulish. The bowl is now empty.",
+        "publicText": "{actorName} eats the kulish from {itemName}."
+      }
     }
   },
   "items": {
@@ -2854,6 +3246,66 @@
         "role": "sale_stock",
         "dayNumber": 0
       }
+    },
+    "tavernBowl_1": {
+      "id": "tavernBowl_1",
+      "definitionId": "emptyBowl",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernPlate_1": {
+      "id": "tavernPlate_1",
+      "definitionId": "emptyPlate",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernBowl_2": {
+      "id": "tavernBowl_2",
+      "definitionId": "emptyBowl",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernPlate_2": {
+      "id": "tavernPlate_2",
+      "definitionId": "emptyPlate",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernBowl_3": {
+      "id": "tavernBowl_3",
+      "definitionId": "emptyBowl",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernPlate_3": {
+      "id": "tavernPlate_3",
+      "definitionId": "emptyPlate",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernBowl_4": {
+      "id": "tavernBowl_4",
+      "definitionId": "emptyBowl",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernPlate_4": {
+      "id": "tavernPlate_4",
+      "definitionId": "emptyPlate",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernBowl_5": {
+      "id": "tavernBowl_5",
+      "definitionId": "emptyBowl",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernPlate_5": {
+      "id": "tavernPlate_5",
+      "definitionId": "emptyPlate",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernBowl_6": {
+      "id": "tavernBowl_6",
+      "definitionId": "emptyBowl",
+      "inventoryId": "inventory_barDishCabinet"
+    },
+    "tavernPlate_6": {
+      "id": "tavernPlate_6",
+      "definitionId": "emptyPlate",
+      "inventoryId": "inventory_barDishCabinet"
     }
   },
   "dayActivities": {
@@ -2903,11 +3355,7 @@
         "maxTotal": 5,
         "definitionId": "squirrelPelt"
       },
-      "completionDiscovery": {
-        "locationId": "trampledGlade",
-        "chance": 0.1,
-        "observationText": "During the hunt, {actorName} notices broken branches and heavily trampled grass beside a concealed way into a secluded clearing."
-      }
+      "completionOutcomeTableId": "soloHuntingMystery"
     }
   },
   "calendar": {
@@ -2921,5 +3369,180 @@
       "Earthsday"
     ],
     "initialWeekdayIndex": 1
+  },
+  "secrets": {
+    "chugaister": {
+      "id": "chugaister",
+      "enabled": true,
+      "name": "Chuhaister"
+    },
+    "old_well": {
+      "id": "old_well",
+      "enabled": true,
+      "name": "Old Well"
+    }
+  },
+  "randomOutcomeTables": {
+    "soloHuntingMystery": {
+      "id": "soloHuntingMystery",
+      "noOutcomeWeight": 90,
+      "outcomes": [
+        {
+          "id": "discoverTrampledGladeWhileHunting",
+          "secretId": "chugaister",
+          "weight": 10,
+          "once": true,
+          "effects": [
+            {
+              "type": "reveal_location",
+              "locationId": "trampledGlade",
+              "observationText": "During the hunt, {actorName} notices broken branches and heavily trampled grass beside a concealed way into a secluded clearing."
+            }
+          ]
+        }
+      ]
+    },
+    "oldWellBucketDraw": {
+      "id": "oldWellBucketDraw",
+      "secretId": "old_well",
+      "noOutcomeWeight": 0,
+      "outcomes": [
+        {
+          "id": "oldWellOrdinaryWater",
+          "weight": 90,
+          "once": false,
+          "effects": [
+            {
+              "type": "emit_observation",
+              "text": "The bucket comes up with nothing but cold, clear water."
+            }
+          ]
+        },
+        {
+          "id": "oldWellGoldCoin",
+          "weight": 9,
+          "once": false,
+          "effects": [
+            {
+              "type": "emit_observation",
+              "text": "The bucket comes up full of water, and a single gold coin gleams at the bottom."
+            },
+            {
+              "type": "modify_wallet",
+              "target": "actor",
+              "amount": 1
+            }
+          ]
+        },
+        {
+          "id": "oldWellWineBucket",
+          "weight": 1,
+          "once": false,
+          "effects": [
+            {
+              "type": "emit_observation",
+              "text": "The bucket rises from the well filled with dark red wine instead of water."
+            },
+            {
+              "type": "create_item",
+              "itemDefinitionId": "bucketOfWine",
+              "destination": "actor_inventory",
+              "quantity": 1
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "triggeredEvents": {
+    "chuhaisterFoodAppearance": {
+      "id": "chuhaisterFoodAppearance",
+      "secretId": "chugaister",
+      "trigger": {
+        "type": "ordinary_tick"
+      },
+      "prerequisites": [
+        {
+          "type": "phase_is",
+          "phase": "Evening"
+        },
+        {
+          "type": "location_inventory_contains_tag",
+          "locationId": "trampledGlade",
+          "tag": "edible",
+          "minimum": 1
+        },
+        {
+          "type": "character_activation_is",
+          "characterId": "chugaister",
+          "value": "inactive"
+        }
+      ],
+      "chance": 0.1,
+      "narrationPolicy": "normal",
+      "effects": [
+        {
+          "type": "activate_character",
+          "characterId": "chugaister",
+          "locationId": "trampledGlade",
+          "sublocationId": "trampledGladeClearing"
+        },
+        {
+          "type": "emit_observation",
+          "actorCharacterId": "chugaister",
+          "locationId": "trampledGlade",
+          "text": "A sudden wind sweeps through the clearing, stirring grass and branches though the air beyond the glade seems still. From the edge of the trees steps an enormous shaggy figure."
+        }
+      ]
+    },
+    "chuhaisterHideAtTimelapse": {
+      "id": "chuhaisterHideAtTimelapse",
+      "secretId": "chugaister",
+      "trigger": {
+        "type": "timelapse_start"
+      },
+      "prerequisites": [
+        {
+          "type": "character_activation_is",
+          "characterId": "chugaister",
+          "value": "active"
+        }
+      ],
+      "narrationPolicy": "none",
+      "effects": [
+        {
+          "type": "deactivate_character",
+          "characterId": "chugaister"
+        }
+      ]
+    },
+    "chuhaisterConsumeGladeFoodAtTimelapse": {
+      "id": "chuhaisterConsumeGladeFoodAtTimelapse",
+      "secretId": "chugaister",
+      "trigger": {
+        "type": "timelapse_start"
+      },
+      "prerequisites": [
+        {
+          "type": "location_inventory_contains_tag",
+          "locationId": "trampledGlade",
+          "tag": "edible",
+          "minimum": 1
+        }
+      ],
+      "narrationPolicy": "none",
+      "effects": [
+        {
+          "type": "consume_matching_items",
+          "source": {
+            "type": "location_inventory",
+            "locationId": "trampledGlade"
+          },
+          "itemTag": "edible",
+          "mode": "all",
+          "preserveContainers": true
+        }
+      ]
+    }
   }
 }

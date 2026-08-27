@@ -172,6 +172,21 @@
         return splitPresentation(entries, humanId);
     }
 
+    function describeTriggeredResult(triggerResult, humanId) {
+        const entries = [];
+        (triggerResult && Array.isArray(triggerResult.events) ? triggerResult.events : []).forEach(function (event) {
+            if (!event || !event.text || eventHiddenFromHuman(event, humanId)) return;
+            entries.push(presentationEntry(
+                event.text,
+                humanReceivesEvent(event, humanId) || event.actorId === humanId,
+                event.actorId || null,
+                event.locationId || null,
+                "triggered_event"
+            ));
+        });
+        return splitPresentation(entries, humanId);
+    }
+
     function describeWave(waveResult, humanId) {
         const entries = [];
         (waveResult && waveResult.results || []).forEach(function (result) {
@@ -243,6 +258,21 @@
         };
     }
 
+
+    function beginOrdinaryTick() {
+        const world = setup.Game.getWorld();
+        const previousTickId = Number.isInteger(world.ordinaryTickId) && world.ordinaryTickId >= 0 ? world.ordinaryTickId : 0;
+        const tickId = previousTickId + 1;
+        world.ordinaryTickId = tickId;
+        return { tickId: tickId, previousTickId: previousTickId };
+    }
+
+    function rollbackOrdinaryTick(reservation) {
+        if (!reservation) return;
+        const world = setup.Game.getWorld();
+        if (world && world.ordinaryTickId === reservation.tickId) world.ordinaryTickId = reservation.previousTickId;
+    }
+
     async function submitHumanIntent(input, client, options) {
         options = options && typeof options === "object" ? options : {};
         const actorId = setup.Game.getHumanCharacterId();
@@ -260,20 +290,38 @@
                 turnConsumed: false
             };
         }
-        if (input.action) {
-            const actionValidation = setup.CharacterAPI.validateActionRequest(actorId, input.action);
-            if (!actionValidation.ok) {
-                return {
-                    ok: false,
-                    error: clone(actionValidation.error),
-                    actorId: actorId,
-                    turnConsumed: false
-                };
-            }
+        const preflight = setup.CharacterAPI && typeof setup.CharacterAPI.preflightIntent === "function"
+            ? setup.CharacterAPI.preflightIntent(actorId, input)
+            : { ok: false, error: { code: "INTENT_PREFLIGHT_UNAVAILABLE", message: "Human intent preflight is unavailable." } };
+        if (!preflight.ok) {
+            return {
+                ok: false,
+                error: clone(preflight.error),
+                actorId: actorId,
+                turnConsumed: false
+            };
         }
 
-        const intentResult = setup.CharacterAPI.submitIntent(actorId, input);
-        if (!intentResult.ok) return intentResult;
+        const tickReservation = beginOrdinaryTick();
+        const triggeredResult = setup.TriggeredEvents && typeof setup.TriggeredEvents.processOrdinaryTick === "function"
+            ? setup.TriggeredEvents.processOrdinaryTick({ tickId: tickReservation.tickId })
+            : { ok: true, events: [] };
+        if (!triggeredResult.ok) {
+            rollbackOrdinaryTick(tickReservation);
+            return { ok: false, error: clone(triggeredResult.error), actorId: actorId, turnConsumed: false };
+        }
+        const triggeredPresentation = describeTriggeredResult(triggeredResult, actorId);
+        if (triggeredPresentation.entries.length > 0) {
+            emitCommittedPresentation(options, triggeredPresentation, { phase: "triggered-event", actorId: null });
+        }
+
+        const intentResult = setup.CharacterAPI.submitIntent(actorId, input, {
+            actionWasPrevalidated: Boolean(preflight.plan && preflight.plan.action),
+            preflightPlan: preflight.plan
+        });
+        if (!intentResult.ok) {
+            return Object.assign({}, intentResult, { actorId: actorId, turnConsumed: true });
+        }
         if (intentResult.actionResult && intentResult.actionResult.ok && setup.ItemModelEffects) {
             const modelEffects = await setup.ItemModelEffects.resolveActionResult(
                 actorId,
@@ -325,7 +373,7 @@
                 remainingQueue: setup.AITurnScheduler.getQueueView()
             };
             if (!timelapseResult.ok) {
-                const partialEntries = submittedPresentation.entries.concat(extraHiddenEntries);
+                const partialEntries = triggeredPresentation.entries.concat(submittedPresentation.entries).concat(extraHiddenEntries);
                 const partialPresentation = splitPresentation(partialEntries, actorId);
                 return {
                     ok: false,
@@ -353,7 +401,7 @@
             });
         }
         const wavePresentation = describeWave(waveResult, actorId);
-        const entries = submittedPresentation.entries.concat(wavePresentation.entries).concat(extraHiddenEntries);
+        const entries = triggeredPresentation.entries.concat(submittedPresentation.entries).concat(wavePresentation.entries).concat(extraHiddenEntries);
         const presentation = splitPresentation(entries, actorId);
         const narration = await narratePresentation(presentation, actorId);
 
@@ -467,13 +515,23 @@
         if (setup.Game.isPlayerSetupComplete && !setup.Game.isPlayerSetupComplete()) {
             return { ok: false, error: { code: "PLAYER_SETUP_INCOMPLETE", message: "Complete Traveler setup before gameplay begins." }, actorId: actorId, turnConsumed: false };
         }
+        const tickReservation = beginOrdinaryTick();
+        const triggeredResult = setup.TriggeredEvents && typeof setup.TriggeredEvents.processOrdinaryTick === "function"
+            ? setup.TriggeredEvents.processOrdinaryTick({ tickId: tickReservation.tickId })
+            : { ok: true, events: [] };
+        if (!triggeredResult.ok) { rollbackOrdinaryTick(tickReservation); return { ok: false, error: clone(triggeredResult.error), actorId: actorId, turnConsumed: false }; }
+        const triggeredPresentation = describeTriggeredResult(triggeredResult, actorId);
+        if (triggeredPresentation.entries.length > 0) {
+            emitCommittedPresentation(options, triggeredPresentation, { phase: "triggered-event", actorId: null });
+        }
         const waveResult = await setup.AITurnScheduler.processWave(client || setup.OpenRouterClient, {
             onCommittedResult: function (aiResult) {
                 const described = describeAIResult(aiResult, actorId);
                 emitCommittedPresentation(options, described, { phase: "ai-reaction", actorId: aiResult.actorId || null });
             }
         });
-        const presentation = describeWave(waveResult, actorId);
+        const wavePresentation = describeWave(waveResult, actorId);
+        const presentation = splitPresentation(triggeredPresentation.entries.concat(wavePresentation.entries), actorId);
         const narration = await narratePresentation(presentation, actorId);
         return {
             ok: waveResult.ok,

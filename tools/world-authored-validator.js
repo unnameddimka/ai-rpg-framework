@@ -7,11 +7,12 @@
     "use strict";
 const knownActions = new Set([
     "move", "move_within_location", "take_item", "drop_item", "give_item",
-    "give_money", "show_hidden_location", "transfer_items", "place_item", "fill", "consume", "equip", "unequip", "lock", "unlock", "read_aura", "read_paper", "write_paper", "sleep"
+    "give_money", "show_hidden_location", "transfer_items", "place_item", "fill", "consume", "equip", "unequip", "lock", "unlock", "read_paper", "write_paper", "sleep", "authored_interaction", "serve_food", "use_ability"
 ]);
 const knownEnvironmentCapabilities = new Set(["ale_source"]);
 const knownItemEffects = new Set(["report_memory_counts", "narrative_feedback", "abstract_study", "utility_query"]);
 const knownTimelapseEffects = new Set(["collect_mugs_to_storage"]);
+const knownAbilityEffects = new Set(["read_aura", "emit_location_observation"]);
 const controllers = new Set(["human", "dummy", "ai"]);
 
 function requireCondition(condition, message) {
@@ -73,6 +74,84 @@ function registerTechnicalId(owners, id, owner) {
     owners.set(id, owner);
 }
 
+
+function validateSecretReference(record, label, secretIds) {
+    if (!isObject(record) || !own(record, "secretId")) return;
+    requireCondition(nonBlank(record.secretId) && secretIds.has(record.secretId),
+        `${label} secretId '${String(record.secretId || "")}' must reference an authored secret.`);
+}
+
+function validateRandomEffect(effect, label, document) {
+    requireCondition(isObject(effect) && nonBlank(effect.type), `${label} must be an effect object with a type.`);
+    const allowed = new Set(["emit_observation", "reveal_location", "encounter_character", "modify_wallet", "create_item"]);
+    requireCondition(allowed.has(effect.type), `${label} has unsupported effect type '${String(effect.type)}'.`);
+    if (effect.type === "emit_observation") {
+        requireCondition(nonBlank(effect.text), `${label} emit_observation requires text.`);
+    } else if (effect.type === "reveal_location") {
+        const location = document.locations && document.locations[effect.locationId];
+        requireCondition(location && location.requiresDiscovery === true,
+            `${label} reveal_location must reference a requiresDiscovery location.`);
+        if (own(effect, "observationText")) requireCondition(nonBlank(effect.observationText), `${label} observationText must be non-empty text.`);
+    } else if (effect.type === "encounter_character") {
+        const character = document.characters && document.characters[effect.characterId];
+        requireCondition(character && character.requiresDiscovery === true,
+            `${label} encounter_character must reference a requiresDiscovery character.`);
+        if (own(effect, "observationText")) requireCondition(nonBlank(effect.observationText), `${label} observationText must be non-empty text.`);
+    } else if (effect.type === "modify_wallet") {
+        requireCondition(effect.target === "actor" && Number.isInteger(effect.amount) && effect.amount !== 0,
+            `${label} modify_wallet currently requires target=actor and a non-zero integer amount.`);
+    } else if (effect.type === "create_item") {
+        requireCondition(own(document.itemDefinitions || {}, String(effect.itemDefinitionId || "")),
+            `${label} create_item references missing item definition '${String(effect.itemDefinitionId || "")}'.`);
+        requireCondition(effect.destination === "actor_inventory",
+            `${label} create_item currently requires destination=actor_inventory.`);
+        requireCondition(effect.quantity === undefined || (Number.isInteger(effect.quantity) && effect.quantity > 0 && effect.quantity <= 100),
+            `${label} create_item quantity must be a positive integer up to 100.`);
+    }
+}
+
+
+function validatePresenceFallback(record, label, document) {
+    const ownerId = nonBlank(String(record && record.presenceOwnerCharacterId || "")) ? String(record.presenceOwnerCharacterId) : "";
+    const fallback = record && record.presenceFallbackPlacement;
+    if (!ownerId) {
+        requireCondition(fallback === undefined, `${label} cannot define presenceFallbackPlacement without presenceOwnerCharacterId.`);
+        return;
+    }
+
+    function validateExplicit(value) {
+        requireCondition(isObject(value) && nonBlank(value.locationId) && nonBlank(value.sublocationId) &&
+            Object.keys(value).every(function (key) { return key === "locationId" || key === "sublocationId"; }),
+            `${label} presenceFallbackPlacement must contain locationId and sublocationId.`);
+        const location = document.locations[value.locationId];
+        const sublocation = location && location.sublocations && location.sublocations[value.sublocationId];
+        requireCondition(location && sublocation, `${label} presenceFallbackPlacement references an invalid location/sublocation pair.`);
+        requireCondition(location.presenceOwnerCharacterId !== ownerId && sublocation.presenceOwnerCharacterId !== ownerId,
+            `${label} presenceFallbackPlacement cannot remain inside topology owned by the same presence owner.`);
+    }
+
+    if (fallback !== undefined) {
+        validateExplicit(fallback);
+        return;
+    }
+
+    if (record.type === "sublocation") {
+        const parent = document.locations[record.locationId];
+        const defaultSublocation = parent && parent.sublocations && parent.sublocations[parent.defaultSublocationId];
+        requireCondition(parent && defaultSublocation && defaultSublocation.id !== record.id &&
+            parent.presenceOwnerCharacterId !== ownerId && defaultSublocation.presenceOwnerCharacterId !== ownerId,
+            `${label} has no safe implicit presence fallback; author presenceFallbackPlacement explicitly.`);
+        return;
+    }
+
+    const destinationIds = Array.from(new Set(entries(record.exits).map(function (pair) { return exitTarget(pair[1]); }).filter(nonBlank)));
+    requireCondition(destinationIds.length === 1, `${label} has ambiguous external exits and requires explicit presenceFallbackPlacement.`);
+    const destination = document.locations[destinationIds[0]];
+    const defaultSublocation = destination && destination.sublocations && destination.sublocations[destination.defaultSublocationId];
+    requireCondition(destination && defaultSublocation && destination.presenceOwnerCharacterId !== ownerId && defaultSublocation.presenceOwnerCharacterId !== ownerId,
+        `${label} has no safe implicit presence fallback; author presenceFallbackPlacement explicitly.`);
+}
+
 function validateMind(mind, characterId) {
     requireCondition(isObject(mind), `Character ${characterId} must define initialMind.`);
     requireCondition(mind.schemaVersion === 3, `Character ${characterId} initialMind.schemaVersion must be 3.`);
@@ -117,6 +196,17 @@ function validateWorld(document) {
     requireCondition(isObject(document.locations) && isObject(document.characters) && isObject(document.abilities) &&
         isObject(document.itemDefinitions) && isObject(document.items) && isObject(document.dayActivities),
         "world.json must contain locations, characters, abilities, itemDefinitions, items, and dayActivities objects.");
+    requireCondition(document.secrets === undefined || isObject(document.secrets), "secrets must be an object when present.");
+    requireCondition(document.randomOutcomeTables === undefined || isObject(document.randomOutcomeTables), "randomOutcomeTables must be an object when present.");
+    requireCondition(document.triggeredEvents === undefined || isObject(document.triggeredEvents), "triggeredEvents must be an object when present.");
+    const secretIds = new Set();
+    for (const [secretKey, secret] of entries(document.secrets || {})) {
+        requireCondition(isObject(secret) && secret.id === secretKey && nonBlank(secretKey), `Secret key ${secretKey} must match its non-empty id.`);
+        requireCondition(!secretIds.has(secretKey), `Duplicate secret ID '${secretKey}'.`);
+        secretIds.add(secretKey);
+        requireCondition(typeof secret.enabled === "boolean", `Secret ${secretKey} enabled must be Boolean.`);
+        requireCondition(nonBlank(secret.name), `Secret ${secretKey} needs an author-facing name.`);
+    }
     if (document.calendar !== undefined) {
         requireCondition(isObject(document.calendar), "calendar must be an object when present.");
         requireCondition(Array.isArray(document.calendar.weekdayNames) && document.calendar.weekdayNames.length === 7 &&
@@ -137,6 +227,7 @@ function validateWorld(document) {
 
     for (const [id, location] of entries(document.locations)) {
         requireCondition(isObject(location) && location.id === id, `Location key ${id} must match its id.`);
+        validateSecretReference(location, `Location ${id}`, secretIds);
         registerTechnicalId(technicalIdOwners, id, `location ${id}`);
         const passage = String(location.passage || "");
         requireCondition(nonBlank(passage) && !/[\r\n\[\]]/.test(passage),
@@ -150,6 +241,7 @@ function validateWorld(document) {
             requireCondition(nonBlank(String(location.presenceOwnerCharacterId || "")), `Location ${id} presenceOwnerCharacterId must be a non-empty character ID.`);
             presenceOwnerRefs.push({ locationId: id, characterId: String(location.presenceOwnerCharacterId) });
         }
+        validatePresenceFallback(location, `Location ${id}`, document);
         if (own(location, "requiresDiscovery")) {
             requireCondition(typeof location.requiresDiscovery === "boolean", `Location ${id} requiresDiscovery must be Boolean.`);
         }
@@ -218,6 +310,7 @@ function validateWorld(document) {
         for (const [sublocationId, sublocation] of entries(location.sublocations)) {
             requireCondition(isObject(sublocation) && sublocation.id === sublocationId && sublocation.locationId === id,
                 `Sublocation ${sublocationId} has invalid identity or parent.`);
+            validateSecretReference(sublocation, `Sublocation ${sublocationId}`, secretIds);
             registerTechnicalId(technicalIdOwners, sublocationId, `sublocation ${sublocationId}`);
             if (nonBlank(String(sublocation.inventoryId || ""))) {
                 registerInventory(inventoryOwners, String(sublocation.inventoryId), `sublocation ${sublocationId}`);
@@ -226,6 +319,7 @@ function validateWorld(document) {
                 requireCondition(nonBlank(String(sublocation.presenceOwnerCharacterId || "")), `Sublocation ${sublocationId} presenceOwnerCharacterId must be a non-empty character ID.`);
                 presenceOwnerRefs.push({ locationId: id, sublocationId: sublocationId, characterId: String(sublocation.presenceOwnerCharacterId) });
             }
+            validatePresenceFallback(sublocation, `Sublocation ${sublocationId}`, document);
             if (own(sublocation, "requiredKeyItemId")) {
                 requireCondition(nonBlank(String(sublocation.inventoryId || "")),
                     `Sublocation ${sublocationId} cannot require a key without an inventory.`);
@@ -233,6 +327,49 @@ function validateWorld(document) {
                     `Sublocation ${sublocationId} has invalid requiredKeyItemId '${String(sublocation.requiredKeyItemId)}'.`);
                 keyedContainerRefs.push({ sublocationId: sublocationId, itemId: String(sublocation.requiredKeyItemId) });
             }
+            if (sublocation.phasePublicText !== undefined) {
+                requireCondition(isObject(sublocation.phasePublicText), `Sublocation ${sublocationId} phasePublicText must be an object.`);
+                for (const [phase, text] of entries(sublocation.phasePublicText)) {
+                    requireCondition(["Morning", "Evening"].includes(phase) && nonBlank(text),
+                        `Sublocation ${sublocationId} phasePublicText has invalid phase/text '${phase}'.`);
+                }
+            }
+            const interactions = sublocation.interactions === undefined ? [] : sublocation.interactions;
+            requireCondition(Array.isArray(interactions), `Sublocation ${sublocationId} interactions must be an array.`);
+            const interactionIds = new Set();
+            for (const interaction of interactions) {
+                requireCondition(isObject(interaction) && nonBlank(interaction.id) && nonBlank(interaction.actionLabel) && interaction.effectId === "random_outcome" && nonBlank(interaction.outcomeTableId),
+                    `Sublocation ${sublocationId} has an invalid authored interaction.`);
+                validateSecretReference(interaction, `Sublocation ${sublocationId} interaction ${String(interaction.id)}`, secretIds);
+                requireCondition(!interactionIds.has(interaction.id), `Sublocation ${sublocationId} has duplicate interaction ID '${interaction.id}'.`);
+                interactionIds.add(interaction.id);
+                registerTechnicalId(technicalIdOwners, interaction.id, `environment interaction ${interaction.id}`);
+            }
+            const servingActions = sublocation.servingActions === undefined ? [] : sublocation.servingActions;
+            requireCondition(Array.isArray(servingActions), `Sublocation ${sublocationId} servingActions must be an array.`);
+            const servingActionIds = new Set();
+            servingActions.forEach(function (serving, servingIndex) {
+                requireCondition(isObject(serving) && nonBlank(serving.id) && nonBlank(serving.actionLabel) &&
+                    Array.isArray(serving.phases) && serving.phases.length > 0 &&
+                    serving.phases.every(function (phase) { return ["Morning", "Evening"].includes(phase); }) &&
+                    new Set(serving.phases).size === serving.phases.length &&
+                    own(document.itemDefinitions, String(serving.requiredDishDefinitionId || "")) &&
+                    own(document.itemDefinitions, String(serving.resultDefinitionId || "")) &&
+                    nonBlank(serving.aiDescription) && Array.isArray(serving.aiPrerequisites) && serving.aiPrerequisites.every(nonBlank),
+                    `Sublocation ${sublocationId} serving action ${servingIndex} is invalid.`);
+                requireCondition(!servingActionIds.has(serving.id), `Sublocation ${sublocationId} has duplicate serving action ID '${serving.id}'.`);
+                servingActionIds.add(serving.id);
+                registerTechnicalId(technicalIdOwners, serving.id, `serving action ${serving.id}`);
+                requireCondition(nonBlank(String(sublocation.inventoryId || "")), `Sublocation ${sublocationId} serving actions require a sublocation inventory.`);
+                const dish = document.itemDefinitions[serving.requiredDishDefinitionId];
+                const result = document.itemDefinitions[serving.resultDefinitionId];
+                requireCondition(result && result.consumeAction && result.consumeAction.resultType === "transform" &&
+                    result.consumeAction.resultDefinitionId === serving.requiredDishDefinitionId,
+                    `Sublocation ${sublocationId} serving action ${serving.id} result must consume back to its required reusable dish.`);
+                requireCondition(dish && Array.isArray(dish.tags) && dish.tags.includes("food_dish") && dish.tags.includes("empty"),
+                    `Sublocation ${sublocationId} serving action ${serving.id} requires an invalid reusable dish definition.`);
+            });
+
             const capabilities = Array.isArray(sublocation.capabilities) ? sublocation.capabilities : [];
             for (const capability of capabilities) {
                 const action = String(capability || "");
@@ -247,6 +384,7 @@ function validateWorld(document) {
     for (const [id, definition] of entries(document.itemDefinitions)) {
         requireCondition(isObject(definition) && definition.id === id,
             `Item definition key ${id} must match its id.`);
+        validateSecretReference(definition, `Item definition ${id}`, secretIds);
         registerTechnicalId(technicalIdOwners, id, `item definition ${id}`);
         requireCondition(nonBlank(definition.name) && nonBlank(definition.familyId),
             `Item definition ${id} needs a name and familyId.`);
@@ -284,10 +422,17 @@ function validateWorld(document) {
             `Item definition ${id} has an invalid fillAction.`);
         }
         if (definition.consumeAction) {
-            requireCondition(nonBlank(definition.consumeAction.actionLabel) &&
-                definition.consumeAction.resultType === "transform" &&
-                nonBlank(definition.consumeAction.resultDefinitionId),
-            `Item definition ${id} has an invalid consumeAction.`);
+            const consume = definition.consumeAction;
+            requireCondition(nonBlank(consume.actionLabel) && ["transform", "remove"].includes(consume.resultType),
+                `Item definition ${id} has an invalid consumeAction.`);
+            if (consume.resultType === "transform") {
+                requireCondition(nonBlank(consume.resultDefinitionId), `Item definition ${id} transform consumeAction requires resultDefinitionId.`);
+            } else {
+                requireCondition(!own(consume, "resultDefinitionId") || consume.resultDefinitionId === null || consume.resultDefinitionId === "",
+                    `Item definition ${id} remove consumeAction must not define resultDefinitionId.`);
+            }
+            if (own(consume, "feedbackText")) requireCondition(nonBlank(consume.feedbackText), `Item definition ${id} consumeAction.feedbackText must be non-empty text.`);
+            if (own(consume, "publicText")) requireCondition(nonBlank(consume.publicText), `Item definition ${id} consumeAction.publicText must be non-empty text.`);
         }
         if (definition.description !== undefined) {
             requireCondition(typeof definition.description === "string",
@@ -333,6 +478,7 @@ function validateWorld(document) {
                         requireCondition(entry && typeof entry === "object" && !Array.isArray(entry),
                             `Item definition ${id} has an invalid knowledge entry.`);
                         if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+                        validateSecretReference(entry, `Item definition ${id} knowledge entry ${entry.id || "?"}`, secretIds);
                         requireCondition(nonBlank(entry.id) && entry.id.length <= 120 && !entryIds.has(entry.id),
                             `Item definition ${id} has an invalid or duplicate knowledge entry ID.`);
                         if (nonBlank(entry.id)) entryIds.add(entry.id);
@@ -377,20 +523,28 @@ function validateWorld(document) {
     }
 
     for (const [id, definition] of entries(document.itemDefinitions)) {
-        for (const actionField of ["fillAction", "consumeAction"]) {
-            const action = definition[actionField];
-            if (action) {
-                requireCondition(own(document.itemDefinitions, action.resultDefinitionId),
-                    `Item definition ${id} references missing result definition '${action.resultDefinitionId}'.`);
-            }
+        if (definition.fillAction) {
+            requireCondition(own(document.itemDefinitions, definition.fillAction.resultDefinitionId),
+                `Item definition ${id} references missing result definition '${definition.fillAction.resultDefinitionId}'.`);
+        }
+        if (definition.consumeAction && definition.consumeAction.resultType === "transform") {
+            requireCondition(own(document.itemDefinitions, definition.consumeAction.resultDefinitionId),
+                `Item definition ${id} references missing result definition '${definition.consumeAction.resultDefinitionId}'.`);
         }
     }
 
     for (const [id, ability] of entries(document.abilities)) {
         requireCondition(isObject(ability) && ability.id === id, `Ability key ${id} must match its id.`);
+        validateSecretReference(ability, `Ability ${id}`, secretIds);
         registerTechnicalId(technicalIdOwners, id, `ability ${id}`);
-        requireCondition(knownActions.has(String(ability.actionType)),
-            `Ability ${id} references unknown action '${ability.actionType}'.`);
+        requireCondition(ability.actionType === "use_ability",
+            `Ability ${id} must use canonical actionType 'use_ability'.`);
+        requireCondition(knownAbilityEffects.has(String(ability.effectType || "")),
+            `Ability ${id} references unknown effectType '${String(ability.effectType)}'.`);
+        if (ability.effectType === "emit_location_observation") {
+            requireCondition(nonBlank(ability.publicText) && nonBlank(ability.feedbackText),
+                `Ability ${id} emit_location_observation effect requires publicText and feedbackText.`);
+        }
     }
 
     function authoredInventoryExists(inventoryId) {
@@ -416,15 +570,29 @@ function validateWorld(document) {
     let humanCount = 0;
     for (const [id, character] of entries(document.characters)) {
         requireCondition(isObject(character) && character.id === id, `Character key ${id} must match its id.`);
+        validateSecretReference(character, `Character ${id}`, secretIds);
         registerTechnicalId(technicalIdOwners, id, `character ${id}`);
         requireCondition(nonBlank(character.name), `Character ${id} needs a name.`);
         requireCondition(nonBlank(character.playerDescription) && nonBlank(character.aiDescription),
             `Character ${id} needs public and AI descriptions.`);
-        requireCondition(own(document.locations, String(character.locationId || "")),
-            `Character ${id} has an invalid location.`);
-        const location = document.locations[character.locationId];
-        requireCondition(isObject(location.sublocations) && own(location.sublocations, String(character.sublocationId || "")),
-            `Character ${id} has an invalid sublocation.`);
+        if (own(character, "requiresDiscovery")) requireCondition(typeof character.requiresDiscovery === "boolean", `Character ${id} requiresDiscovery must be Boolean.`);
+        if (own(character, "playerControllable")) requireCondition(typeof character.playerControllable === "boolean", `Character ${id} playerControllable must be Boolean.`);
+        if (own(character, "deferredActivation")) requireCondition(typeof character.deferredActivation === "boolean", `Character ${id} deferredActivation must be Boolean.`);
+        if (character.deferredActivation === true) {
+            requireCondition(character.initialControllerId !== "human", `Deferred character ${id} cannot begin under HumanController.`);
+        }
+        if (character.movementConstraint !== undefined) {
+            requireCondition(isObject(character.movementConstraint) && character.movementConstraint.type === "location_locked" &&
+                own(document.locations, String(character.movementConstraint.locationId || "")),
+                `Character ${id} has an invalid movementConstraint.`);
+        }
+        if (character.deferredActivation !== true) {
+            requireCondition(own(document.locations, String(character.locationId || "")),
+                `Character ${id} has an invalid location.`);
+            const location = document.locations[character.locationId];
+            requireCondition(isObject(location.sublocations) && own(location.sublocations, String(character.sublocationId || "")),
+                `Character ${id} has an invalid sublocation.`);
+        }
         if (character.initialDiscoveredLocationIds !== undefined) {
             requireCondition(Array.isArray(character.initialDiscoveredLocationIds) && new Set(character.initialDiscoveredLocationIds).size === character.initialDiscoveredLocationIds.length,
                 `Character ${id} initialDiscoveredLocationIds must be a unique array.`);
@@ -526,6 +694,8 @@ function validateWorld(document) {
         requireCondition(controllers.has(String(character.defaultControllerId)) && character.defaultControllerId !== "human",
             `Character ${id} has an invalid default controller.`);
         if (character.initialControllerId === "human") {
+            requireCondition(character.playerControllable !== false,
+                `Character ${id} cannot start under HumanController when playerControllable is false.`);
             humanCount += 1;
         }
 
@@ -545,6 +715,11 @@ function validateWorld(document) {
         }
 
         validateMind(character.initialMind, id);
+        ["knownFacts", "beliefs", "relationships", "verbatimObservations", "shortTermMemories", "longTermMemories"].forEach(function (listName) {
+            (character.initialMind[listName] || []).forEach(function (record, index) {
+                validateSecretReference(record, `Character ${id} initialMind.${listName}[${index}]`, secretIds);
+            });
+        });
         for (const relationship of character.initialMind.relationships) {
             const targetId = String((relationship && relationship.targetCharacterId) || "");
             requireCondition(own(document.characters, targetId) && targetId !== id,
@@ -578,6 +753,7 @@ function validateWorld(document) {
 
     for (const [id, activity] of entries(document.dayActivities)) {
         requireCondition(isObject(activity) && activity.id === id, `Day activity key ${id} must match its id.`);
+        validateSecretReference(activity, `Day activity ${id}`, secretIds);
         registerTechnicalId(technicalIdOwners, id, `day activity ${id}`);
         requireCondition(activity.kind === "sponsored_job" || activity.kind === "solo",
             `Day activity ${id} has invalid kind.`);
@@ -592,6 +768,10 @@ function validateWorld(document) {
             requireCondition(typeof discovery.chance === "number" && Number.isFinite(discovery.chance) && discovery.chance > 0 && discovery.chance <= 1,
                 `Day activity ${id} completionDiscovery.chance must be greater than 0 and at most 1.`);
             requireCondition(nonBlank(discovery.observationText), `Day activity ${id} completionDiscovery needs observationText.`);
+        }
+        if (activity.completionOutcomeTableId !== undefined) {
+            requireCondition(nonBlank(activity.completionOutcomeTableId) && own(document.randomOutcomeTables || {}, activity.completionOutcomeTableId),
+                `Day activity ${id} completionOutcomeTableId references a missing random outcome table.`);
         }
         if (activity.kind === "sponsored_job") {
             requireCondition(own(document.characters, String(activity.sponsorCharacterId || "")),
@@ -621,9 +801,99 @@ function validateWorld(document) {
         }
     }
 
+    for (const [eventId, event] of entries(document.triggeredEvents || {})) {
+        requireCondition(isObject(event) && event.id === eventId, `Triggered event key ${eventId} must match its id.`);
+        validateSecretReference(event, `Triggered event ${eventId}`, secretIds);
+        registerTechnicalId(technicalIdOwners, eventId, `triggered event ${eventId}`);
+        requireCondition(isObject(event.trigger) && ["ordinary_tick", "timelapse_start"].includes(event.trigger.type),
+            `Triggered event ${eventId} has an invalid trigger.`);
+        requireCondition(event.chance === undefined || (typeof event.chance === "number" && Number.isFinite(event.chance) && event.chance > 0 && event.chance <= 1),
+            `Triggered event ${eventId} chance must be greater than 0 and at most 1.`);
+        requireCondition([undefined, "normal", "none"].includes(event.narrationPolicy), `Triggered event ${eventId} has an invalid narrationPolicy.`);
+        requireCondition(Array.isArray(event.prerequisites), `Triggered event ${eventId} prerequisites must be an array.`);
+        event.prerequisites.forEach(function (prerequisite, index) {
+            requireCondition(isObject(prerequisite) && nonBlank(prerequisite.type), `Triggered event ${eventId} prerequisite ${index} is invalid.`);
+            if (prerequisite.type === "phase_is") {
+                requireCondition(["Morning", "Evening"].includes(prerequisite.phase), `Triggered event ${eventId} prerequisite ${index} has invalid phase.`);
+            } else if (prerequisite.type === "location_inventory_contains_tag") {
+                requireCondition(own(document.locations, String(prerequisite.locationId || "")) && nonBlank(prerequisite.tag) &&
+                    (prerequisite.minimum === undefined || prerequisite.minimum === 1),
+                    `Triggered event ${eventId} prerequisite ${index} has invalid location/tag/minimum.`);
+            } else if (prerequisite.type === "character_activation_is") {
+                requireCondition(own(document.characters, String(prerequisite.characterId || "")) && ["active", "inactive"].includes(prerequisite.value),
+                    `Triggered event ${eventId} prerequisite ${index} has invalid character activation requirement.`);
+            } else if (prerequisite.type === "character_locally_present") {
+                requireCondition(own(document.characters, String(prerequisite.characterId || "")) && typeof prerequisite.value === "boolean",
+                    `Triggered event ${eventId} prerequisite ${index} has invalid character local-presence requirement.`);
+            } else if (prerequisite.type === "character_active" || prerequisite.type === "character_inactive") {
+                requireCondition(own(document.characters, String(prerequisite.characterId || "")), `Triggered event ${eventId} prerequisite ${index} references missing character.`);
+            } else {
+                throw new Error(`Triggered event ${eventId} prerequisite ${index} has unsupported type '${String(prerequisite.type)}'.`);
+            }
+        });
+        requireCondition(Array.isArray(event.effects) && event.effects.length > 0, `Triggered event ${eventId} must define effects.`);
+        event.effects.forEach(function (effect, index) {
+            requireCondition(isObject(effect) && ["activate_character", "deactivate_character", "consume_matching_items", "emit_observation"].includes(effect.type),
+                `Triggered event ${eventId} effect ${index} has unsupported type '${String(effect && effect.type)}'.`);
+            if (effect.type === "activate_character") {
+                const target = document.characters[effect.characterId];
+                requireCondition(target && target.deferredActivation === true && own(document.locations, String(effect.locationId || "")),
+                    `Triggered event ${eventId} effect ${index} has invalid activation target/destination.`);
+                const location = document.locations[effect.locationId];
+                requireCondition(!effect.sublocationId || (location && isObject(location.sublocations) && own(location.sublocations, effect.sublocationId)),
+                    `Triggered event ${eventId} effect ${index} has invalid activation sublocation.`);
+            } else if (effect.type === "deactivate_character") {
+                requireCondition(own(document.characters, String(effect.characterId || "")), `Triggered event ${eventId} effect ${index} references missing character.`);
+            } else if (effect.type === "consume_matching_items") {
+                requireCondition(isObject(effect.source) && effect.source.type === "location_inventory" && own(document.locations, String(effect.source.locationId || "")) &&
+                    nonBlank(effect.itemTag) && effect.mode === "all" && effect.preserveContainers === true,
+                    `Triggered event ${eventId} effect ${index} has invalid consume_matching_items configuration.`);
+            } else if (effect.type === "emit_observation") {
+                requireCondition(own(document.locations, String(effect.locationId || "")) && nonBlank(effect.text),
+                    `Triggered event ${eventId} effect ${index} has invalid emit_observation configuration.`);
+                if (effect.actorCharacterId !== undefined) requireCondition(own(document.characters, String(effect.actorCharacterId || "")),
+                    `Triggered event ${eventId} effect ${index} references missing observation actor.`);
+            }
+        });
+    }
+
+    for (const [tableId, table] of entries(document.randomOutcomeTables || {})) {
+        requireCondition(isObject(table) && table.id === tableId, `Random outcome table key ${tableId} must match its id.`);
+        validateSecretReference(table, `Random outcome table ${tableId}`, secretIds);
+        registerTechnicalId(technicalIdOwners, tableId, `random outcome table ${tableId}`);
+        requireCondition(table.noOutcomeWeight === undefined || (Number.isInteger(table.noOutcomeWeight) && table.noOutcomeWeight >= 0),
+            `Random outcome table ${tableId} noOutcomeWeight must be a non-negative integer.`);
+        requireCondition(Array.isArray(table.outcomes), `Random outcome table ${tableId} outcomes must be an array.`);
+        requireCondition(table.outcomes.length > 0 || Number(table.noOutcomeWeight || 0) > 0,
+            `Random outcome table ${tableId} must have outcomes or positive noOutcomeWeight.`);
+        const outcomeIds = new Set();
+        table.outcomes.forEach(function (outcome, index) {
+            requireCondition(isObject(outcome) && nonBlank(outcome.id) && Number.isInteger(outcome.weight) && outcome.weight > 0 && typeof outcome.once === "boolean" && Array.isArray(outcome.effects) && outcome.effects.length > 0,
+                `Random outcome table ${tableId} outcome ${index} is malformed.`);
+            validateSecretReference(outcome, `Random outcome ${outcome.id}`, secretIds);
+            requireCondition(!outcomeIds.has(outcome.id), `Random outcome table ${tableId} has duplicate outcome ID '${outcome.id}'.`);
+            outcomeIds.add(outcome.id);
+            registerTechnicalId(technicalIdOwners, outcome.id, `random outcome ${outcome.id}`);
+            outcome.effects.forEach(function (effect, effectIndex) {
+                validateSecretReference(effect, `Random outcome ${outcome.id} effect ${effectIndex}`, secretIds);
+                validateRandomEffect(effect, `Random outcome ${outcome.id} effect ${effectIndex}`, document);
+            });
+        });
+    }
+
+    for (const [locationId, location] of entries(document.locations)) {
+        for (const [sublocationId, sublocation] of entries(location.sublocations || {})) {
+            (sublocation.interactions || []).forEach(function (interaction) {
+                requireCondition(own(document.randomOutcomeTables || {}, interaction.outcomeTableId),
+                    `Sublocation ${sublocationId} interaction ${interaction.id} references missing random outcome table '${interaction.outcomeTableId}'.`);
+            });
+        }
+    }
+
     const authoredEquipmentSlots = new Set();
     for (const [id, item] of entries(document.items)) {
         requireCondition(isObject(item) && item.id === id, `Item key ${id} must match its id.`);
+        validateSecretReference(item, `Item ${id}`, secretIds);
         registerTechnicalId(technicalIdOwners, id, `item ${id}`);
         requireCondition(own(document.itemDefinitions, String(item.definitionId || "")),
             `Item ${id} references missing definition '${item.definitionId}'.`);
@@ -674,7 +944,7 @@ function validateWorld(document) {
     }
 
     function createEmptyWorld() {
-        return { schemaVersion: 2, calendar: { weekdayNames: ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"], initialWeekdayIndex: 1 }, startLocationId: "", protectedLocationIds: [], protectedSublocationIds: [], protectedCharacterIds: [], protectedAbilityIds: [], locations: {}, characters: {}, abilities: {}, itemDefinitions: {}, items: {}, dayActivities: {} };
+        return { schemaVersion: 2, calendar: { weekdayNames: ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"], initialWeekdayIndex: 1 }, startLocationId: "", protectedLocationIds: [], protectedSublocationIds: [], protectedCharacterIds: [], protectedAbilityIds: [], locations: {}, characters: {}, abilities: {}, itemDefinitions: {}, items: {}, dayActivities: {}, secrets: {}, randomOutcomeTables: {}, triggeredEvents: {} };
     }
 
     return {

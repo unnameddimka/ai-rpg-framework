@@ -18,14 +18,24 @@
 
     function setTimePhase(phase) {
         if (setup.WorldEnvironment && typeof setup.WorldEnvironment.setTimePhase === "function") {
-            const result = setup.WorldEnvironment.setTimePhase(phase);
-            if (result && result.ok) return result;
+            return setup.WorldEnvironment.setTimePhase(phase);
         }
         const world = setup.Game.getWorld();
+        const snapshot = clone(world);
+        const previousLegacyTime = typeof State !== "undefined" && State.variables ? State.variables.time : undefined;
         if (!world.environment) world.environment = {};
         world.environment.timePhase = phase;
         const labels = { evening: "Evening", nighttime_timelapse: "Night", morning: "Morning", daytime_timelapse: "Day" };
         if (typeof State !== "undefined" && State.variables) State.variables.time = labels[phase] || phase;
+        const validation = setup.Game.validateWorld();
+        if (!validation.ok) {
+            State.variables.world = snapshot;
+            if (typeof State !== "undefined" && State.variables) {
+                if (previousLegacyTime === undefined) delete State.variables.time;
+                else State.variables.time = previousLegacyTime;
+            }
+            return validation;
+        }
         return { ok: true, value: { timePhase: phase, timeLabel: labels[phase] || phase } };
     }
 
@@ -61,14 +71,30 @@
             return failure("AI_KEY_MISSING", "Enter an OpenRouter API key before sleeping until morning.");
         }
 
-        setTimePhase("nighttime_timelapse");
+        const triggeredBoundary = setup.TriggeredEvents && typeof setup.TriggeredEvents.processTimelapseStart === "function"
+            ? setup.TriggeredEvents.processTimelapseStart({ random: options.random })
+            : { ok: true };
+        if (!triggeredBoundary.ok) {
+            human.sleeping = false;
+            return failure("TIMELAPSE_TRIGGERED_EVENT_FAILED", triggeredBoundary.error && triggeredBoundary.error.message || "A triggered timelapse-start event failed.");
+        }
+        const nightPhase = setTimePhase("nighttime_timelapse");
+        if (!nightPhase.ok) return failure(nightPhase.error && nightPhase.error.code || "TIMELAPSE_PHASE_INVALID", nightPhase.error && nightPhase.error.message || "Night phase could not be committed.");
         inFlight = true;
         try {
             const result = await setup.TimelapseCore.run(client, Object.assign({}, options, { mode: MODE, roundCount: ROUND_COUNT }));
             const currentWorld = setup.Game.getWorld();
+            const wrapperMutationSnapshot = clone(currentWorld);
             if (currentWorld.entities && currentWorld.entities[humanId]) currentWorld.entities[humanId].sleeping = false;
+            const wakeValidation = setup.Game.validateWorld();
+            if (!wakeValidation.ok) {
+                State.variables.world = wrapperMutationSnapshot;
+                return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: humanId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0,
+                    failedStage: "wrapper-wake-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(wakeValidation.error) }, "wrapper-wake-validation");
+            }
             if (!result.ok) {
-                setTimePhase("evening");
+                const eveningPhase = setTimePhase("evening");
+                if (!eveningPhase.ok) return recordFinalTimelapseResult(Object.assign({}, result, { failedStage: "wrapper-phase-validation", error: clone(eveningPhase.error) }), "wrapper-phase-validation");
             } else {
                 if (setup.WorldEnvironment && typeof setup.WorldEnvironment.refreshWeather === "function") {
                     try { await setup.WorldEnvironment.refreshWeather(client || setup.OpenRouterClient); } catch (error) { /* optional weather never blocks */ }
@@ -84,7 +110,11 @@
                     }
                     result.dayBoundary = clone(boundary);
                 }
-                setTimePhase("morning");
+                const morningPhase = setTimePhase("morning");
+                if (!morningPhase.ok) {
+                    return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: humanId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0,
+                        failedStage: "wrapper-phase-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(morningPhase.error) }, "wrapper-phase-validation");
+                }
             }
             const validation = setup.Game.validateWorld();
             if (!validation.ok) {

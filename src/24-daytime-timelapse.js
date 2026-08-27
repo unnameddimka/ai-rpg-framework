@@ -18,14 +18,24 @@
 
     function setTimePhase(phase) {
         if (setup.WorldEnvironment && typeof setup.WorldEnvironment.setTimePhase === "function") {
-            const result = setup.WorldEnvironment.setTimePhase(phase);
-            if (result && result.ok) return result;
+            return setup.WorldEnvironment.setTimePhase(phase);
         }
         const world = setup.Game.getWorld();
+        const snapshot = clone(world);
+        const previousLegacyTime = typeof State !== "undefined" && State.variables ? State.variables.time : undefined;
         if (!world.environment) world.environment = {};
         world.environment.timePhase = phase;
         const labels = { evening: "Evening", nighttime_timelapse: "Night", morning: "Morning", daytime_timelapse: "Day" };
         if (typeof State !== "undefined" && State.variables) State.variables.time = labels[phase] || phase;
+        const validation = setup.Game.validateWorld();
+        if (!validation.ok) {
+            State.variables.world = snapshot;
+            if (typeof State !== "undefined" && State.variables) {
+                if (previousLegacyTime === undefined) delete State.variables.time;
+                else State.variables.time = previousLegacyTime;
+            }
+            return validation;
+        }
         return { ok: true, value: { timePhase: phase, timeLabel: labels[phase] || phase } };
     }
 
@@ -390,25 +400,31 @@
         }).join(" and ");
     }
 
-    function completionDiscoveryRecord(activity, human, randomFn) {
-        const discovery = activity && activity.completionDiscovery;
-        if (!discovery || typeof discovery !== "object" || !human) return null;
+    function completionOutcomeRecords(activity, human, randomFn) {
+        const tableId = activity && activity.completionOutcomeTableId;
+        if (!tableId || !human) return [];
         const world = currentWorld();
-        if (setup.GameInternals.characterHasDiscoveredLocation(human, discovery.locationId, world)) return null;
-        const random = typeof randomFn === "function" ? randomFn : Math.random;
-        if (random() >= Number(discovery.chance)) return null;
-        if (!setup.GameInternals.grantLocationDiscovery(human, discovery.locationId, world)) return null;
-        const location = world.entities[discovery.locationId];
-        const text = String(discovery.observationText || "{actorName} discovered a concealed place.")
-            .replace(/\{actorName\}/g, human.name)
-            .replace(/\{locationName\}/g, location && location.name || discovery.locationId);
-        enqueueGroundedObservation(human.id, "LOCATION_DISCOVERED", text, {
-            actorId: human.id,
-            targetId: human.id,
-            locationId: discovery.locationId,
-            activityId: activity.id
+        const result = setup.GameInternals.runAuthoredOutcomeTable(human, tableId, world, {
+            random: typeof randomFn === "function" ? randomFn : Math.random,
+            actionType: "day_activity_completion"
         });
-        return { text: text, actorIds: [human.id], locationId: activity.workLocationId, kind: "location_discovered", visibleToHuman: true };
+        if (!result.ok) {
+            if (result.error && result.error.code === "OUTCOME_NONE_APPLICABLE") return [];
+            throw Object.assign(new Error(result.error && result.error.message || "Authored completion outcome failed."), {
+                code: result.error && result.error.code || "DAYTIME_COMPLETION_OUTCOME_FAILED"
+            });
+        }
+        if (result.noOutcome) return [];
+        return (result.events || []).map(function (rawEvent) {
+            const event = setup.EventPerception.emitEvent(rawEvent, world);
+            return {
+                text: event.text || "",
+                actorIds: [human.id],
+                locationId: activity.workLocationId,
+                kind: event.type || "authored_outcome",
+                visibleToHuman: true
+            };
+        }).filter(function (record) { return Boolean(record.text); });
     }
 
     async function settleActivity(record, committedFacts, client, randomFn) {
@@ -445,8 +461,7 @@
                 }
             }
             const records = [{ text: text, actorIds: actorIds, locationId: activity.workLocationId, kind: "day_activity_settlement", visibleToHuman: true }];
-            const discoveryRecord = completionDiscoveryRecord(activity, human, randomFn);
-            if (discoveryRecord) records.push(discoveryRecord);
+            completionOutcomeRecords(activity, human, randomFn).forEach(function (record) { records.push(record); });
             const validation = setup.Game.validateWorld();
             if (!validation.ok) throw validation.error;
             return { ok: true, records: records };
@@ -492,7 +507,19 @@
         Object.values(currentWorld().entities).forEach(function (entity) {
             if (entity && entity.type === "character") entity.sleeping = false;
         });
-        setTimePhase("daytime_timelapse");
+        const triggeredBoundary = setup.TriggeredEvents && typeof setup.TriggeredEvents.processTimelapseStart === "function"
+            ? setup.TriggeredEvents.processTimelapseStart({ random: options.random })
+            : { ok: true };
+        if (!triggeredBoundary.ok) {
+            restoreWorld(preflightSnapshot);
+            return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: 0,
+                failedStage: "triggered-events", hiddenNarrativeEntries: [], committedFacts: [], error: clone(triggeredBoundary.error) }, "triggered-events");
+        }
+        const daytimePhase = setTimePhase("daytime_timelapse");
+        if (!daytimePhase.ok) {
+            return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: 0,
+                failedStage: "wrapper-phase-validation", hiddenNarrativeEntries: [], committedFacts: [], error: clone(daytimePhase.error) }, "wrapper-phase-validation");
+        }
         const fixedPlans = {};
         const passiveParticipants = [];
         if (record.definition.kind === "sponsored_job") {
@@ -535,12 +562,19 @@
                 restoreWorld(preflightSnapshot);
             }
             const current = currentWorld();
+            const wrapperMutationSnapshot = clone(current);
             Object.values(current.entities).forEach(function (entity) {
                 if (entity && entity.type === "character") entity.sleeping = false;
             });
             current.daytime.activeActivity = null;
+            const wrapperMutationValidation = setup.Game.validateWorld();
+            if (!wrapperMutationValidation.ok) {
+                restoreWorld(wrapperMutationSnapshot);
+                return recordFinalTimelapseResult(Object.assign({}, result, { failedStage: "wrapper-state-validation", error: clone(wrapperMutationValidation.error) }), "wrapper-state-validation");
+            }
             if (!result.ok) {
-                setTimePhase("morning");
+                const morningPhase = setTimePhase("morning");
+                if (!morningPhase.ok) return recordFinalTimelapseResult(Object.assign({}, result, { failedStage: "wrapper-phase-validation", error: clone(morningPhase.error) }), "wrapper-phase-validation");
                 const validationFailed = setup.Game.validateWorld();
                 if (!validationFailed.ok) return recordFinalTimelapseResult(Object.assign({}, result, { failedStage: "wrapper-validation", error: clone(validationFailed.error) }), "wrapper-validation");
                 return recordFinalTimelapseResult(result, result.failedStage || "core-failed");
@@ -560,7 +594,7 @@
                     try { options.onProgress({ stage: "routine-anchors", text: "Returning characters to their evening routines…", mode: MODE }); } catch (error) { /* presentation-only */ }
                 }
                 Object.values(currentWorld().entities).forEach(function (entity) {
-                    if (!entity || entity.type !== "character" || (setup.WeeklyRhythm && !setup.WeeklyRhythm.isCharacterPresent(entity, currentWorld()))) return;
+                    if (!entity || entity.type !== "character" || (setup.Presence && !setup.Presence.isLocallyPresent(entity, currentWorld()))) return;
                     const anchored = setup.TimelapseAPI.applyRoutineAnchor(entity.id, "evening");
                     if (!anchored.ok) routineAnchorWarnings.push({ characterId: entity.id, error: clone(anchored.error) });
                 });
@@ -577,7 +611,8 @@
                 }
                 result.eveningBoundary = clone(boundary);
             }
-            setTimePhase("evening");
+            const eveningPhase = setTimePhase("evening");
+            if (!eveningPhase.ok) return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0, failedStage: "wrapper-phase-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(eveningPhase.error) }, "wrapper-phase-validation");
             const validation = setup.Game.validateWorld();
             if (!validation.ok) return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0, failedStage: "wrapper-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(validation.error) }, "wrapper-validation");
             return recordFinalTimelapseResult(result, "complete");

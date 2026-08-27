@@ -67,6 +67,14 @@ A manually patched save may therefore add a well-formed pending observation for 
 
 Migration validates the complete candidate before atomically replacing the restored world. Failure leaves the original save state untouched.
 
+### 2.4 Read, repair, validation, and mutation boundaries
+
+Canonical reads are observationally pure. `Game.getWorld()` returns the current canonical world; it does not normalize, migrate, repair, allocate IDs, or otherwise change it. Repair/migration/preparation are explicit operations owned by load/bootstrap/migration or another named mutation boundary.
+
+World validation is likewise observationally pure. `validateWorld(candidate)` inspects the supplied candidate and returns success/failure without repairing it in place. Missing or malformed runtime structures therefore remain validation failures unless an explicit migration/repair step has already produced a valid candidate.
+
+Every untrusted canonical mutation unit follows the same discipline: snapshot or candidate -> apply deterministic/model-derived changes -> final whole-world validation -> atomic commit. A failed validation leaves the previous canonical state unchanged. When an outer logical transaction already owns the world candidate, nested action helpers operate on that candidate instead of taking a second full-world snapshot merely for defensive rollback.
+
 ## 3. Entities, inventories, items
 
 The runtime world contains stable entity IDs. Locations, sublocations, characters, and item instances are entities. Inventories are explicit containers owned by characters/locations/sublocations.
@@ -168,10 +176,11 @@ It contains the actor-visible state required to play, including:
 - available abilities;
 - exact current `available_actions` catalog and concrete options.
 
-Human UI and ordinary AIController both reason from this same base projection.
+Human UI and ordinary AIController both reason from this same base projection. Ordinary in-world affordances should remain controller-neutral wherever the mechanic itself is controller-neutral: an AI-controlled character should generally be able to express the same ordinary actions that the same character could perform under Human control in the same canonical situation. This parity is per character and subject to authored capabilities and limitations; unique Mara/Chuhaister/future abilities remain intentional distinctions, while settings/debug/controller-management operations are outside the rule.
 
-AI ordinary-decision context adds private data (AI description, ability instructions, mind records, continuation, prepared pending observations) but does not replace the public view with a second interpretation.
-It also adds `relevantMechanics`, derived from the same action registry through relaxed source gating. Relevant mechanics expose only mechanics anchored in the actor's grounded current scene/items and may describe missing prerequisites; they are not executable authority. `view.available_actions` remains the exact executable-now contract. This lets a Character reason toward prerequisites (for example, an ale source makes `fill` relevant even before a mug is held) without receiving a global catalog of hidden/world actions.
+AI ordinary-decision context adds private data (AI description, ability instructions, mind records, continuation, prepared pending observations) but does not replace the public view with a second interpretation. Model-facing context should stay as small, relevant, and role-appropriate as practical. For an ordinary Character decision, prefer information that helps the model understand the situation, make a human-like character decision, or execute an available operation. Information that serves none of those purposes should preferably be omitted. This is signal-over-noise guidance rather than a hard minimization invariant: grounding, validation, identity/personality, relevant mind state, repair, and other correctness-preserving context remain legitimate. Utility/repair/maintenance and Narrator contexts apply the same discipline according to their bounded task rather than receiving the Character projection by default.
+
+Ordinary Character context also adds `relevantMechanics`, derived from the same action registry through relaxed source gating. Relevant mechanics expose only mechanics anchored in the actor's grounded current scene/items and may describe missing prerequisites; they are not executable authority. `view.available_actions` remains the exact executable-now contract and omits action records for which no valid current invocation exists. This lets a Character reason toward prerequisites (for example, an ale source makes `fill` relevant even before a mug is held) without receiving a global catalog of hidden/world actions or dead capability noise.
 
 Maintenance workflows such as timelapse/reflection/consolidation may build purpose-specific compact contexts directly; they are not ordinary controller decisions.
 
@@ -179,11 +188,13 @@ Maintenance workflows such as timelapse/reflection/consolidation may build purpo
 
 The deterministic action registry/CharacterAPI is the sole authority for formal mechanics.
 
-`view.available_actions` is generated from current state. A requested action must match:
+`view.available_actions` is generated from current state and contains an action only when at least one invocation can currently satisfy that action's deterministic prerequisite/options contract (with any required free-form input supplied validly). Zero-input actions remain valid when their prerequisites are satisfied. A requested action must match:
 
 - a currently offered action type;
 - that action's schema;
 - its current concrete option values.
+
+Human formal-action controls and AI capability exposure derive from this same deterministic action truth rather than independent controller-specific capability lists. `relevantMechanics` is intentionally broader and may still expose a grounded mechanic whose executable prerequisites are missing.
 
 Examples include movement, moving within a location, item transfer, placement, item use, equip/unequip, money transfer, showing a known hidden location to a nearby character, locks, sleep, and character abilities.
 
@@ -200,8 +211,11 @@ If prose claims something inconsistent with the deterministic result, the engine
 
 ### 7.2 Invalid vs grounded failure
 
-- Impossible/out-of-contract Human request: reject; no world tick.
+- Impossible/out-of-contract Human request: reject before `beginOrdinaryTick()`; no world tick and no canonical/presentation side effects. The pure Human preflight covers the complete combined intent, including empty intent, formal action schema/current options, speech/loudness structure, shout restrictions, direct-addressee grounding, and move+speech grounding.
 - Valid available attempt that fails in-world: turn is spent; grounded failure becomes part of the tick.
+- A request admitted by preflight is checked again after committed tick-start triggers wherever current mechanics can have changed. If a trigger makes an already-valid formal action or grounded speech delivery impossible, the request remains a legitimate attempt: the tick/trigger stay committed, the turn is spent, and execution returns the grounded post-trigger failure rather than reclassifying the original Human input as malformed.
+- Structural invalidity never becomes TOCTOU. For example `Shout + target_id` or `Shout + move` is rejected before tick start regardless of what triggers could have done.
+- Once a Human formal action commits successfully and initiative passes to the next controller/reaction wave, later mutations are consequences of that completed action and cannot retroactively rewrite it as failure.
 
 ## 8. Intent, speech and loudness
 
@@ -209,12 +223,13 @@ Human and AI use the same canonical combined intent path: optional speech/visibl
 
 Speech may have an explicit addressee independently of formal-action target.
 
-Loudness currently has two mechanical values:
+Speech volume currently has three UI/mechanical choices:
 
-- `noticeable`;
-- `hidden`.
+- Normal (`noticeable`);
+- Quiet/private (`hidden`);
+- Shout.
 
-Whisper-like prose does not change loudness by itself.
+Whisper-like prose does not change loudness by itself. Shout is a separate stationary, targetless speech mode: it cannot be combined with movement or an addressee, is heard in the current location plus one directly connected authored topology hop regardless of passage lock state, and uses ordinary observation/reaction handling without a special deterministic wake rule.
 
 ## 9. Events, perception and observations
 
@@ -231,6 +246,8 @@ The same event is delivered to the union of recipients who can perceive the acto
 Events generate recipient-specific experienced observations. For AI-controlled recipients, `character.mind.pendingObservations` is the authoritative reaction inbox until scheduler processing. Human/Dummy recipients do not retain scheduler pending records; their delivered committed experience still reaches verbatim memory. Event-journal recipient/processed metadata is retained only for diagnostics/history and must not drive a second independent pending queue. Pending AI observations are already perception-filtered; the model must treat a delivered observation as perceived.
 
 Model context receives a compact recipient-safe observation projection rather than a cloned event envelope. Routing/scheduler/provider bookkeeping (`recipients`, legacy `pendingFor`, `processedBy`, controller/provider metadata) is excluded.
+
+`hidden` delivery is still local perception, not a remote messaging channel. An explicitly authored/structured hidden `targetId` receives the observation only while locally present and otherwise receives nothing; rejected hidden observations are not queued for return or replayed later.
 
 A failed attempt to traverse a locked passage is itself a grounded physical event. Perceivers on the actor side can identify the actor normally; perceivers on the far side receive an anonymous form such as `Someone tried the door from the other side.` The lock remains unchanged, and observation alone does not mechanically wake a sleeping character.
 
@@ -321,11 +338,15 @@ Timelapse planning also exposes `study_item` for existing `abstract_study` items
 
 The runtime owns a monotonically increasing calendar `dayNumber`; the current weekday is derived from that counter plus the authored seven-name sequence. Coarse lifecycle processing runs at both canonical Morning and Evening boundaries: overnight completion reaches the next Morning, while successful daytime timelapse reaches the same-day Evening. A newly departing character does not receive road credit for the period that just ended at its departure boundary.
 
-Simple authored `weeklyPresence` remains supported for fixed schedules. Characters that need runtime-divergent visits may instead define generic `awayable` authoring: regular arrival opportunities, a supported default-departure policy, travel-period duration, local arrival placement, and validated deterministic `onArrival` hooks. Canonical save-owned `awayState` records whether the character is locally present, the current visit's `plannedDeparture`, and remaining required travel periods. It is objective simulation state and is never inferred from continuation, beliefs, STM/LTM, or model prose.
+Simple authored `weeklyPresence` remains supported for fixed schedules. Characters that need runtime-divergent visits may instead define generic `awayable` authoring: regular arrival opportunities, a supported default-departure policy, travel-period duration, local arrival placement, and validated deterministic `onArrival` hooks. Canonical neutral `presenceState.present` is the single save-owned authority for whether a character is locally present. `awayState` owns only lifecycle details such as the current visit's `plannedDeparture`, remaining required travel periods, and revision. These are objective simulation state and are never inferred from continuation, beliefs, STM/LTM, or model prose.
 
 `defer_departure` is an ordinary controller-agnostic formal action exposed only when the current planned departure is exactly the boundary reached by the next timelapse. A successful defer privately moves that planned boundary forward by one canonical coarse period. Timelapse planner protocols do not expose or accept this ordinary action. If departure is not deferred before the relevant timelapse begins, reaching the planned boundary deterministically makes the character away.
 
-While away, a character keeps canonical mind/inventory/wallet/equipment state but is excluded from local views, pathfinding targets, observations, scheduler eligibility and timelapse participant sets. A location/sublocation may declare `presenceOwnerCharacterId`; while that owner is away it remains persisted canonically but disappears from local topology. Travel counts only fully completed coarse periods after actual departure. A scheduled arrival opportunity reached before travel is complete is missed; completing travel later does not create a catch-up spawn. A true `away -> present` transition restores authored placement, initializes the new visit's default departure, and runs validated arrival hooks. Merely crossing an arrival-schedule boundary while already present does nothing.
+Local participation is mediated by the neutral `Presence.isLocallyPresent(character, world)` base mechanism rather than by the historically narrow weekly-rhythm namespace. Presence reads neutral `presenceState.present` plus independent objective axes such as activation, and it does not depend on `WeeklyRhythm` or any schedule policy. Perception, local targeting/action availability, AI participation, timelapse participant selection and ordinary local character lists use this same boundary. `WeeklyRhythm` remains responsible only for calendar/schedule/arrival/departure/travel policy: it decides when a character should arrive or leave, then changes local presence through Presence. Compatibility wrappers may remain for old callers, but dependency direction is one-way: `WeeklyRhythm -> Presence`, never `Presence -> WeeklyRhythm`.
+
+While away, a character keeps canonical mind/inventory/wallet/equipment state but is excluded from local views, pathfinding targets, observations, scheduler eligibility and timelapse participant sets. A location/sublocation may declare `presenceOwnerCharacterId`; while that owner is locally absent it remains persisted canonically but disappears from local topology. A locally present foreign character may never remain inside such unavailable topology. Before an owner-presence transition commits, affected occupants are reconciled deterministically: an owner-dependent sublocation whose parent remains available falls back to the parent's default sublocation; an owner-dependent location with exactly one external exit falls back through that exit to the destination's default sublocation; ambiguous/no-exit cases require explicit authored `presenceFallbackPlacement`. A forced relocation wakes a sleeping occupant and produces grounded committed experience for that character. Items/containers inside disappearing topology are not evacuated; they remain canonically there and become locally accessible again when the topology returns. The owner itself follows its own activation/away lifecycle rather than this foreign-occupant fallback.
+
+Travel counts only fully completed coarse periods after actual departure. A scheduled arrival opportunity reached before travel is complete is missed; completing travel later does not create a catch-up spawn. A true `away -> present` transition restores authored placement, initializes the new visit's default departure, and runs validated arrival hooks. Merely crossing an arrival-schedule boundary while already present does nothing.
 
 The first supported generic arrival hook is deterministic authored `restock`; hook types are registry-validated rather than arbitrary executable authoring. Trade departure settlement remains a separate lifecycle concern. Generated sale stock and acquired stock are tracked by item-level trade provenance so personal possessions and keyed-container contents are not mistaken for commerce. Awayable private Character grounding may expose current schedule reachability plus authored business interpretation without hard-coded decision thresholds.
 
@@ -337,7 +358,23 @@ Character views, formal movement options and actor-specific timelapse routing al
 
 Human-facing committed off-screen presentation is additionally epistemic: an event touching a secret location that the current Human character has not discovered is suppressed from ordinary `Elsewhere`, history and the `Show invisible events` gameplay surface. Canonical events remain available to administrative diagnostics/emergency dumps. Saved discoveries survive migration, current authored initial discoveries are unioned in, removed IDs are discarded, and being restored physically inside a secret location repairs discovery automatically. Portable mind export/import does not carry location discovery.
 
-### 12.6 Global weather
+### 12.6 Authored secret modules and random outcomes
+
+Optional mystery content is authored through a top-level secret registry plus explicit `secretId` membership on supported records. Secrets are objective world-authoring modules, not STM/LTM/beliefs/quests, and membership alone has no visibility semantics: a secret may own an ordinary public sublocation. World generation validates the complete authored document first, materializes only enabled secret-owned content while pruning unambiguous mechanical references, then validates that active document again before emitting `src/generated/world-data.js`. Ordinary runtime topology, item, perception and random systems therefore do not branch on `secret.enabled`.
+
+Hidden characters use per-observer canonical `discoveredCharacterIds`, parallel to location discovery but independent from it and from mind text. `requiresDiscovery` filters an undiscovered concrete character from ordinary targeting/views/perception; `playerControllable:false` separately prevents HumanController assignment even after discovery. Authored deferred/inactive characters are fully materialized at world creation and migration, including persistent mind, inventory, wallet and ordinary Character identity, but `activationState: inactive` places them off-map and hides them from normal local/player selectors. Activation and awayability are independent: travelling Maksym remains activation-`active` while locally absent, whereas Chuhaister between appearances is activation-`inactive`.
+
+Authored `randomOutcomeTables` provide engine-side weighted selection with injectable RNG, persistent `once:true` consumption, effect-applicability filtering and atomic candidate validation/rollback. They can be invoked by ordinary sublocation `authored_interaction` actions or as an additional day-activity completion hook. `triggeredEvents` are a separate causal mechanism: they are evaluated at authored boundaries such as `ordinary_tick` or `timelapse_start` from objective prerequisites. Ordinary logical turns own one persisted monotonic `ordinaryTickId`; rerenders/retries do not create another event check for the same ID. For one ordinary tick, every triggered-event prerequisite is evaluated against the same tick-start canonical snapshot: a condition created by an earlier proc first becomes eligible on the next tick, while an event already eligible at tick start does not lose that eligibility merely because an earlier proc removes one of its prerequisites. Successful effects still apply in deterministic authored order. Failed prerequisites do not roll RNG; a chance miss performs no world clone or full-world validation. Only a real proc creates a transactional candidate, applies deterministic effects/perception/discovery to it, validates it, and commits atomically. Silent authored effects may mutate canonical state without automatically creating observations or narrator-visible events.
+
+`randomOutcomeTables` and `triggeredEvents` stay separate, but semantically identical deterministic primitives may share the small validated `AuthoredEffects` boundary. The first shared primitive is `emit_observation`, which routes through ordinary `EventPerception` and returns the actual recipient IDs. Discovery of a concrete hidden character from an appearance is granted only to those actual recipients rather than by a second broad location scan. Random-outcome-specific effects such as `reveal_location`, `encounter_character`, `modify_wallet`, and `create_item`, and triggered lifecycle effects such as activation/deactivation/ground-food consumption, remain separately whitelisted; arbitrary authored executable code and model-decided canonical randomness are unsupported.
+
+### 12.7 Shared consumption and generic abilities
+
+Canonical item consumption is owned by one deterministic `applyItemConsume` primitive. It performs only item-state mutation (for example `Bowl of banush -> Empty bowl`, filled mug -> empty mug, or removal for a consumable without a reusable result) and returns structured change data; it never inherently emits speech, observation or narration. Ordinary `consume` adds its grounded public/private presentation around that primitive, while silent authored effects such as Trampled Glade timelapse cleanup reuse the same mutation without presentation.
+
+Character abilities dispatch through the controller-agnostic formal action `use_ability { ability_id }`. Authored ability IDs such as `readAura` and `playSopilka` point to registered engine-owned `effectType` implementations and are exposed with their own labels/descriptions/options to Human and AI controllers. Legacy specific spellings such as `read_aura` remain only as narrow deterministic request normalization when exactly one owned canonical ability matches; they are not parallel long-term actions.
+
+### 12.8 Global weather
 
 Weather is optional external environmental input, never a gameplay dependency. The browser resolves approximate location through the CORS-capable public `https://ipwho.is/` endpoint, requests current conditions from Open-Meteo, deterministically normalizes them, and sends only that normalized weather plus a minimal `rural, low-technology environment` style contract to the Narrator role. The Narrator is not given game time, lore, characters, or scene state and must not mention time of day or modern measurements. The resulting prose is saved as canonical `weatherNarrative` and shown globally.
 
@@ -434,7 +471,7 @@ This synchronization is bookkeeping only: it does not create a gameplay turn, ev
 
 The standalone editor is a browser-only authoring tool for `data/world.json`. It does not write directly into repository files; Save downloads a new JSON file.
 
-The editor mirrors authored data but is not a runtime/save editor. Authored validation has one shared JavaScript implementation used by both `tools/generate-world-data.js` and the editor; the build embeds that validator into the single offline HTML artifact. The editor therefore validates the same current contracts as the generator, including Mind v3 numeric beliefs/activation, STM/LTM/verbatim/retrieval briefs, day activities, timelapse actions, and optional morning/evening character `routineAnchors`. Reusable starter identities are deliberately absent from authored world data.
+The editor mirrors authored data but is not a runtime/save editor. Authored validation has one shared JavaScript implementation used by both `tools/generate-world-data.js` and the editor; the build embeds that validator into the single offline HTML artifact. Runtime validation must enforce the same semantic contract for authored triggered-event/effect structures and conditional-topology fallback state that can survive through saves/migration: malformed narration policies, unsupported consume modes/container destruction, invalid/non-deferred activation targets, cross-location activation sublocations, and ambiguous/invalid presence fallbacks are rejected rather than becoming valid merely because they entered through runtime state. The editor is part of the authored-feature completeness invariant rather than a best-effort viewer: current first-class panels/structured controls cover secrets, random outcome tables, triggered events and their typed prerequisites/effects, activation/player-controllability/location locks, conditional-presence owner/fallback placement, generic abilities/effect types, item tags/consume transforms, phase-aware `serve_food` authoring, and existing awayable schedule/restock authoring. A reusable editor-side reference walker supplements the authoritative validator so deletion/ID workflows surface references from these newer structures instead of checking only legacy fields. Unknown fields still round-trip rather than being silently discarded. Reusable starter identities are deliberately absent from authored world data.
 
 Fresh-world initialization uses the stable canonical `player`/Traveler shell for location, sublocation, inventory, equipment, wallet and other world-bound setup. Onboarding is disclaimer -> optional OpenRouter setup -> Traveler selection. Reusable custom starter identities are browser-local presets with ZIP import/export; choosing one copies only name/playerDescription/aiDescription onto the canonical shell and stores no preset/library reference in the world or save. Legacy saves that used authored Traveler profiles materialize their already-saved identity as ordinary Custom authoring during migration.
 
@@ -463,9 +500,9 @@ The authored week is Sunday → Monday → Flamesday → Flowday → Woodsday �
 
 Maksym is a familiar but not deeply bonded recurring visitor: villagers generally enjoy the goods/news/stories and break in monotony, while he treats them with cordial commercial even-handedness and little interest in local gossip unless it matters to safety/trade/travel. Current narrow externally valued local goods are Squirrel Pelts, Healing Salve, and Stamina Potion. The merchant also introduces Paper Sheets and reusable Writing Sets alongside salt, cloth/clothing, household/town goods, small jewelry, and specialized tools.
 
-The Smithy contains the forge floor plus Harlan the Blacksmith's rear living room and sleeping bed. Harlan (`blacksmith`) begins AI-controlled at the forge with coarse work clothing and a smith's hammer equipped in `right_hand`. His authored role centers on mundane village ironwork—nails, horseshoes, harness/tack fittings, practical repairs and sharpening—rather than weapons. Seeded local relationships capture mutual irritation/respect with Garrick, friendly explicitly non-romantic familiarity with Nell, and wary practical treatment history with Mara; Price has no pre-authored relationship with him.
+The Smithy contains the forge floor plus Harlan the Blacksmith's rear living room and sleeping bed. Harlan (`blacksmith`) begins AI-controlled at the forge with coarse work clothing and a smith's hammer equipped in `right_hand`. His authored role centers on mundane village ironwork—nails, horseshoes, harness/tack fittings, practical repairs and sharpening—rather than weapons. Seeded local relationships capture mutual irritation/respect with Garrick, friendly explicitly non-romantic familiarity with Nell, and wary practical treatment history with Mara.
 
-Mara's cottage includes a work table, a private key-gated chest, and a stable authored **Slab of Full Arcane Knowledge** instance stored inside that chest. `Consult slab` uses deterministic `abstract_study`. Mara/another holder supplies a subject or question in `input_text`; indexed canonical topics may return an authored reference article directly, while unmatched topics use the existing private survey/focused/saturated progression. The first indexed entries cover Chugaister lore and the archmages of Veyra's Outer-World Construct Hypothesis. The slab never asks a model to invent or summarize the subject, so any concrete setting facts it returns must already exist in authored `knowledgeEntries`; generic unmatched study still does not materialize new schools, spells, techniques, taxonomies, history, dates, mechanisms, recipes, or other setting facts. It provides no buffs, stats, automatic mastery, or omniscient current/future knowledge.
+Mara's cottage includes a work table, a private key-gated chest, and a stable authored **Slab of Full Arcane Knowledge** instance stored inside that chest. `Consult slab` uses deterministic `abstract_study`. Mara/another holder supplies a subject or question in `input_text`; indexed canonical topics may return an authored reference article directly, while unmatched topics use the existing private survey/focused/saturated progression. The first indexed entries cover Chuhaister lore and the archmages of Veyra's Outer-World Construct Hypothesis. The slab never asks a model to invent or summarize the subject, so any concrete setting facts it returns must already exist in authored `knowledgeEntries`; generic unmatched study still does not materialize new schools, spells, techniques, taxonomies, history, dates, mechanisms, recipes, or other setting facts. It provides no buffs, stats, automatic mastery, or omniscient current/future knowledge.
 
 Mara's Garden (`maraCottageGardenLocation`) connects reciprocally to village edge, Mara's Cottage, and **Forest stream** (`forestMountainStream`). The cottage no longer connects directly to village edge or the stream. The stream has an ordinary bank plus `forestStreamSittingPlace`, a capacity-two sublocation represented by broad smooth stones beside the water; its enter action moves only the acting character. Save migration preserves surviving stable sublocation identity and derives its current authored parent, so old garden positions reparent safely while cottage-bed occupants remain on the bed.
 
@@ -479,7 +516,6 @@ Explicitly deferred:
 - broader village economy, prices, barter/shop abstractions, and additional production chains;
 - embeddings/vector indexing if the future compact semantic-retrieval catalog itself becomes too large;
 - large-crowd optimization beyond current emergency limits;
-- expanded loudness propagation/shouts;
 - equipment stacking/layering/concealment controls;
 - combat/quest systems;
 - narrator grounding redesign.

@@ -142,6 +142,11 @@
             return { ok: true, actionResult: actionResult, results: [] };
         }
 
+        const world = setup.Game.getWorld();
+        const worldSnapshot = setup.GameInternals && typeof setup.GameInternals.snapshotWorld === "function"
+            ? setup.GameInternals.snapshotWorld(world)
+            : clone(world);
+        const actionResultSnapshot = clone(actionResult);
         const results = [];
         for (const request of actionResult.modelRequests) {
             if (!request || request.kind !== "utility_query") {
@@ -184,7 +189,17 @@
         });
         setup.Game.getWorld().debug.lastActionResult = clone(actionResult);
         const validation = setup.Game.validateWorld();
-        if (!validation.ok) return { ok: false, error: clone(validation.error), actionResult: actionResult, results: results };
+        if (!validation.ok) {
+            if (setup.GameInternals && typeof setup.GameInternals.restoreWorldInPlace === "function") {
+                setup.GameInternals.restoreWorldInPlace(world, worldSnapshot);
+            } else {
+                Object.keys(world).forEach(function (key) { delete world[key]; });
+                Object.assign(world, clone(worldSnapshot));
+            }
+            Object.keys(actionResult).forEach(function (key) { delete actionResult[key]; });
+            Object.assign(actionResult, clone(actionResultSnapshot));
+            return { ok: false, error: clone(validation.error), actionResult: actionResult, results: results };
+        }
         return { ok: true, actionResult: actionResult, results: results };
     }
 
