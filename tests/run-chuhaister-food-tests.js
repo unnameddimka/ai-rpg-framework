@@ -90,6 +90,8 @@ function makeGroundFood(world, count) {
 const source = JSON.parse(fs.readFileSync(path.join(root, "data/world.json"), "utf8"));
 assert(validateWorldDocument(source).length === 0, "complete authored source should validate");
 assert(source.characters.chugaister.name === "Chuhaister The Forest Man", "canonical display name should use official Chuhaister transliteration");
+assert(/blue eyes/i.test(source.characters.chugaister.playerDescription) && /blue eyes/i.test(source.characters.chugaister.aiDescription), "Chuhaister must be authored with blue eyes in player- and Character-facing appearance");
+assert(/glow brightly at will/i.test(source.characters.chugaister.aiDescription) && /voluntary/i.test(source.characters.chugaister.aiDescription) && /not constant/i.test(source.characters.chugaister.aiDescription), "Chuhaister's bright eye glow must be voluntary expressive behavior rather than a constant automatic effect");
 assert(source.abilities.playSopilka && source.abilities.playSopilka.secretId === "chugaister", "Play sopilka must belong to the Chugaister secret");
 assert(source.triggeredEvents.chuhaisterFoodAppearance.secretId === "chugaister" && source.triggeredEvents.chuhaisterHideAtTimelapse.secretId === "chugaister" && source.triggeredEvents.chuhaisterConsumeGladeFoodAtTimelapse.secretId === "chugaister",
     "all Chugaister proc/lifecycle events must be secret-owned authored content");

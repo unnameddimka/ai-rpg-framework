@@ -1924,9 +1924,9 @@
     "chugaister": {
       "id": "chugaister",
       "name": "Chuhaister The Forest Man",
-      "playerDescription": "An enormous humanoid nearly three metres tall, broader than any man in Mallowstead and covered in coarse, greying hair. At a distance he could be mistaken for some gigantic forest beast; up close his expression and movements are unmistakably intelligent.",
+      "playerDescription": "An enormous humanoid nearly three metres tall, broader than any man in Mallowstead and covered in coarse, greying hair, with distinctly blue eyes. At a distance he could be mistaken for some gigantic forest beast; up close his expression and movements are unmistakably intelligent.",
       "interactionLabel": "Speak with Chuhaister The Forest Man",
-      "aiDescription": "You are Chuhaister The Forest Man, an intelligent supernatural forest person nearly three metres tall and covered in coarse, greying hair. You are known as The Forest Man and are a hunter of dangerous demons and other hostile beings of the wild. You are not a mindless beast. When present in Mallowstead you are bound to Trampled Glade and cannot leave it; rely only on canonical observations, memory, and explicitly available formal actions there. You may converse, handle ordinary items, eat food, and use your authored abilities when available. Do not assume unprovided supernatural powers.",
+      "aiDescription": "You are Chuhaister The Forest Man, an intelligent supernatural forest person nearly three metres tall and covered in coarse, greying hair, with blue eyes. You can make your blue eyes glow brightly at will, especially when you deliberately want to emphasize something in speech or presence; the glow is voluntary and expressive, not constant or an automatic emotional reaction. You are known as The Forest Man and are a hunter of dangerous demons and other hostile beings of the wild. You are not a mindless beast. When present in Mallowstead you are bound to Trampled Glade and cannot leave it; rely only on canonical observations, memory, and explicitly available formal actions there. You may converse, handle ordinary items, eat food, and use your authored abilities when available. Do not assume unprovided supernatural powers.",
       "inventoryId": "inventory_chugaister",
       "wallet": 0,
       "initialControllerId": "ai",
@@ -2109,7 +2109,7 @@
         "aiDescription": "Fill an empty mug with ale from an available ale source.",
         "aiPrerequisites": [
           "An ale source must be present at the actor's current position.",
-          "The actor must have access to a compatible empty mug."
+          "The actor must directly carry a compatible empty mug in their inventory."
         ]
       }
     },
@@ -2132,7 +2132,7 @@
         "feedbackText": "You drink the ale. The mug is now empty.",
         "aiDescription": "Drink the ale in a filled mug, leaving an empty mug.",
         "aiPrerequisites": [
-          "The filled mug must be accessible to the actor."
+          "The actor must directly carry the filled mug in their inventory."
         ],
         "publicText": "{actorName} drinks the ale from {itemName}."
       }
@@ -2217,7 +2217,7 @@
         "feedbackText": "The stone grows faintly warm in your hand. Short-term memory: {shortTermCount} {shortTermEntryWord}. Long-term memory: {longTermCount} {longTermEntryWord}.",
         "aiDescription": "Squeeze the Memory Stone to request its private engine-grounded memory-count feedback.",
         "aiPrerequisites": [
-          "The Memory Stone must be accessible to the actor."
+          "The Memory Stone must be directly carried in the actor's inventory."
         ]
       }
     },
@@ -2248,7 +2248,7 @@
         "saturatedFeedbackText": "You revisit the slab's material relevant to “{inputText}”. The archive now mostly reinforces and organizes material you have already studied rather than opening a substantially new theoretical direction. Further reading on this same line has diminishing returns; meaningful progress would come from practice or from choosing a different question.",
         "aiDescription": "Consult the slab about a chosen topic and record abstract study progress.",
         "aiPrerequisites": [
-          "The slab must be accessible to the actor.",
+          "The slab must be directly carried in the actor's inventory.",
           "A concrete question or study topic must be supplied as input_text."
         ],
         "knowledgeEntries": [
@@ -2686,7 +2686,7 @@
         "feedbackText": "You drink the dark red wine. The wooden bucket is now empty.",
         "aiDescription": "Drink the wine in the filled bucket, leaving an empty bucket.",
         "aiPrerequisites": [
-          "The Bucket of wine must be accessible to the actor."
+          "The actor must directly carry the Bucket of wine in their inventory."
         ]
       }
     },
@@ -2733,7 +2733,7 @@
         "actionLabel": "Eat the syrnyky",
         "aiDescription": "Eat plate of syrnyky, leaving the reusable dish empty.",
         "aiPrerequisites": [
-          "The food must be in the actor’s inventory."
+          "The food must be in the actor's inventory."
         ],
         "resultType": "transform",
         "resultDefinitionId": "emptyPlate",
@@ -2758,7 +2758,7 @@
         "actionLabel": "Eat the buckwheat porridge",
         "aiDescription": "Eat bowl of buckwheat porridge, leaving the reusable dish empty.",
         "aiPrerequisites": [
-          "The food must be in the actor’s inventory."
+          "The food must be in the actor's inventory."
         ],
         "resultType": "transform",
         "resultDefinitionId": "emptyBowl",
@@ -2783,7 +2783,7 @@
         "actionLabel": "Eat the banush",
         "aiDescription": "Eat bowl of banush, leaving the reusable dish empty.",
         "aiPrerequisites": [
-          "The food must be in the actor’s inventory."
+          "The food must be in the actor's inventory."
         ],
         "resultType": "transform",
         "resultDefinitionId": "emptyBowl",
@@ -2808,7 +2808,7 @@
         "actionLabel": "Eat the borshch",
         "aiDescription": "Eat bowl of borshch, leaving the reusable dish empty.",
         "aiPrerequisites": [
-          "The food must be in the actor’s inventory."
+          "The food must be in the actor's inventory."
         ],
         "resultType": "transform",
         "resultDefinitionId": "emptyBowl",
@@ -2833,7 +2833,7 @@
         "actionLabel": "Eat the kulish",
         "aiDescription": "Eat bowl of kulish, leaving the reusable dish empty.",
         "aiPrerequisites": [
-          "The food must be in the actor’s inventory."
+          "The food must be in the actor's inventory."
         ],
         "resultType": "transform",
         "resultDefinitionId": "emptyBowl",

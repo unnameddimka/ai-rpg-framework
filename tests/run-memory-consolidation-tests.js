@@ -139,8 +139,35 @@ async function main() {
     assert(appended && appended.text==="Hello Mara", "delivered observation must append to verbatim");
     assert(!("data" in appended) && !("secretSchedulerField" in appended), "verbatim must omit scheduler metadata");
     const own=setup.VerbatimMemory.appendOwnEvent("hoodedWoman",{id:123,type:"speech",actorId:"hoodedWoman",text:"Hello back"},fixture.world);
-    assert(own && own.sourceEventId===123, "own committed event must append to verbatim");
+    assert(own && own.sourceEventId===123 && own.worldStateAuthority==="grounded_event", "own committed grounded event must preserve authoritative provenance in verbatim");
+    const ownNarrative=setup.VerbatimMemory.appendOwnEvent("hoodedWoman",{id:125,type:"narrative_input",actorId:"hoodedWoman",text:"*Mara appears to place the token on the table.*"},fixture.world);
+    assert(ownNarrative && ownNarrative.worldStateAuthority==="narrative_only", "own narrative_input must remain explicitly non-authoritative in persistent verbatim");
+    const deliveredNarrative=setup.VerbatimMemory.appendFromObservation("hoodedWoman",{id:"pending_narrative",turn:10,kind:"event",eventType:"narrative_input",actorId:"traveler",text:"The Traveler appears to hand over a token."},fixture.world);
+    assert(deliveredNarrative && deliveredNarrative.worldStateAuthority==="narrative_only", "delivered narrative_input must preserve narrative-only provenance");
+    const deliveredResult=setup.VerbatimMemory.appendFromObservation("hoodedWoman",{id:"pending_result",turn:11,kind:"action_result",actionType:"give_item",actorId:"traveler",text:"Traveler gave Token to Mara."},fixture.world);
+    assert(deliveredResult && deliveredResult.worldStateAuthority==="grounded_result", "grounded action result must preserve authoritative provenance");
+    assert(setup.MindValidators.validateVerbatimObservation(Object.assign({}, deliveredNarrative, {worldStateAuthority:"guessed_from_text"})).ok===false, "verbatim authority must be a bounded structured enum rather than free-form prose classification");
     assert(setup.VerbatimMemory.appendOwnEvent("hoodedWoman",{id:124,type:"speech",actorId:"traveler",text:"not mine"},fixture.world)===null, "another actor's raw event must not become own verbatim");
+
+    // Memory maintenance receives the same structured authority; narration remains usable social evidence but not tracked-state proof.
+    fixture=resetMind();
+    fixture.actor.mind.verbatimObservations=Array.from({length:41},(_,i)=>verbatim(i,"authority"));
+    fixture.actor.mind.verbatimObservations[0].text="Garrick appears to set a bowl on the counter.";
+    fixture.actor.mind.verbatimObservations[0].worldStateAuthority="narrative_only";
+    fixture.actor.mind.verbatimObservations[1].text="Garrick moved behind the bar while still carrying the bowl.";
+    fixture.actor.mind.verbatimObservations[1].worldStateAuthority="grounded_result";
+    fixture.world.events.push({id:7001,type:"narrative_input",actorId:"innkeeper",text:"Legacy narrative event."});
+    fixture.actor.mind.verbatimObservations[2].kind="event";
+    fixture.actor.mind.verbatimObservations[2].sourceEventId=7001;
+    delete fixture.actor.mind.verbatimObservations[2].worldStateAuthority;
+    const authoritySeen=[];
+    let authorityResult=await setup.MemoryConsolidator.consolidateSTM("hoodedWoman",scriptedClient(async()=>emptyStmResult(),authoritySeen),{force:true});
+    ok(authorityResult,"authority-aware STM consolidation");
+    const authorityRequest=authoritySeen.find(function(record){return record.payload.stage==="mind-v3-stm";});
+    assert(authorityRequest && authorityRequest.payload.completeVerbatimSnapshot[0].worldStateAuthority==="narrative_only" && authorityRequest.payload.completeVerbatimSnapshot[1].worldStateAuthority==="grounded_result", "complete verbatim snapshot must preserve world-state authority into STM maintenance");
+    assert(authorityRequest.payload.completeVerbatimSnapshot[2].worldStateAuthority==="narrative_only", "compatible older verbatim may recover missing authority from structured source-event provenance without parsing prose");
+    const authorityPrompt=authorityRequest.messages[0].content;
+    assert(authorityPrompt.includes("WORLD-STATE AUTHORITY IS STRUCTURED PROVENANCE") && authorityPrompt.includes("worldStateAuthority=narrative_only") && authorityPrompt.includes("NOT evidence that an item moved") && authorityPrompt.includes("Do not infer or reconstruct authority by parsing the prose"), "STM maintenance prompt must explain narrative-only versus grounded authority without asking the model to parse narration");
 
     // Strict threshold: 40 is idle, 41 uses the complete snapshot and evicts 21.
     fixture=resetMind(); fixture.actor.mind.verbatimObservations=Array.from({length:40},(_,i)=>verbatim(i,"forty"));

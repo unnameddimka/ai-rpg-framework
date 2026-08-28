@@ -196,6 +196,11 @@ const contextualView = {
             description: "Use one currently available authored ability by ability ID.",
             options: { ability_ids: ["readAura"], abilities: [{ id: "readAura", name: "Read aura", label: "Read aura", player_description: "Sense auras.", effect_type: "read_aura" }] },
             schema: { type: "object", properties: { type: { const: "use_ability" }, ability_id: { type: "string" } }, required: ["type", "ability_id"] }
+        },
+        authored_interaction: {
+            description: "Perform an authored physical interaction available here.",
+            options: { interaction_ids: ["raiseOldWellBucket"], interactions: [{ id: "raiseOldWellBucket", action_label: "Raise the bucket", outcome_table_id: "oldWellBucketDraw" }] },
+            schema: { type: "object", properties: { type: { const: "authored_interaction" }, interaction_id: { type: "string" } }, required: ["type", "interaction_id"] }
         }
     }
 };
@@ -223,9 +228,14 @@ assert(groups.characters.length === 1 && groups.characters[0].label === "Talk to
     dropGroup && dropGroup.children.length === 1 && dropGroup.children[0].label === "Empty mug" &&
     putGroup && putGroup.children.some(function (entry) { return entry.label === "Paper Sheet — Meet me by the old…"; }) &&
     groups.here.some(function (entry) { return entry.label === "Read aura"; }) &&
+    groups.here.some(function (entry) { return entry.label === "Raise the bucket" && entry.action.type === "authored_interaction" && entry.action.interaction_id === "raiseOldWellBucket"; }) &&
     groups.travel.length === 1 && groups.travel[0].label === "Go to Village Street" &&
     !groups.here.some(function (entry) { return entry.action && (entry.action.type === "equip" || entry.action.type === "unequip"); }),
     "contextual shortcuts should group item actions behind Use/Drop/Put controls while retaining Characters, Here, and Travel");
+const noAuthoredInteractionView = JSON.parse(JSON.stringify(contextualView));
+delete noAuthoredInteractionView.available_actions.authored_interaction;
+assert(!gameUIModel.buildContextualActionGroups(noAuthoredInteractionView).here.some(function (entry) { return entry.action && entry.action.type === "authored_interaction"; }),
+    "authored interaction shortcut should disappear when the current canonical view no longer offers it");
 assert(gameUIModel.actionAvailableInView({ type: "move", destination_id: "street" }, contextualView) &&
     !gameUIModel.actionAvailableInView({ type: "move", destination_id: "missing" }, contextualView) &&
     gameUIModel.actionAvailableInView({ type: "use_item", item_id: "memoryStone_01" }, contextualView) &&
@@ -233,6 +243,9 @@ assert(gameUIModel.actionAvailableInView({ type: "move", destination_id: "street
     gameUIModel.actionAvailableInView({ type: "equip", item_id: "chain", slot: "neck" }, contextualView) &&
     !gameUIModel.actionAvailableInView({ type: "equip", item_id: "chain", slot: "head" }, contextualView) &&
     gameUIModel.actionAvailableInView({ type: "unequip", item_id: "hat" }, contextualView) &&
+    gameUIModel.actionAvailableInView({ type: "authored_interaction", interaction_id: "raiseOldWellBucket" }, contextualView) &&
+    !gameUIModel.actionAvailableInView({ type: "authored_interaction", interaction_id: "missingInteraction" }, contextualView) &&
+    gameUIModel.actionLabel({ type: "authored_interaction", interaction_id: "raiseOldWellBucket" }, contextualView) === "Raise the bucket" &&
     gameUIModel.actionLabel({ type: "use_item", item_id: "memoryStone_01" }, contextualView) === "Squeeze in hand" &&
     gameUIModel.actionLabel({ type: "take_item", item_id: "cabinetMug" }, contextualView) === "Take Empty mug" &&
     gameUIModel.actionLabel({ type: "read_paper", item_id: "paper1" }, contextualView) === "Read Paper Sheet — Meet me by the old…",

@@ -86,6 +86,34 @@
         return result;
     }
 
+    function modelVerbatimRecord(record, world) {
+        const projected = clone(record);
+        if (!projected || typeof projected !== "object") return projected;
+        const sourceEvent = Number.isInteger(projected.sourceEventId)
+            ? (world.events || []).find(function (event) { return event && event.id === projected.sourceEventId; })
+            : null;
+        const storedAuthority = ["narrative_only", "grounded_event", "grounded_result"].includes(projected.worldStateAuthority)
+            ? projected.worldStateAuthority
+            : null;
+        const eventType = sourceEvent && sourceEvent.type || projected.kind || null;
+        if (storedAuthority) {
+            projected.worldStateAuthority = storedAuthority;
+        } else if (eventType === "narrative_input") {
+            projected.worldStateAuthority = "narrative_only";
+        } else if (sourceEvent && sourceEvent.type) {
+            projected.worldStateAuthority = "grounded_event";
+        } else if (projected.kind === "action_feedback" || projected.kind === "action_result") {
+            projected.worldStateAuthority = "grounded_result";
+        }
+        return projected;
+    }
+
+    function modelVerbatimRecords(records, world) {
+        return (Array.isArray(records) ? records : []).map(function (record) {
+            return modelVerbatimRecord(record, world);
+        });
+    }
+
     function deterministicSelection(actor, world, preparedObservations, suppliedView) {
         const mind = actor.mind || {};
         const terms = contextTerms(actor, world, preparedObservations, suppliedView);
@@ -105,7 +133,7 @@
                 knownFacts: clone(mind.knownFacts || []),
                 beliefs: clone(mind.beliefs || []),
                 relationships: clone(mind.relationships || []),
-                verbatimObservations: clone(mind.verbatimObservations || []),
+                verbatimObservations: modelVerbatimRecords(mind.verbatimObservations || [], world),
                 shortTermMemories: clone(mind.shortTermMemories || []),
                 longTermMemories: clone(mind.longTermMemories || [])
             };
@@ -118,7 +146,7 @@
             knownFacts: clone(mind.knownFacts || []),
             beliefs: clone(byIds(mind.beliefs || [], selection.beliefIds || [], cfg.NORMAL_CONTEXT_BELIEF_LIMIT)),
             relationships: clone(mind.relationships || []),
-            verbatimObservations: clone((mind.verbatimObservations || []).slice(-cfg.NORMAL_CONTEXT_VERBATIM_LIMIT)),
+            verbatimObservations: modelVerbatimRecords((mind.verbatimObservations || []).slice(-cfg.NORMAL_CONTEXT_VERBATIM_LIMIT), world),
             shortTermMemories: clone(byIds(mind.shortTermMemories || [], selection.stmIds || [], cfg.NORMAL_CONTEXT_STM_LIMIT)),
             longTermMemories: clone(byIds(mind.longTermMemories || [], selection.ltmIds || [], cfg.NORMAL_CONTEXT_LTM_LIMIT))
         };
@@ -176,7 +204,7 @@
             notableItems: (view && view.location && view.location.items || []).map(compactItem).filter(Boolean).concat((view && view.accessible_inventories || []).flatMap(function (inventory) { return (inventory.items || []).map(compactItem).filter(Boolean); })).slice(0, 40),
             pendingObservations: pending,
             recentDialogue: recentDialogueContext(actor, world),
-            recentVerbatimObservations: clone((actor.mind && actor.mind.verbatimObservations || []).slice(-setup.MindV3.CONFIG.NORMAL_CONTEXT_VERBATIM_LIMIT)),
+            recentVerbatimObservations: modelVerbatimRecords((actor.mind && actor.mind.verbatimObservations || []).slice(-setup.MindV3.CONFIG.NORMAL_CONTEXT_VERBATIM_LIMIT), world),
             continuation: setup.AIWorkingState.getContinuation(actorId)
         });
     }

@@ -298,13 +298,15 @@ Authoritative appearance:
 - approximately three metres tall;
 - taller and broader than anyone in Mallowstead;
 - covered in coarse, greying hair;
+- blue eyes;
+- he may voluntarily make those blue eyes glow brightly as an expressive emphasis, especially in speech; the glow is not constant or automatic;
 - visually something like a gigantic shaggy forest man / yeti-like being;
 - imposing and clearly supernatural, but not literally tree-sized;
 - intelligent rather than a mindless beast.
 
 Suggested player description:
 
-> An enormous humanoid nearly three metres tall, broader than any man in Mallowstead and covered in coarse, greying hair. At a distance he could be mistaken for some gigantic forest beast; up close his expression and movements are unmistakably intelligent.
+> An enormous humanoid nearly three metres tall, broader than any man in Mallowstead and covered in coarse, greying hair, with distinctly blue eyes. At a distance he could be mistaken for some gigantic forest beast; up close his expression and movements are unmistakably intelligent.
 
 ---
 

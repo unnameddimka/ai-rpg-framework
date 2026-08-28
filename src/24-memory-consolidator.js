@@ -36,11 +36,17 @@
         const world = setup.Game.getWorld();
         const actor = world.entities[characterId];
         if (!actor || actor.type !== "character") return failure("ACTOR_NOT_FOUND", "Character does not exist.");
+        const mind = clone(actor.mind);
+        if (setup.VerbatimMemory && typeof setup.VerbatimMemory.withWorldStateAuthority === "function") {
+            mind.verbatimObservations = (mind.verbatimObservations || []).map(function (record) {
+                return setup.VerbatimMemory.withWorldStateAuthority(record, world);
+            });
+        }
         return {
             ok: true,
             characterId: characterId,
             mindRevision: Number.isInteger(actor.mindRevision) ? actor.mindRevision : 0,
-            mind: clone(actor.mind),
+            mind: mind,
             character: setup.CharacterContext.buildPrivateCharacter(characterId),
             recentDialogue: clone(setup.MindValidators.sanitizeRecentDialogue(actor.recentDialogue, world))
         };
@@ -203,7 +209,10 @@
         const currentById = new Map((actor.mind.verbatimObservations || []).map(function (record) { return [record.id, record]; }));
         for (const record of snapshot.mind.verbatimObservations || []) {
             const currentRecord = currentById.get(record.id);
-            if (!currentRecord || JSON.stringify(currentRecord) !== JSON.stringify(record)) return failure("MIND_V3_STALE", "Verbatim source snapshot changed while STM consolidation was in flight.");
+            const normalizedCurrent = currentRecord && setup.VerbatimMemory && typeof setup.VerbatimMemory.withWorldStateAuthority === "function"
+                ? setup.VerbatimMemory.withWorldStateAuthority(currentRecord, current)
+                : currentRecord;
+            if (!currentRecord || JSON.stringify(normalizedCurrent) !== JSON.stringify(record)) return failure("MIND_V3_STALE", "Verbatim source snapshot changed while STM consolidation was in flight.");
         }
         const candidate = clone(current);
         const cActor = candidate.entities[characterId];

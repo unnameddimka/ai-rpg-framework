@@ -337,6 +337,11 @@
             const ability = options.find(function (candidate) { return candidate.id === action.ability_id; });
             return ability && (ability.label || ability.name) || `Use ability ${action.ability_id}`;
         }
+        if (action.type === "authored_interaction") {
+            const options = view.available_actions.authored_interaction && view.available_actions.authored_interaction.options && view.available_actions.authored_interaction.options.interactions || [];
+            const interaction = options.find(function (candidate) { return candidate.id === action.interaction_id; });
+            return interaction && interaction.action_label || `Interact (${action.interaction_id})`;
+        }
         const ability = view.self.abilities.find(function (candidate) { return candidate.actionType === action.type; });
         const record = view.available_actions[action.type];
         return ability && ability.name || record && record.description || action.type;
@@ -373,6 +378,7 @@
         if (action.type === "place_item") return (options.item_ids || []).includes(action.item_id) && (options.target_inventory_ids || []).includes(action.target_inventory_id);
         if (action.type === "fill" || action.type === "consume" || action.type === "use_item") return (options.item_ids || []).includes(action.item_id);
         if (action.type === "use_ability") return (options.ability_ids || []).includes(action.ability_id);
+        if (action.type === "authored_interaction") return (options.interaction_ids || []).includes(action.interaction_id);
         return isZeroInputAbilityAction(view.available_actions[action.type]);
     }
 
@@ -603,6 +609,11 @@
         const serveFoodAction = view.available_actions.serve_food;
         (serveFoodAction && serveFoodAction.options.actions || []).forEach(function (serving) {
             groups.here.push({ kind: "action", label: serving.action_label || `Serve ${serving.result_name || "food"}`, action: { type: "serve_food", serving_action_id: serving.id } });
+        });
+
+        const authoredInteractionAction = view.available_actions.authored_interaction;
+        (authoredInteractionAction && authoredInteractionAction.options.interactions || []).forEach(function (interaction) {
+            groups.here.push({ kind: "action", label: interaction.action_label || `Interact (${interaction.id})`, action: { type: "authored_interaction", interaction_id: interaction.id } });
         });
 
         if (view.available_actions.defer_departure) groups.here.push({ kind: "action", label: "Stay another period", action: { type: "defer_departure" } });

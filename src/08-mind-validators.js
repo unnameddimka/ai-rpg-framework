@@ -92,6 +92,10 @@
         if (record.sourceEventId !== undefined && record.sourceEventId !== null && (!Number.isInteger(record.sourceEventId) || record.sourceEventId < 1)) {
             return result(false, "Verbatim observation source event id is invalid.");
         }
+        if (record.worldStateAuthority !== undefined && record.worldStateAuthority !== null &&
+                !["narrative_only", "grounded_event", "grounded_result"].includes(record.worldStateAuthority)) {
+            return result(false, "Verbatim observation world-state authority is invalid.");
+        }
         return result(true);
     }
 
