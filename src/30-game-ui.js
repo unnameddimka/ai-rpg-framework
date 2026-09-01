@@ -702,18 +702,6 @@
             : null;
     }
 
-    function renderAbilitySection() {
-        // Abilities are rendered as contextual formal-action shortcuts.
-    }
-
-    function formatResult(result) {
-        if (!result) {
-            return "No action has been attempted yet.";
-        }
-
-        return JSON.stringify(result, null, 2);
-    }
-
     function currentPassageForHuman() {
         const world = setup.Game.getWorld();
         const actorId = setup.Game.getHumanCharacterId();
@@ -880,6 +868,10 @@
             if (!inventory || inventory.owner_id === view.location.id) return;
             (inventory.items || []).forEach(function (item) { add(item, inventory.name || ""); });
         });
+        (view && view.visible_inaccessible_inventories || []).forEach(function (inventory) {
+            if (!inventory) return;
+            (inventory.items || []).forEach(function (item) { add(item, `${inventory.name || "Container"} (behind glass)`); });
+        });
         if (!rows.length) return;
         const section = document.createElement("section");
         section.className = "framework-presentation-block framework-dynamic-items";
@@ -918,17 +910,6 @@
         row.appendChild(spinner);
         appendTextElement(row, "span", "Thinking...", "framework-busy-text");
         root.appendChild(row);
-    }
-
-    function renderLegacyLatestTurn(root, fragments) {
-        const hasVisible = Array.isArray(fragments) && fragments.length > 0;
-        if (!hasVisible && currentTurnHiddenNarrative.length === 0) return;
-        const narrative = document.createElement("section");
-        narrative.className = "framework-turn-narrative";
-        appendTextElement(narrative, "h3", "Latest turn");
-        (fragments || []).forEach(function (fragment) { appendRPElement(narrative, "p", fragment); });
-        currentTurnHiddenNarrative.forEach(function (entry) { appendElsewhereEntry(narrative, entry); });
-        root.appendChild(narrative);
     }
 
     function renderInteractionView() {
@@ -1240,9 +1221,10 @@
         if (existing) existing.remove();
     }
 
-    function runEmergencyDumpFromOverlay(statusNode) {
+    async function runEmergencyDumpFromOverlay(statusNode) {
+        if (statusNode) statusNode.textContent = "Preparing compressed emergency dump…";
         const result = setup.EmergencyDiagnostics && setup.EmergencyDiagnostics.download
-            ? setup.EmergencyDiagnostics.download()
+            ? await setup.EmergencyDiagnostics.download()
             : { ok: false, error: { message: "Emergency diagnostics are unavailable." } };
         if (statusNode) statusNode.textContent = result.ok
             ? `Emergency dump downloaded: ${result.filename}`
@@ -1647,11 +1629,12 @@
             button.type = "button";
             button.textContent = "Emergency dump";
             button.title = "Emergency dump — always available";
-            button.addEventListener("click", function () {
-                const result = setup.EmergencyDiagnostics && setup.EmergencyDiagnostics.download
-                    ? setup.EmergencyDiagnostics.download()
-                    : { ok: false, error: { message: "Emergency diagnostics are unavailable." } };
+            button.addEventListener("click", async function () {
                 const status = document.getElementById("sidebar-status") || document.getElementById("framework-day-work-status");
+                if (status) status.textContent = "Preparing compressed emergency dump…";
+                const result = setup.EmergencyDiagnostics && setup.EmergencyDiagnostics.download
+                    ? await setup.EmergencyDiagnostics.download()
+                    : { ok: false, error: { message: "Emergency diagnostics are unavailable." } };
                 if (status) status.textContent = result.ok ? `Emergency dump downloaded: ${result.filename}` : (result.error && result.error.message || "Emergency dump failed.");
             });
             document.body.appendChild(button);
@@ -1903,7 +1886,7 @@
             if (!window.confirm("Reset the entire framework world?")) return;
             closeSettingsModal(); setup.Game.resetWorld(); delete State.variables.frameworkUI; resetHistory(); currentTurnHiddenNarrative = []; resetStaticNarration(""); Engine.play(currentPassageForHuman());
         });
-        jq("#settings-emergency-dump").on("click", function () { const r = setup.EmergencyDiagnostics.download(); setWorldStatus(r.ok ? `Emergency dump downloaded: ${r.filename}` : r.error.message); });
+        jq("#settings-emergency-dump").on("click", async function () { setWorldStatus("Preparing compressed emergency dump…"); const r = await setup.EmergencyDiagnostics.download(); setWorldStatus(r.ok ? `Emergency dump downloaded: ${r.filename}` : r.error.message); });
 
         jq("#export-starter-characters").on("click", function () {
             const r = setup.StarterCharacterLibrary && setup.StarterCharacterLibrary.exportZip();

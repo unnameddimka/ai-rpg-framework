@@ -6,7 +6,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 
 - The deterministic engine owns objective world state.
 - Models/controllers choose intentions; they do not directly mutate canonical mechanics or mind arrays.
-- `data/world.json` is authored/static source data. Generated world files are build products.
+- `data/world.json` is the committed public authored/static source. `data/world.private.json`, when present in a developer workspace, is an ignored private authored profile; shared world changes must be applied equivalently without overwriting private-only content. Generated world files are build products.
 - A save owns compatible runtime state. Active Promises/HTTP requests/UI busy flags are transient process state and are never authoritative save state.
 - Save migration is always **fresh current authored world + compatible saved runtime overlay**.
 - Current authored definitions/descriptions/known facts win over stale saved authored copies.
@@ -21,7 +21,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - `view.available_actions` is the only current capability contract exposed to a controller and contains only actions with at least one executable invocation in the current canonical state.
 - **Human/AI character affordance parity guideline:** an AI-controlled character should generally be able to express the same ordinary in-world actions that the same character could perform under Human control in the same canonical situation, subject to authored capabilities and limitations. This is per-character parity: Mara's, Chuhaister's, and future character-specific abilities remain intentional distinctions rather than universal grants. Controller/admin UI operations are outside this guideline.
 - AI formal actions must be validated against the current action type and that action's current concrete options before execution.
-- Narrative/speech never substitutes for tracked mechanics such as movement, item transfer/transformation, equip/unequip, money transfer, locks, sleeping state, or ability results.
+- Narrative/speech never substitutes for tracked mechanics such as movement, item transfer/transformation, equip/unequip, money transfer, locks, sleeping state, or ability results. Worlds may additionally author top-level `groundedItemPolicy` text reserving semantic item categories to engine mechanics while leaving ordinary narrative props free; unavailable grounded items never become narrative props merely because no formal item action is offered.
 - **Never deterministically parse free-form narration to infer tracked actions, state changes, or protocol compliance.** No regex/keyword/phrase/action extraction from prose. The engine must rely on structured provenance, formal contracts, canonical state, validated results, and structured repair paths instead.
 - **Formal Action Precedence:** if the current `view.available_actions` contains a formal action representing the intended tracked world-state change, the AI must use it. Narrative may supplement that attempt but may not replace it or claim completion of additional grounded steps. Work one formal step at a time; if several tracked actions are required at once, prefer the one requiring the fewest formal steps and preserve unfinished purposes in `continuation` for later formal turns.
 - Narrative may describe cosmetic/untracked behavior, but it must never claim completion of an engine-tracked state change without the corresponding formal action. If a relevant mechanic is currently unavailable, use an available prerequisite when appropriate or leave the tracked result unfinished.
@@ -65,7 +65,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 ## 6. Timelapse
 
 - Timelapse is a generic coarse-time framework with both overnight and daytime modes exposed in gameplay.
-- Generic code belongs in `24-timelapse-core.js`; overnight entry/exit policy belongs in `24-night-timelapse.js`, while daytime jobs/settlement policy belongs in `24-daytime-timelapse.js`.
+- Timelapse model contracts/request validation belong in `23-timelapse-protocol.js`; transactional coarse-time execution belongs in `24-timelapse-core.js`; overnight entry/exit policy belongs in `24-night-timelapse.js`, while daytime jobs/settlement policy belongs in `24-daytime-timelapse.js`. Structured sponsor settlement uses the shared `23-structured-ai-request.js` lifecycle rather than a private parse/repair loop.
 - Generic prompts must be mode-aware and must not hard-code overnight semantics.
 - Current overnight and daytime modes each use five sequential committed rounds. Daytime sponsored jobs may bind a sponsor to a fixed worksite while free NPCs still use ordinary timelapse planning. `sleep` is a nighttime-only timelapse action: daytime planner contracts/catalogs must not expose it, and daytime validation/execution must reject it defensively.
 - Committed timelapse narrative prose is third-person world narration. Sponsored daytime narration receives the sponsor's grounded canonical ID/name explicitly and must narrate `Mara/Harlan/...` with the Traveler rather than using sponsor-perspective `You/I/We`; quoted dialogue may use ordinary pronouns.
@@ -90,7 +90,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
   - Narrator: optional presentation prose plus explicitly bounded non-mechanical rendering jobs such as canonical weather prose. A bounded Narrator job may render engine-supplied facts but may not invent tracked mechanics or additional world changes.
 - Current shipped role defaults are Character = DeepSeek V4 Flash (DeepSeek V4 Pro remains a supported Character alternative), Utility = DeepSeek V4 Flash, Narrator = Euryale 3.3 70B Nitro. Role selectors must remain catalog-driven so future supported models can be tested without code-path changes. If an invalid/unavailable configured Utility model cannot be resolved locally, fall back safely to Character role where the workflow supports fallback.
 - Ordinary character decisions retain the Character model.
-- OpenRouter routing defaults to `provider.sort = "latency"` with fallbacks enabled.
+- OpenRouter routing keeps fallbacks enabled; Character-role requests use `provider.sort = "throughput"`, while Utility/Narrator roles use `provider.sort = "latency"`.
 - Use stable non-secret `session_id` values for sticky routing/cache locality.
 - Never put API keys or secrets into `session_id`, logs, saves, model context, or world data.
 - Do not enable response caching for gameplay responses.
@@ -105,6 +105,9 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 ## 8. Model protocol and safety
 
 - Model outputs are local JSON contracts, not executable code.
+- AI `publicNarrative` is visible narration/behavior only; `spokenText` is words actually spoken only. Do not hide narration inside `spokenText` or use either channel as an alternate tracked-state commit path.
+- Structured epistemic source is engine-known provenance, not prose interpretation: `formal_fact`, `direct_observation`, `heard_speech`, and `own_speech` remain distinct from mechanical `worldStateAuthority`. Heard/own speech grounds that the utterance happened, not that every proposition inside it is objectively true. Preserve the actual supplied source; never silently promote testimony to firsthand memory or invent when/where/from-whom a claim was learned.
+- In crowded dialogue, prefer a distinct contribution or a genuine no-op over merely paraphrasing/revoicing the immediately preceding speaker. Repetition remains valid when it has a clear in-world function such as clarification, quotation, surprise, emphasis, or misunderstanding. Do not implement prose-similarity policing.
 - Reject extra/invalid fields according to the relevant protocol.
 - At most one repair request is permitted for malformed/schema-invalid structured output unless a workflow explicitly documents otherwise.
 - Repair prompts must remain grounded in the current canonical contract/options.
@@ -133,7 +136,7 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 - Major location movement emits one canonical `character_moved` event with source and destination.
 - Deliver that event to the union of characters who can perceive the actor from either side.
 - Do not split one movement into separate departure/arrival canonical events.
-- Sleeping is explicit canonical state, separate from lying on a bed.
+- Sleeping is explicit canonical state, separate from ordinary occupancy of a sleep-capable position. A sleep-capable sublocation may define `sleepCapacity <= capacity`; missing `sleepCapacity` defaults to ordinary `capacity`. Awake occupants consume ordinary capacity but not sleeping capacity, while sleepers consume both.
 - Observation alone does not mechanically wake a character.
 - A blocked attempt to traverse a locked passage emits a grounded physical-attempt observation to perceivers on both sides. Far-side recipients must not learn the actor identity unless another rule independently establishes it; use anonymous wording such as “Someone tried the door from the other side.”
 - Existing wake-on-own-action/speech semantics remain authoritative.
@@ -164,27 +167,20 @@ This file contains hard repository rules for coding agents. `docs/architecture.m
 
 ## 13. Files and refactoring
 
-- Keep the public `setup.GameAPI`/`CharacterAPI` facade stable where practical.
+- Keep the public runtime facades (`setup.Game`, `setup.CharacterAPI`, `setup.TimelapseAPI`) stable where practical. `setup.GameInternals` is an internal/testing surface, not a public gameplay API.
 - Prefer extraction over broad rewrites.
-- Current internal split:
-  - `07-mind-v3.js`: centralized Mind v3 constants, belief semantics, confidence/activation math;
-  - `08-mind-validators.js`: shared mind/dialogue record validation;
-  - `09-passage-rules.js`: extracted passage/lock parsing, key matching, lock validation and reciprocal lock mutation;
-  - `09-world-derived-state.js`: derived item-placement synchronization;
-  - `10-game-api.js`: stable deterministic facade/actions/world helpers;
-  - `11-save-migration.js`: save reconciliation and deterministic v2->v3 migration;
-  - `12-character-context.js`: restricted views, deterministic fallback selection, retrieval runtime projection;
-  - `13-character-memory.js`: mind/continuation/portable-mind helpers;
-  - `13-verbatim-memory.js`: compact committed-experience capture;
-  - `14-event-perception.js`: event routing, perception, observations, dialogue projection;
-  - `15-ai-admin.js`: safe AI-activity cleanup;
-  - `23-structured-ai-request.js`: shared structured JSON request/repair lifecycle;
-  - `23-mind-consolidation-protocols.js`: Mind v3 protocol prompts/normalization/validation;
-  - `24-memory-consolidator.js`: logical maintenance orchestration and atomic commits;
-  - `24-mind-semantic-retrieval.js`: cheap ordinary-turn semantic selector with fallback;
-  - `24-retrieval-brief-backfill.js`: independent ambient brief recovery;
-  - `24-mind-aux-executor.js`: transient per-character background mind jobs and stale/preemption gating;
-  - `29-debug-ui-formatters.js`: extracted debug/Prompt Lab formatting.
+- Current major ownership boundaries:
+  - `07-mind-v3.js` / `08-mind-validators.js`: canonical Mind v3 semantics and shared record validation;
+  - `09-persistence.js`: save-state synchronization helpers; `09-world-state-authority.js`: shared structured `worldStateAuthority` normalization/projection; `09-action-option-validation.js`: pure action-option/cross-field contract validation shared by Game preflight and AI protocol; `09-passage-rules.js`: passage/lock/key rules; `09-world-derived-state.js`: derived item-placement synchronization;
+  - `10-game-api.js`: stable deterministic `setup.Game` facade and intent/transaction orchestration; `10-game-00-item-mechanics.js`: generic runtime item/inventory primitives; `10-game-01-validation.js`: runtime world validation; `10-game-02-actions.js`: action registry, AI metadata and affordance projection; `10-trade-lifecycle.js`: merchant stock/provenance/restock/departure settlement; `10-presence.js`: neutral local-presence authority; `10-weekly-rhythm.js`: calendar/schedule/awayable lifecycle policy; `10-triggered-events.js` / `10-authored-effects.js`: authored event/effect execution;
+  - `11-save-migration.js`: fresh-authored-world + runtime-overlay reconciliation and deterministic legacy-mind migration;
+  - `12-character-context.js`: restricted views and model-facing context; `13-character-memory.js` / `13-verbatim-memory.js`: mind helpers and committed-experience capture; `14-event-perception.js`: routing/perception/observation/dialogue projection;
+  - `15-ai-admin.js` / `16-emergency-diagnostics.js` / `17-runtime-diagnostics.js`: safe runtime administration and diagnostics;
+  - `20-controllers.js`: Human/Dummy/AI controllers; `20-starter-character-library.js`: browser-local reusable Traveler identity presets;
+  - `21-ai-request-profiles.js` / `21-ai-settings.js` / `22-openrouter-client.js`: model-role profiles, settings, and transport;
+  - `23-ai-protocol.js`: ordinary Character structured contract; `23-structured-ai-request.js`: shared structured JSON parse/normalize/validate/repair lifecycle; `23-timelapse-protocol.js`: timelapse planning/interaction/reflection model contracts and requests; `23-mind-consolidation-protocols.js`: Mind maintenance contracts; `23-world-environment.js`: canonical coarse time/weather; `23-z-action-contract-repair.js`: bounded action-contract repair;
+  - `24-ai-request-executor.js` / `24-ai-turn-scheduler.js`: request execution and causal reaction scheduling; `24-timelapse-core.js` with `24-daytime-timelapse.js` / `24-night-timelapse.js`: transactional coarse-time core plus mode policy; `24-memory-consolidator.js`, `24-mind-semantic-retrieval.js`, `24-retrieval-brief-backfill.js`, `24-mind-aux-executor.js`: Mind maintenance/retrieval; `24-item-model-effects.js`: deferred Utility item effects; `24-prompt-lab.js`: prompt/debug tooling;
+  - `25-turn-flow.js`: Human tick orchestration; `26-presentation-narrator.js`: optional presentation narration; `29-debug-ui-formatters.js`: debug formatting; `30-game-ui.js`: browser UI.
 - Preserve stable IDs, JSON field names, save compatibility, event order, and available-action shapes during structural refactors.
 
 ## 14. Sensitive-content engineering

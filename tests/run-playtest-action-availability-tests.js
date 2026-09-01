@@ -33,9 +33,9 @@ function clearInventory(world, inventoryId) {
 }
 
 [
-    "src/generated/world-data.js", "src/07-mind-v3.js", "src/08-mind-validators.js",
-    "src/09-passage-rules.js", "src/09-world-derived-state.js", "src/10-game-api.js",
-    "src/10-weekly-rhythm.js", "src/10-presence.js", "src/10-authored-effects.js",
+    "src/generated/world-data.js", "src/07-mind-v3.js", "src/08-mind-validators.js","src/09-action-option-validation.js","src/09-world-state-authority.js",
+    "src/09-passage-rules.js", "src/09-world-derived-state.js", "src/10-game-00-item-mechanics.js","src/10-game-01-validation.js","src/10-game-02-actions.js","src/10-game-api.js",
+    "src/10-trade-lifecycle.js","src/10-weekly-rhythm.js", "src/10-presence.js", "src/10-authored-effects.js",
     "src/11-save-migration.js", "src/12-character-context.js", "src/13-character-memory.js",
     "src/13-verbatim-memory.js", "src/14-event-perception.js"
 ].forEach(load);

@@ -63,12 +63,6 @@
         return { visible: visible, hidden: hidden, entries: clone(allowedEntries) };
     }
 
-    function eventTexts(actionResult) {
-        return actionResult && Array.isArray(actionResult.events)
-            ? actionResult.events.map(function (event) { return event.text; }).filter(Boolean)
-            : [];
-    }
-
     function describeSubmittedIntent(actorId, input, intentResult) {
         const entries = [];
         const actionResult = intentResult && intentResult.actionResult;

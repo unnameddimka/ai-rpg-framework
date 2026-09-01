@@ -6,6 +6,7 @@
     const REASONING_MAX_TOKENS = 1500;
     const TEMPERATURE = 0.4;
     const DEFAULT_REQUEST_TIMEOUT_MS = 180000;
+    const PROVIDER_BLACKLIST = Object.freeze(["alibaba"]);
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -195,6 +196,23 @@
             ? source.providerSort
             : "latency";
         const allowProviderFallbacks = source.allowProviderFallbacks !== false;
+        const providerBlacklistSeen = new Set();
+        const providerBlacklist = PROVIDER_BLACKLIST.concat(Array.isArray(source.providerBlacklist) ? source.providerBlacklist : []).map(function (value) {
+            return typeof value === "string" ? value.trim() : "";
+        }).filter(function (provider) {
+            const key = provider.toLowerCase();
+            if (!provider || providerBlacklistSeen.has(key)) return false;
+            providerBlacklistSeen.add(key);
+            return true;
+        });
+        const fallbackSeen = new Set();
+        const fallbackModelIds = (Array.isArray(source.fallbackModelIds) ? source.fallbackModelIds : []).map(function (value) {
+            return typeof value === "string" ? value.trim() : "";
+        }).filter(function (id) {
+            if (!id || id === modelId || fallbackSeen.has(id)) return false;
+            fallbackSeen.add(id);
+            return true;
+        });
         const sessionId = typeof source.sessionId === "string" && source.sessionId.trim()
             ? source.sessionId.trim().slice(0, 256)
             : null;
@@ -209,6 +227,8 @@
             temperature: temperature,
             providerSort: providerSort,
             allowProviderFallbacks: allowProviderFallbacks,
+            providerBlacklist: providerBlacklist,
+            fallbackModelIds: fallbackModelIds,
             sessionId: sessionId,
             timeoutMs: timeoutMs,
             diagnosticContext: source.diagnosticContext && typeof source.diagnosticContext === "object"
@@ -234,10 +254,12 @@
             temperature: requestOptions.temperature,
             provider: {
                 sort: requestOptions.providerSort,
-                allow_fallbacks: requestOptions.allowProviderFallbacks
+                allow_fallbacks: requestOptions.allowProviderFallbacks,
+                ignore: requestOptions.providerBlacklist.slice()
             },
             messages: messages
         };
+        if (requestOptions.fallbackModelIds.length) requestBody.models = requestOptions.fallbackModelIds.slice();
         if (requestOptions.sessionId) requestBody.session_id = requestOptions.sessionId;
         if (requestOptions.reasoningEffort) {
             requestBody.reasoning = { effort: requestOptions.reasoningEffort };
@@ -255,6 +277,8 @@
                 stage: diagnosticContext.stage || null,
                 attempt: diagnosticContext.attempt,
                 modelId: modelId,
+                requestedModelId: modelId,
+                fallbackModelIds: requestOptions.fallbackModelIds,
                 provider: "OpenRouter",
                 endpoint: ENDPOINT
             })
@@ -271,6 +295,10 @@
                     timeout: Boolean(result && result.error && result.error.code === "AI_REQUEST_TIMEOUT"),
                     error: result && result.error || null,
                     rawContent: result && typeof result.content === "string" ? result.content : "",
+                    requestedModelId: modelId,
+                    fallbackModelIds: requestOptions.fallbackModelIds,
+                    selectedModelId: result && result.modelId || null,
+                    selectedProvider: result && result.selectedProvider || null,
                     providerResponse: providerResponse
                 }, extra || {}));
             }
@@ -384,7 +412,10 @@
         return finalizeTransport({
             ok: true,
             status: response.status,
-            modelId: modelId,
+            modelId: typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : modelId,
+            requestedModelId: modelId,
+            fallbackModelIds: requestOptions.fallbackModelIds.slice(),
+            selectedProvider: typeof parsed.provider === "string" && parsed.provider.trim() ? parsed.provider.trim() : null,
             content: content,
             usage: parsed.usage || null,
             retryAfterMs: null,
@@ -402,6 +433,7 @@
         MAX_TOKENS: MAX_TOKENS,
         REASONING_MAX_TOKENS: REASONING_MAX_TOKENS,
         DEFAULT_REQUEST_TIMEOUT_MS: DEFAULT_REQUEST_TIMEOUT_MS,
+        PROVIDER_BLACKLIST: PROVIDER_BLACKLIST,
         getModelId: selectedModelId,
         chat: chat,
         chatWithOptions: chatWithOptions

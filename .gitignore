@@ -10,3 +10,5 @@ dist/Mallowstead-*.zip
 dist/mallowstead.html
 dist/mallowstead-private.html
 model-contract-bench/bench.sqlite3
+*.zip
+.agent-packages/

@@ -16,42 +16,6 @@
     }
 
 
-    function setTimePhase(phase) {
-        if (setup.WorldEnvironment && typeof setup.WorldEnvironment.setTimePhase === "function") {
-            return setup.WorldEnvironment.setTimePhase(phase);
-        }
-        const world = setup.Game.getWorld();
-        const snapshot = clone(world);
-        const previousLegacyTime = typeof State !== "undefined" && State.variables ? State.variables.time : undefined;
-        if (!world.environment) world.environment = {};
-        world.environment.timePhase = phase;
-        const labels = { evening: "Evening", nighttime_timelapse: "Night", morning: "Morning", daytime_timelapse: "Day" };
-        if (typeof State !== "undefined" && State.variables) State.variables.time = labels[phase] || phase;
-        const validation = setup.Game.validateWorld();
-        if (!validation.ok) {
-            State.variables.world = snapshot;
-            if (typeof State !== "undefined" && State.variables) {
-                if (previousLegacyTime === undefined) delete State.variables.time;
-                else State.variables.time = previousLegacyTime;
-            }
-            return validation;
-        }
-        return { ok: true, value: { timePhase: phase, timeLabel: labels[phase] || phase } };
-    }
-
-    function recordFinalTimelapseResult(result, finalStage) {
-        if (setup.EmergencyDiagnostics && typeof setup.EmergencyDiagnostics.recordTimelapseResult === "function") {
-            try {
-                const world = setup.Game && setup.Game.getWorld ? setup.Game.getWorld() : null;
-                setup.EmergencyDiagnostics.recordTimelapseResult(Object.assign({}, clone(result || {}), {
-                    wrapperStage: finalStage || null,
-                    finalTimePhase: world && world.environment && world.environment.timePhase || null
-                }));
-            } catch (error) { /* diagnostics never affect gameplay */ }
-        }
-        return result;
-    }
-
     function currentWorld() {
         return setup.Game.getWorld();
     }
@@ -180,12 +144,16 @@
         const sponsorId = active.sponsorCharacterId;
         const context = setup.ContextBuilder.build(sponsorId, { pendingObservations: [] });
         if (!context || context.ok === false) return context;
+        const locationCatalog = setup.TimelapseAPI && typeof setup.TimelapseAPI.getReachableCatalog === "function" ? setup.TimelapseAPI.getReachableCatalog(sponsorId) : [];
+        const workLocationGrounding = Array.isArray(locationCatalog) ? locationCatalog.find(function (location) { return location && location.id === activity.workLocationId; }) : null;
         context.daytimeJob = {
             activity: clone(activity),
             round: round,
             totalRounds: ROUND_COUNT,
             sponsor: { id: sponsorId, name: characterName(sponsorId) },
             worker: { id: active.humanCharacterId, name: characterName(active.humanCharacterId) },
+            selectedLocationId: activity.workLocationId,
+            selectedLocationGrounding: clone(workLocationGrounding || null),
             committedFacts: (committedFacts || []).slice(-24)
         };
         const messages = [{
@@ -197,8 +165,11 @@
                 "Write the narrative voice strictly in third person. Refer to context.daytimeJob.sponsor.name as the sponsoring character and to the Human-controlled player as the Traveler. Do not narrate from the sponsor's first- or second-person perspective: no narratorial I, you, we, my, your, or our for the sponsor. Quoted dialogue may use normal first- or second-person pronouns.",
                 "Use the sponsor's supplied personality, memories, relationships, recent context, and the authored job instructions.",
                 "The Traveler is occupied with the job and does not take an interactive HumanController turn during the timelapse.",
-                "Do not create or transfer tracked items or money, do not grant the final reward, and do not claim any additional formal world-state change.",
-                "Do not claim travel to another named canonical location. Return plain prose only."
+                "ENGINE MOVEMENT BOUNDARY: canonical movement between named locations happens outside narration. This round is formally at context.daytimeJob.selectedLocationId. Describe only activity at that selected location. Do not narrate departing toward, walking/travelling to, entering, arriving at, or otherwise moving into another canonical location; do not pre-narrate the next round's location.",
+                "Use context.daytimeJob.selectedLocationGrounding and the supplied authored location/sublocation descriptions to respect physical affordances and constraints. Do not move an activity to another canonical location merely because it would be convenient there.",
+                "ITEM GROUNDING: context.worldAuthoredContext.groundedItemPolicy is binding authored world law. Categories reserved there and any concrete canonical item supplied by the engine are grounded; do not invent or mechanically manipulate them through prose. If a grounded item/action is unavailable, choose another local narratable activity rather than reinterpreting it as a narrative prop. Ordinary incidental props outside grounded categories remain narratively available.",
+                "Do not create or transfer tracked items or money, do not grant the final reward, and do not claim any additional formal world-state change. If an intended activity requires a tracked mechanic and no supplied formal timelapse/study/action contract can perform it, choose a different narratable local activity rather than simulating the missing tracked action in prose. This includes item/container placement or transfer, locks/passage state, writing/writable content, filling/transforming/consuming tracked items, money, equipment, canonical location/sublocation movement, sleeping, and other formal abilities/actions.",
+                "Return plain prose only."
             ].join(" ")
         }, {
             role: "user",
@@ -239,12 +210,13 @@
                 "AUTHORITATIVE TIME PHASE: Day. The engine transitions to Evening only after every daytime round and deterministic boundary processing finish. This narration must remain within Day: it may anticipate returning for evening, but must not narrate Evening/Night as already begun or advance to the next morning.",
                 "Write 1-3 concise grounded sentences describing the Human-controlled Traveler hunting small game around the configured stream and nearby woods.",
                 "The Traveler is committed to hunting for the day; do not ask for player input.",
-                "Do not determine or mention the final number of pelts or any other reward. Do not create tracked items, money, injuries, movement to another named location, or other formal state changes.",
+                "The configured workLocationId is the canonical location for this round. Engine movement between canonical locations is outside narration: do not narrate departing toward, entering, arriving at, or moving into another named canonical location.",
+                "Do not determine or mention the final number of pelts or any other reward. Do not create tracked items, money, injuries, or other formal state changes. If a detail would require a tracked mechanic for which no formal contract is supplied, choose another local hunting detail instead of simulating that tracked action in prose.",
                 "Return plain prose only."
             ].join(" ")
         }, {
             role: "user",
-            content: JSON.stringify({ round: round, totalRounds: ROUND_COUNT, weather: weather, narrationInstructions: activity.narrationInstructions || "" })
+            content: JSON.stringify({ round: round, totalRounds: ROUND_COUNT, workLocationId: activity.workLocationId, weather: weather, narrationInstructions: activity.narrationInstructions || "" })
         }];
         try {
             const result = await setup.AIRequestExecutor.executeCustom({
@@ -290,7 +262,7 @@
         } else {
             return failure("DAYTIME_SETTLEMENT_POLICY_INVALID", "Unsupported sponsor settlement policy.");
         }
-        return { ok: true, context: context, messages: [{
+        return { ok: true, context: context, contract: contract, messages: [{
             role: "system",
             content: [
                 "You are the sponsoring character choosing the reward after a completed full day of work by the Human-controlled Traveler.",
@@ -303,17 +275,6 @@
             role: "user",
             content: JSON.stringify({ context: context, requiredRewardContract: clone(settlement) })
         }] };
-    }
-
-    function parseJsonObject(text) {
-        let raw = String(text || "").trim();
-        if (raw.startsWith("```") && raw.endsWith("```")) raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
-        try {
-            const value = JSON.parse(raw);
-            return value && typeof value === "object" && !Array.isArray(value) ? { ok: true, value: value } : failure("DAYTIME_SETTLEMENT_INVALID", "Settlement response must be one JSON object.");
-        } catch (error) {
-            return failure("DAYTIME_SETTLEMENT_INVALID", "Settlement response was not valid JSON.");
-        }
     }
 
     function validateSponsorReward(activity, value) {
@@ -350,32 +311,53 @@
         const built = settlementMessages(record, committedFacts);
         if (!built.ok) return built;
         const sponsorId = record.active.sponsorCharacterId;
-        let messages = built.messages;
-        for (let attempt = 0; attempt < 2; attempt++) {
-            const result = await setup.AIRequestExecutor.executeCustom({
-                actorId: sponsorId,
-                purpose: "daytime-job-settlement",
-                stage: "daytime-job-settlement",
-                messages: clone(messages),
-                requestOptions: setup.AIRequestProfiles.resolve("daytime-job-settlement", { actorId: sponsorId }),
-                client: client || setup.OpenRouterClient,
-                run: async function (policyClient) {
-                    const response = await policyClient.chat(messages);
-                    if (!response || !response.ok) return failure("DAYTIME_SETTLEMENT_REQUEST_FAILED", response && response.error && response.error.message || "Settlement request failed.");
-                    return { ok: true, value: { raw: response.content || "" }, modelId: response.modelId || null, usage: response.usage || null, rawContent: response.content || "", trace: null };
-                }
-            });
-            if (!result || !result.ok) return failure("DAYTIME_SETTLEMENT_REQUEST_FAILED", result && result.error && result.error.message || "Settlement request failed.");
-            const parsed = parseJsonObject(result.value.raw);
-            const validated = parsed.ok ? validateSponsorReward(record.definition, parsed.value) : parsed;
-            if (validated.ok) return validated;
-            if (attempt === 0) {
-                messages = messages.concat([{ role: "assistant", content: String(result.value.raw || "") }, { role: "user", content: `Your reward response was invalid: ${validated.error.message} Return only a corrected JSON object matching the original contract.` }]);
-            } else {
-                return validated;
+        const messages = clone(built.messages);
+        const requestOptions = setup.AIRequestProfiles.resolve("daytime-job-settlement", { actorId: sponsorId });
+        const result = await setup.AIRequestExecutor.executeCustom({
+            actorId: sponsorId,
+            purpose: "daytime-job-settlement",
+            stage: "daytime-job-settlement",
+            messages: clone(messages),
+            requestOptions: clone(requestOptions),
+            client: client || setup.OpenRouterClient,
+            run: function (policyClient) {
+                return setup.StructuredAIRequest.run(policyClient, {
+                    stage: "daytime-job-settlement",
+                    messages: messages,
+                    requestOptions: requestOptions,
+                    contract: built.contract,
+                    maxRepairAttempts: 1,
+                    retryOnTruncation: false,
+                    parse: function (content) {
+                        let raw = String(content || "").trim();
+                        if (raw.startsWith("```") && raw.endsWith("```")) raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
+                        const value = JSON.parse(raw);
+                        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Settlement response must be one JSON object.");
+                        return value;
+                    },
+                    validate: function (value) {
+                        const validation = validateSponsorReward(record.definition, value);
+                        return validation.ok ? validation : { ok: false, errors: [validation.error.message] };
+                    },
+                    parseErrorCode: "DAYTIME_SETTLEMENT_INVALID",
+                    parseErrorMessage: "Settlement response was not valid JSON.",
+                    validationErrorCode: "DAYTIME_SETTLEMENT_INVALID",
+                    validationErrorMessage: "Settlement response did not match the authored reward contract.",
+                    traceMessages: true,
+                    buildRepairMessages: function (baseMessages, responseContent, errors) {
+                        return clone(baseMessages).concat([
+                            { role: "assistant", content: String(responseContent || "") },
+                            { role: "user", content: `Your reward response was invalid: ${errors.join("; ")} Return only a corrected JSON object matching the original contract.` }
+                        ]);
+                    }
+                });
             }
+        });
+        if (result && result.ok) return result;
+        if (result && result.trace && result.trace.finalStatus === "request_failed") {
+            return Object.assign(failure("DAYTIME_SETTLEMENT_REQUEST_FAILED", result.error && result.error.message || "Settlement request failed."), { trace: clone(result.trace) });
         }
-        return failure("DAYTIME_SETTLEMENT_INVALID", "Settlement could not be validated.");
+        return result || failure("DAYTIME_SETTLEMENT_INVALID", "Settlement could not be validated.");
     }
 
     function createItemInstance(definitionId, inventoryId) {
@@ -393,10 +375,11 @@
         return id;
     }
 
-    function rewardTextForItems(actorName, items) {
+    function rewardTextForItems(items) {
         return items.map(function (record) {
             const definition = currentWorld().itemDefinitions[record.definitionId];
-            return `${record.count} ${definition && definition.name || record.definitionId}${record.count === 1 ? "" : "s"}`;
+            const name = definition && definition.name || record.definitionId;
+            return record.count === 1 ? `1 ${name}` : `${record.count} × ${name}`;
         }).join(" and ");
     }
 
@@ -455,7 +438,7 @@
                     chosen.value.items.forEach(function (itemRecord) {
                         for (let i = 0; i < itemRecord.count; i++) createItemInstance(itemRecord.definitionId, human.inventoryId);
                     });
-                    text = `${sponsor.name} gave ${human.name} ${rewardTextForItems(sponsor.name, chosen.value.items)} for the completed day of work.`;
+                    text = `${sponsor.name} gave ${human.name} ${rewardTextForItems(chosen.value.items)} for the completed day of work.`;
                 } else {
                     throw Object.assign(new Error("Unsupported daytime settlement policy."), { code: "DAYTIME_SETTLEMENT_POLICY_INVALID" });
                 }
@@ -501,7 +484,7 @@
             const restoredRecord = { active: clone(restored.daytime.activeActivity), definition: restored.dayActivities[record.definition.id] };
             restored.daytime.activeActivity = null;
             const text = activityFailureObservation(restoredRecord, movement.error);
-            return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: 0, failedStage: "worksite-preflight", hiddenNarrativeEntries: [], committedFacts: [text], error: clone(movement.error) }, "worksite-preflight");
+            return setup.TimelapseCore.recordFinalResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: 0, failedStage: "worksite-preflight", hiddenNarrativeEntries: [], committedFacts: [text], error: clone(movement.error) }, "worksite-preflight");
         }
 
         Object.values(currentWorld().entities).forEach(function (entity) {
@@ -512,12 +495,12 @@
             : { ok: true };
         if (!triggeredBoundary.ok) {
             restoreWorld(preflightSnapshot);
-            return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: 0,
+            return setup.TimelapseCore.recordFinalResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: 0,
                 failedStage: "triggered-events", hiddenNarrativeEntries: [], committedFacts: [], error: clone(triggeredBoundary.error) }, "triggered-events");
         }
-        const daytimePhase = setTimePhase("daytime_timelapse");
+        const daytimePhase = setup.TimelapseCore.setTimePhase("daytime_timelapse");
         if (!daytimePhase.ok) {
-            return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: 0,
+            return setup.TimelapseCore.recordFinalResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: 0,
                 failedStage: "wrapper-phase-validation", hiddenNarrativeEntries: [], committedFacts: [], error: clone(daytimePhase.error) }, "wrapper-phase-validation");
         }
         const fixedPlans = {};
@@ -570,14 +553,14 @@
             const wrapperMutationValidation = setup.Game.validateWorld();
             if (!wrapperMutationValidation.ok) {
                 restoreWorld(wrapperMutationSnapshot);
-                return recordFinalTimelapseResult(Object.assign({}, result, { failedStage: "wrapper-state-validation", error: clone(wrapperMutationValidation.error) }), "wrapper-state-validation");
+                return setup.TimelapseCore.recordFinalResult(Object.assign({}, result, { failedStage: "wrapper-state-validation", error: clone(wrapperMutationValidation.error) }), "wrapper-state-validation");
             }
             if (!result.ok) {
-                const morningPhase = setTimePhase("morning");
-                if (!morningPhase.ok) return recordFinalTimelapseResult(Object.assign({}, result, { failedStage: "wrapper-phase-validation", error: clone(morningPhase.error) }), "wrapper-phase-validation");
+                const morningPhase = setup.TimelapseCore.setTimePhase("morning");
+                if (!morningPhase.ok) return setup.TimelapseCore.recordFinalResult(Object.assign({}, result, { failedStage: "wrapper-phase-validation", error: clone(morningPhase.error) }), "wrapper-phase-validation");
                 const validationFailed = setup.Game.validateWorld();
-                if (!validationFailed.ok) return recordFinalTimelapseResult(Object.assign({}, result, { failedStage: "wrapper-validation", error: clone(validationFailed.error) }), "wrapper-validation");
-                return recordFinalTimelapseResult(result, result.failedStage || "core-failed");
+                if (!validationFailed.ok) return setup.TimelapseCore.recordFinalResult(Object.assign({}, result, { failedStage: "wrapper-validation", error: clone(validationFailed.error) }), "wrapper-validation");
+                return setup.TimelapseCore.recordFinalResult(result, result.failedStage || "core-failed");
             }
             if (typeof options.onProgress === "function") {
                 try { options.onProgress({ stage: "weather", text: "Updating weather…", mode: MODE }); } catch (error) { /* presentation-only */ }
@@ -606,16 +589,16 @@
                 }
                 const boundary = setup.WeeklyRhythm.advanceEveningBoundary(currentWorld(), { random: options.random });
                 if (!boundary.ok) {
-                    return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0,
+                    return setup.TimelapseCore.recordFinalResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0,
                         failedStage: "evening-boundary", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(boundary.error) }, "evening-boundary");
                 }
                 result.eveningBoundary = clone(boundary);
             }
-            const eveningPhase = setTimePhase("evening");
-            if (!eveningPhase.ok) return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0, failedStage: "wrapper-phase-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(eveningPhase.error) }, "wrapper-phase-validation");
+            const eveningPhase = setup.TimelapseCore.setTimePhase("evening");
+            if (!eveningPhase.ok) return setup.TimelapseCore.recordFinalResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0, failedStage: "wrapper-phase-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(eveningPhase.error) }, "wrapper-phase-validation");
             const validation = setup.Game.validateWorld();
-            if (!validation.ok) return recordFinalTimelapseResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0, failedStage: "wrapper-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(validation.error) }, "wrapper-validation");
-            return recordFinalTimelapseResult(result, "complete");
+            if (!validation.ok) return setup.TimelapseCore.recordFinalResult({ ok: false, mode: MODE, humanId: record.active.humanCharacterId, rounds: ROUND_COUNT, committedRounds: result.committedRounds || 0, failedStage: "wrapper-validation", hiddenNarrativeEntries: clone(result.hiddenNarrativeEntries || []), committedFacts: clone(result.committedFacts || []), error: clone(validation.error) }, "wrapper-validation");
+            return setup.TimelapseCore.recordFinalResult(result, "complete");
         } finally {
             inFlight = false;
         }

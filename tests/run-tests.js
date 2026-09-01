@@ -39,8 +39,8 @@ function perform(actorId, action, message) {
 }
 
 load("src/generated/world-data.js");
-load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js");
+load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-action-option-validation.js"); load("src/09-world-state-authority.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-00-item-mechanics.js"); load("src/10-game-01-validation.js"); load("src/10-game-02-actions.js"); load("src/10-game-api.js"); load("src/10-trade-lifecycle.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");

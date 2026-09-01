@@ -75,6 +75,10 @@
             purpose: meta.purpose || null,
             stage: meta.stage || null,
             modelId: meta.modelId || null,
+            requestedModelId: meta.requestedModelId || meta.modelId || null,
+            fallbackModelIds: Array.isArray(meta.fallbackModelIds) ? meta.fallbackModelIds.slice() : [],
+            selectedModelId: null,
+            selectedProvider: null,
             provider: meta.provider || "OpenRouter",
             endpoint: sanitizedEndpoint(meta.endpoint || ""),
             attempt: Number.isFinite(meta.attempt) ? meta.attempt : null,
@@ -106,6 +110,10 @@
             entry.timeout = Boolean(data.timeout);
             entry.error = data.error ? sanitize(data.error, new WeakSet(), 0) : null;
             entry.rawContent = typeof data.rawContent === "string" ? redactText(data.rawContent) : "";
+            entry.requestedModelId = data.requestedModelId || entry.requestedModelId || entry.modelId || null;
+            entry.fallbackModelIds = Array.isArray(data.fallbackModelIds) ? sanitize(data.fallbackModelIds, new WeakSet(), 0) : entry.fallbackModelIds || [];
+            entry.selectedModelId = data.selectedModelId || null;
+            entry.selectedProvider = data.selectedProvider || null;
             entry.providerResponse = data.providerResponse ? sanitize(data.providerResponse, new WeakSet(), 0) : null;
             return clone(entry);
         } catch (error) {

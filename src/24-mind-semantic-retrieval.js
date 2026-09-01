@@ -115,14 +115,18 @@
         ].join(" ");
     }
 
-    async function select(characterId, pendingObservations, client) {
+    async function select(characterId, pendingObservations, client, options) {
         const world = setup.Game.getWorld();
         const actor = world.entities[characterId];
         if (!actor || actor.type !== "character") return { ok: false, fallbackRequired: true, error: { code: "ACTOR_NOT_FOUND", message: "Character does not exist." } };
+        options = options && typeof options === "object" ? options : {};
         const fallback = setup.CharacterContext.selectMindDeterministically(characterId, pendingObservations || []);
         if (fallback && fallback.ok === false) return fallback;
         const catalog = buildCatalog(actor);
-        const runtime = setup.CharacterContext.buildRetrievalRuntime(characterId, { pendingObservations: pendingObservations || [] });
+        const runtime = setup.CharacterContext.buildRetrievalRuntime(characterId, {
+            pendingObservations: pendingObservations || [],
+            intimateFocus: options.intimateFocus || null
+        });
         if (runtime && runtime.ok === false) return Object.assign({}, runtime, { fallbackRequired: true, selection: clone(fallback) });
         const cfg = setup.MindV3.CONFIG;
         const limits = { beliefs: cfg.NORMAL_CONTEXT_BELIEF_LIMIT, stm: cfg.NORMAL_CONTEXT_STM_LIMIT, ltm: cfg.NORMAL_CONTEXT_LTM_LIMIT };

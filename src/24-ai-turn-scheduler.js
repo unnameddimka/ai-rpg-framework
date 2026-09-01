@@ -72,8 +72,11 @@
                 textParts.push(`${actor}${addressee ? ` to ${addressee}` : ""}: ${narrativeText}`);
             }
             if (mechanicalText) textParts.push(mechanicalText);
+            const epistemicParts = items.flatMap(function (item) {
+                return Array.isArray(item && item.epistemicParts) ? clone(item.epistemicParts) : [];
+            });
 
-            return {
+            const combined = {
                 id: first.id,
                 observationIds: items.map(function (item) { return item.id; }),
                 interactionId: entry.interactionId,
@@ -90,6 +93,8 @@
                     targetIds: Array.from(new Set([mechanicalTargetId, narrativeTargetId].filter(Boolean)))
                 }
             };
+            if (epistemicParts.length) combined.epistemicParts = epistemicParts;
+            return combined;
         });
     }
 

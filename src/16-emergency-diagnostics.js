@@ -69,12 +69,16 @@
     function recordError(kind, errorLike) {
         try {
             const error = errorLike && errorLike.error || errorLike && errorLike.reason || errorLike;
-            recentErrors.push({
+            const entry = {
                 at: new Date().toISOString(),
                 kind: kind,
                 message: error && error.message ? String(error.message) : String(error || "Unknown error"),
                 stack: error && error.stack ? String(error.stack) : ""
-            });
+            };
+            if (errorLike && typeof errorLike === "object" && Object.prototype.hasOwnProperty.call(errorLike, "details")) {
+                entry.details = safeSanitize(errorLike.details, new WeakSet(), 0);
+            }
+            recentErrors.push(entry);
             if (recentErrors.length > ERROR_LIMIT) recentErrors.splice(0, recentErrors.length - ERROR_LIMIT);
         } catch (ignored) { /* Diagnostics must never break gameplay. */ }
     }
@@ -332,7 +336,78 @@
         return out.finish();
     }
 
-    function download() {
+
+    function chunkWriter() {
+        const chunks = [];
+        let total = 0;
+        function push(bytes) {
+            const chunk = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+            chunks.push(chunk);
+            total += chunk.length;
+        }
+        return {
+            u16: function (value) { push([value & 255, (value >>> 8) & 255]); },
+            u32: function (value) { push([value & 255, (value >>> 8) & 255, (value >>> 16) & 255, (value >>> 24) & 255]); },
+            data: push,
+            length: function () { return total; },
+            finish: function () {
+                const output = new Uint8Array(total);
+                let offset = 0;
+                chunks.forEach(function (chunk) { output.set(chunk, offset); offset += chunk.length; });
+                return output;
+            }
+        };
+    }
+
+    async function deflateRaw(bytes) {
+        if (typeof CompressionStream !== "function" || typeof Blob === "undefined") {
+            throw new Error("This browser does not support DEFLATE compression required for Emergency Dump export.");
+        }
+        const compressedStream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+        const reader = compressedStream.getReader();
+        const chunks = [];
+        let total = 0;
+        while (true) {
+            const part = await reader.read();
+            if (part.done) break;
+            const chunk = part.value instanceof Uint8Array ? part.value : new Uint8Array(part.value);
+            chunks.push(chunk);
+            total += chunk.length;
+        }
+        const output = new Uint8Array(total);
+        let offset = 0;
+        chunks.forEach(function (chunk) { output.set(chunk, offset); offset += chunk.length; });
+        return output;
+    }
+
+    async function buildDeflatedZip(textFiles) {
+        const out = chunkWriter();
+        const central = [];
+        const filenames = Object.keys(textFiles).sort();
+        for (const filename of filenames) {
+            const name = utf8(filename);
+            const data = utf8(textFiles[filename]);
+            const compressed = await deflateRaw(data);
+            const crc = crc32(data);
+            const offset = out.length();
+            out.u32(0x04034b50); out.u16(20); out.u16(0x0800); out.u16(8); out.u16(0); out.u16(0);
+            out.u32(crc); out.u32(compressed.length); out.u32(data.length); out.u16(name.length); out.u16(0);
+            out.data(name); out.data(compressed);
+            central.push({ name: name, crc: crc, compressedSize: compressed.length, size: data.length, offset: offset });
+        }
+        const centralOffset = out.length();
+        central.forEach(function (entry) {
+            out.u32(0x02014b50); out.u16(20); out.u16(20); out.u16(0x0800); out.u16(8); out.u16(0); out.u16(0);
+            out.u32(entry.crc); out.u32(entry.compressedSize); out.u32(entry.size); out.u16(entry.name.length); out.u16(0); out.u16(0);
+            out.u16(0); out.u16(0); out.u32(0); out.u32(entry.offset); out.data(entry.name);
+        });
+        const centralSize = out.length() - centralOffset;
+        out.u32(0x06054b50); out.u16(0); out.u16(0); out.u16(central.length); out.u16(central.length);
+        out.u32(centralSize); out.u32(centralOffset); out.u16(0);
+        return out.finish();
+    }
+
+    async function download() {
         const bundle = captureFiles();
         const textFiles = {};
         Object.keys(bundle.files).forEach(function (filename) {
@@ -348,7 +423,7 @@
             return { ok: false, error: { code: "EMERGENCY_DUMP_DOWNLOAD_UNAVAILABLE", message: "Browser download APIs are unavailable." }, manifest: bundle.manifest, files: textFiles };
         }
         try {
-            const zipBytes = buildStoredZip(textFiles);
+            const zipBytes = await buildDeflatedZip(textFiles);
             const blob = new Blob([zipBytes], { type: "application/zip" });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
@@ -370,6 +445,7 @@
         capture: capture,
         captureFiles: captureFiles,
         buildStoredZip: buildStoredZip,
+        buildDeflatedZip: buildDeflatedZip,
         download: download,
         recordError: recordError,
         recordTimelapseResult: recordTimelapseResult,

@@ -27,7 +27,7 @@ Models can be changed in Settings.
 ## Passing time
 
 - **To skip the night:** sleep in any bed and continue sleeping until morning.
-- **To skip the day:** in the morning, ask **Mara the Hedge Witch** or **Harlan the Blacksmith** for work and accept a day job, or go hunting squirrels. Whether Mara or Harlan offers work still depends on the situation and their AI-controlled decision.
+- **To skip the day:** in the morning, ask **Mara the Hedge Witch**, **Harlan the Blacksmith**, **Radovan**, or **Bozhena** for work and accept a day job, or go hunting squirrels. Whether a sponsor offers work still depends on the situation and that character's AI-controlled decision.
 
 ## Saves, exports, and bug reports
 

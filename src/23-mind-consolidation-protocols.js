@@ -33,18 +33,21 @@
         if (!Object.prototype.hasOwnProperty.call(normalized, "retrievalBrief")) normalized.retrievalBrief = "";
         return normalized;
     }
-    function memoryWritableState(record) {
+    function memoryWritableState(record, epistemicFallback) {
         if (!isObject(record)) return null;
-        return {
+        const state = {
             topic: typeof record.topic === "string" ? record.topic.trim() : record.topic,
             summary: typeof record.summary === "string" ? record.summary.trim() : record.summary,
             importance: normalizeImportance(record.importance),
             retrievalBrief: typeof record.retrievalBrief === "string" ? record.retrievalBrief.trim() : ""
         };
+        if (Object.prototype.hasOwnProperty.call(record, "epistemicSources")) state.epistemicSources = V.normalizeEpistemicSources(record.epistemicSources);
+        else if (isObject(epistemicFallback) && Object.prototype.hasOwnProperty.call(epistemicFallback, "epistemicSources")) state.epistemicSources = V.normalizeEpistemicSources(epistemicFallback.epistemicSources);
+        return state;
     }
     function memoryUpsertHasEffect(record, existing) {
         if (!isObject(record) || !isObject(existing)) return true;
-        return JSON.stringify(memoryWritableState(record)) !== JSON.stringify(memoryWritableState(existing));
+        return JSON.stringify(memoryWritableState(record, existing)) !== JSON.stringify(memoryWritableState(existing));
     }
     function normalizeMemoryProposalArrays(value, keys) {
         if (!isObject(value)) return value;
@@ -62,6 +65,7 @@
         // a repair request. Unknown non-engine fields remain untouched so exact protocol
         // validation still rejects them.
         delete normalized.protected;
+        if (Object.prototype.hasOwnProperty.call(normalized, "epistemicSources")) normalized.epistemicSources = V.normalizeEpistemicSources(normalized.epistemicSources);
         return normalized;
     }
     function normalizeStmRepartitionProposal(record) {
@@ -226,19 +230,31 @@
         return `retrievalBrief uses the same semantics for STM and LTM: it is compact semantic retrieval metadata, NOT a second summary. Describe what the memory is mainly about and when/why it may matter for future retrieval; do not retell the sequence of events; do not chronologically retell the events; and do not duplicate the full summary. HARD LIMIT: every retrievalBrief MUST be ${V.RETRIEVAL_BRIEF_MAX} characters or fewer and should normally be substantially shorter. Do not use retrievalBrief as evidence.`;
     }
 
-    function validateMemoryProposal(record, requireId, maxSummaryLength) {
+    function validateMemoryProposal(record, requireId, maxSummaryLength, options) {
         if (!isObject(record)) return false;
+        const opts = options || {};
         const keys = requireId ? ["id", "topic", "summary", "importance", "retrievalBrief"] : ["topic", "summary", "importance", "retrievalBrief"];
-        if (!exactKeys(record, keys)) return false;
+        const withEpistemic = keys.concat(["epistemicSources"]);
+        const hasEpistemic = Object.prototype.hasOwnProperty.call(record, "epistemicSources");
+        if (!(exactKeys(record, keys) || (opts.allowEpistemicSources === true && exactKeys(record, withEpistemic)))) return false;
+        if (hasEpistemic && opts.allowEpistemicSources !== true) return false;
         if (requireId && (typeof record.id !== "string" || !V.ID_PATTERN.test(record.id))) return false;
         const summaryLimit = Number.isInteger(maxSummaryLength) ? maxSummaryLength : M.CONFIG.LTM_SUMMARY_MAX_CHARS;
-        return validText(record.topic, 240) && validText(record.summary, summaryLimit) && V.retrievalBriefValid(record.retrievalBrief) && validImportance(record.importance);
+        if (!(validText(record.topic, 240) && validText(record.summary, summaryLimit) && V.retrievalBriefValid(record.retrievalBrief) && validImportance(record.importance))) return false;
+        if (hasEpistemic) {
+            const epistemicValidation = V.validateEpistemicSources(record.epistemicSources, {
+                requireSourceCharacterExists: true,
+                sourceCharacterIds: Array.isArray(opts.sourceCharacterIds) ? opts.sourceCharacterIds : []
+            });
+            if (!epistemicValidation.ok) return false;
+        }
+        return true;
     }
 
-    function validateStmReplacementProposal(record) {
+    function validateStmReplacementProposal(record, snapshot) {
         if (!isObject(record)) return false;
         const hasId = Object.prototype.hasOwnProperty.call(record, "id");
-        return validateMemoryProposal(record, hasId, M.CONFIG.STM_SUMMARY_MAX_CHARS);
+        return validateMemoryProposal(record, hasId, M.CONFIG.STM_SUMMARY_MAX_CHARS, { allowEpistemicSources: true, sourceCharacterIds: snapshot && snapshot.characterIds });
     }
 
     function oversizedStmDiagnostic(record, label) {
@@ -306,7 +322,7 @@
         const protectedStm = new Set((snapshot.mind.shortTermMemories || []).filter(function (memory) { return memory.protected; }).map(function (memory) { return memory.id; }));
         const seenUpserts = new Set();
         value.shortTermMemoriesToUpsert.forEach(function (record) {
-            const valid = validateMemoryProposal(record, true, M.CONFIG.STM_SUMMARY_MAX_CHARS);
+            const valid = validateMemoryProposal(record, true, M.CONFIG.STM_SUMMARY_MAX_CHARS, { allowEpistemicSources: true, sourceCharacterIds: snapshot.characterIds });
             if (!valid || !stmIds.has(record && record.id) || protectedStm.has(record && record.id) || seenUpserts.has(record && record.id)) {
                 errors.push(oversizedStmDiagnostic(record, "STM") || "Invalid STM upsert.");
             }
@@ -315,7 +331,7 @@
             seenUpserts.add(record && record.id);
         });
         value.shortTermMemoriesToAdd.forEach(function (record) {
-            if (!validateMemoryProposal(record, false, M.CONFIG.STM_SUMMARY_MAX_CHARS)) errors.push("Invalid STM add.");
+            if (!validateMemoryProposal(record, false, M.CONFIG.STM_SUMMARY_MAX_CHARS, { allowEpistemicSources: true, sourceCharacterIds: snapshot.characterIds })) errors.push("Invalid STM add.");
         });
 
         const repartitionSources = new Set();
@@ -333,7 +349,7 @@
 
             const retainedIds = new Set();
             operation.replacementRecords.forEach(function (record) {
-                if (!validateStmReplacementProposal(record)) {
+                if (!validateStmReplacementProposal(record, snapshot)) {
                     errors.push(oversizedStmDiagnostic(record, "STM repartition replacement") || "Invalid STM repartition replacement record.");
                     return;
                 }
@@ -472,7 +488,11 @@
             ids.forEach(function (id) { used.add(id); });
             if (record.survivorBeliefId !== null && !ids.includes(record.survivorBeliefId)) errors.push("survivorBeliefId must be one of beliefIds or null.");
             const needsText = ["revise", "merge", "contextualize", "supersede"].includes(record.outcome);
-            if (needsText !== validText(record.replacementText, 500)) errors.push("replacementText presence does not match reconciliation outcome.");
+            if (needsText) {
+                if (!validText(record.replacementText, 2000)) errors.push("replacementText must be non-empty text up to 2000 characters for revise, merge, contextualize, or supersede.");
+            } else if (record.replacementText !== null) {
+                errors.push("replacementText must be null for weaken, reinforce, remove, or leave_unresolved.");
+            }
             if (!["supports", "contradicts", "ambiguous", null].includes(record.evidenceEffect)) errors.push("Invalid reconciliation evidenceEffect.");
             if (record.evidenceEffect === null ? record.strength !== null : !validStrength(record.strength)) errors.push("Invalid reconciliation strength.");
             if (["weaken", "reinforce"].includes(record.outcome) && record.evidenceEffect === null) errors.push("weaken/reinforce require evidence effect.");
@@ -482,9 +502,89 @@
         return errors.length ? { ok: false, errors: errors } : { ok: true, value: value };
     }
 
+    function validateBeliefClusteringResponse(value, snapshot) {
+        const errors = [];
+        if (!exactKeys(value, ["clusters"]) || !Array.isArray(value.clusters)) return { ok: false, errors: ["Invalid belief clustering response shape."] };
+        const allowed = beliefIds(snapshot.mind);
+        const used = new Set();
+        value.clusters.forEach(function (cluster, clusterIndex) {
+            if (!isObject(cluster) || !exactKeys(cluster, ["beliefIds"]) || !Array.isArray(cluster.beliefIds) || cluster.beliefIds.length < 1) {
+                errors.push(`clusters[${clusterIndex}] must contain exactly one non-empty beliefIds array.`);
+                return;
+            }
+            const local = new Set();
+            cluster.beliefIds.forEach(function (id) {
+                if (typeof id !== "string" || !allowed.has(id)) errors.push(`clusters[${clusterIndex}] contains an unknown belief ID.`);
+                else if (local.has(id) || used.has(id)) errors.push(`Belief ${id} is duplicated within or across clusters.`);
+                local.add(id); used.add(id);
+            });
+        });
+        return errors.length ? { ok: false, errors: errors } : { ok: true, value: value };
+    }
+
+    function validateBalancedBeliefConsolidationResponse(value, selectedBeliefs) {
+        const errors = [];
+        if (!exactKeys(value, ["results"]) || !Array.isArray(value.results)) return { ok: false, errors: ["Invalid balanced belief consolidation response shape."] };
+        const allowed = new Set((selectedBeliefs || []).map(function (belief) { return belief.id; }));
+        const used = new Set();
+        const operations = new Set(["keep", "remove_as_non_belief", "merge", "revise"]);
+        value.results.forEach(function (record, index) {
+            if (!isObject(record) || !exactKeys(record, ["operation", "sourceBeliefIds", "survivorBeliefId", "replacementText"])) {
+                errors.push(`results[${index}] has invalid shape.`); return;
+            }
+            if (!operations.has(record.operation) || !Array.isArray(record.sourceBeliefIds) || record.sourceBeliefIds.length < 1) {
+                errors.push(`results[${index}] has invalid operation or sourceBeliefIds.`); return;
+            }
+            const local = new Set();
+            record.sourceBeliefIds.forEach(function (id) {
+                if (typeof id !== "string" || !allowed.has(id)) errors.push(`results[${index}] references an unknown source belief.`);
+                else if (local.has(id) || used.has(id)) errors.push(`Belief ${id} is reused by balanced consolidation.`);
+                local.add(id); used.add(id);
+            });
+            const hasText = validText(record.replacementText, 2000);
+            if (record.operation === "keep") {
+                if (record.sourceBeliefIds.length !== 1 || record.survivorBeliefId !== null || record.replacementText !== null) errors.push(`results[${index}] keep must preserve exactly one belief with null survivorBeliefId and replacementText.`);
+            } else if (record.operation === "remove_as_non_belief") {
+                if (record.survivorBeliefId !== null || record.replacementText !== null) errors.push(`results[${index}] remove_as_non_belief requires null survivorBeliefId and replacementText.`);
+            } else if (record.operation === "revise") {
+                if (record.sourceBeliefIds.length !== 1 || record.survivorBeliefId !== null || !hasText) errors.push(`results[${index}] revise requires exactly one source, null survivorBeliefId, and non-empty replacementText.`);
+            } else if (record.operation === "merge") {
+                if (record.sourceBeliefIds.length < 2 || typeof record.survivorBeliefId !== "string" || !record.sourceBeliefIds.includes(record.survivorBeliefId) || !hasText) errors.push(`results[${index}] merge requires at least two sources, a survivor from those sources, and non-empty replacementText.`);
+            }
+        });
+        if (used.size !== allowed.size || Array.from(allowed).some(function (id) { return !used.has(id); })) errors.push("Every selected source belief must be accounted for exactly once.");
+        return errors.length ? { ok: false, errors: errors } : { ok: true, value: value };
+    }
+
+    function beliefClusteringSystem() {
+        return [
+            "You perform a read-only semantic clustering preflight over one character's complete current belief catalog.",
+            M.BELIEF_SEMANTICS,
+            "Return only groups of supplied belief IDs. Do not rewrite, delete, merge, rank, or invent beliefs in this stage.",
+            "Group beliefs together only when they belong to the same sufficiently NARROW semantic theme and could reasonably be reviewed together for redundancy, merging, revision, or removal without collapsing distinct meanings. Do not create broad buckets such as everything about one person when that person's beliefs cover distinct themes such as world-creation, cohabitation, trust, work, or romance.",
+            "A belief may appear in at most one cluster. Beliefs may remain unclustered. Singleton clusters are allowed but are not useful for later consolidation.",
+            'Return exactly one JSON object with shape {"clusters":[{"beliefIds":["supplied_belief_id"]}]} and no extra keys.'
+        ].join(" ");
+    }
+
+    function balancedBeliefConsolidationSystem() {
+        return [
+            "You perform balanced semantic consolidation of exactly one already-selected narrow cluster from one character's belief space. This is housekeeping, not fresh evidence and not a character turn.",
+            M.BELIEF_SEMANTICS,
+            "Preserve EVERY distinct durable meaning represented in the cluster. There is NO target output count and no reward for making the cluster small. Merge only when one durable belief can faithfully represent the shared semantic content without erasing a distinct interpretation.",
+            "Beliefs are durable interpretations of remembered experience, not event storage. A completed event, temporary scene state, finished plan/action, transient location/physical fact, or other merely episodic statement may be remove_as_non_belief when its durable significance belongs in memory rather than as a standing interpretation.",
+            "Use keep for a distinct durable belief that should remain unchanged. Use revise for one belief whose durable interpretation should remain but whose text needs semantic correction/refinement. Use merge for two or more redundant/overlapping beliefs that can be represented by one survivor and one replacementText. Use remove_as_non_belief only when the selected content does not deserve to remain as a distinct durable belief.",
+            "Low activation or age alone is NOT evidence that a belief is false, unimportant, or removable. This review itself is not fresh evidence and must not reinforce confidence or activation.",
+            "Every supplied source belief ID must be accounted for exactly once across results. Do not use IDs outside the supplied cluster.",
+            'Return exactly one JSON object with key results. Every result contains exactly operation,sourceBeliefIds,survivorBeliefId,replacementText. Allowed operations are keep,remove_as_non_belief,merge,revise. keep: exactly one source and null survivor/replacement. remove_as_non_belief: one or more sources and null survivor/replacement. revise: exactly one source, null survivor, non-empty replacementText up to 2000 characters. merge: at least two sources, survivorBeliefId must be one of them, and replacementText must be non-empty and at most 2000 characters.'
+        ].join(" ");
+    }
+
     function stmSystem() {
         return [
             "You perform auxiliary Mind v3 short-term autobiographical consolidation for exactly one character. You do not take a game turn and cannot mutate the world.",
+            "EPISTEMIC SOURCE DISCIPLINE: formal_fact is canonical/formal evidence. direct_observation is story-level experience actually witnessed by this character; it may become autobiographical I saw/I experienced wording for untracked details, but it cannot create tracked mechanical state. heard_speech is testimony: preserve attribution such as Zlata told me or I heard Radovan say; do not promote it to firsthand experience or objective truth. own_speech grounds that I said X, not that X is true. Never invent source circumstances, speaker identity, when/where a conversation occurred, or absent episodic details. When multiple supplied records independently establish a fact, preserve the strongest grounded source. An STM may include compact optional epistemicSources descriptors, but its human-readable summary must still preserve which important claim came from whom instead of blurring sources.",
+            'STM epistemicSources is optional structured provenance. Allowed descriptors are exactly {"type":"formal_fact"}, {"type":"direct_observation"}, {"type":"heard_speech","sourceCharacterId":"existing_character_id"}, or {"type":"own_speech","sourceCharacterId":"existing_character_id"}. Use an array when a thematic STM combines sources; do not duplicate identical descriptors. Do not add provenance merely to cosmetically rewrite an unchanged STM.', 
             M.MODEL_OUTPUT_EFFECT_INVARIANT,
             `Memory answers what happened to this character. STM is thematic, relatively detailed, high-fidelity working memory and aims for minimal information loss. Group related observations into a small number of thematic memories rather than creating one memory per observation. Prefer updating an existing matching topic only while the old and new evidence still form one coherent bounded memory record. Do not force all evidence about a broad or continuing topic into one STM. Prefer STM summaries at or below ${M.CONFIG.STM_SUMMARY_PREFERRED_MAX_CHARS} characters when practical, but ${M.CONFIG.STM_SUMMARY_MAX_CHARS} characters is a HARD PER-RECORD boundary, not a request to delete useful detail. Semantic coherence and information preservation take priority over compactness within that hard limit.`,
             `SEMANTIC REPARTITION: if an existing STM has grown too broad, contains separable subthemes, or cannot incorporate relevant eviction evidence while preserving useful detail within ${M.CONFIG.STM_SUMMARY_MAX_CHARS} characters, use stmRepartitions to reorganize one or more source STM records into multiple coherent replacementRecords. Preserve as much meaningful information as reasonably possible from both the source STM and newly consumed eviction observations across the replacement set. Choose meaningful topical/subtopical boundaries yourself. Do NOT mechanically split by character count, midpoint, event count, or arbitrary chronological "part 1 / part 2" chunks unless chronology itself is the meaningful distinction. Do not aggressively compress or discard substantial detail merely to keep one old record alive. Do not split a coherent bounded memory merely to create smaller records; repartition only when semantic separation improves coherence/retrieval or is needed to preserve information within the hard record limit.`,
@@ -494,7 +594,8 @@
             "WORLD-STATE AUTHORITY IS STRUCTURED PROVENANCE, NOT A TEXT-INFERENCE TASK. A verbatim observation marked worldStateAuthority=grounded_event or grounded_result is authoritative evidence that the corresponding tracked event/result occurred. A record marked worldStateAuthority=narrative_only preserves what was narrated, said, shown, threatened, promised, intended, or otherwise presented socially/literarily, but by itself is NOT evidence that an item moved, ownership changed, money transferred, a passage changed state, a character moved/slept, food was served, or any other tracked world-state transition occurred. You may preserve useful narrative-only social content in qualified form, but never promote its tracked mechanical claim into unqualified fact without supplied grounded evidence. When narrative-only prose conflicts with grounded evidence, tracked-state memory follows grounded evidence. Do not infer or reconstruct authority by parsing the prose; use the supplied worldStateAuthority field.",
             "For direct belief reinforcement or contradiction, ONLY evictionObservationIds are newly consumed evidence. Retained observations, existing STM/LTM, relationships, and beliefs are context, not fresh evidence. Narrative-only eviction records may be fresh evidence that something was said/shown/intended, but not that an ungrounded tracked transition actually occurred. Never count a belief as evidence for itself. beliefEffects and activatedBeliefIds MUST use exact IDs from the supplied beliefs array; never rename an ID because a display name or personal name differs from the canonical belief ID. The same valid belief may appear in both beliefEffects and activatedBeliefIds.",
             M.BELIEF_SEMANTICS,
-            `Return JSON only. shortTermMemoriesToUpsert entries use existing STM IDs and contain id,topic,summary,importance,retrievalBrief. shortTermMemoriesToAdd contain topic,summary,importance,retrievalBrief. stmRepartitions entries contain sourceStmIds and replacementRecords. Each replacement record contains topic,summary,importance,retrievalBrief and MAY also contain id only when retaining one supplied source STM ID; at most one replacement per repartition may contain id. Each resulting STM summary independently obeys the ${M.CONFIG.STM_SUMMARY_MAX_CHARS}-character hard limit. Memory importance MUST be a numeric decimal in the inclusive range 0..1 (for example 0.2, 0.5, 0.8); do NOT use a 1..10 scale. beliefEffects contain beliefId,effect(supports|contradicts|ambiguous),strength 0..1. beliefsToAdd contain text,initialConfidence,initialActivation where initialActivation may be null. activatedBeliefIds contains existing IDs made salient by interpretation. Do not invent engine-owned IDs. Do not return the engine-owned protected field; existing protected state is read-only context.`,
+            "BELIEF INDUCTION IS INTERPRETATION, NOT EVENT STORAGE. beliefsToAdd must contain only durable interpretations that remain useful beyond the originating scene. Do not add a belief whose content is only a chronological event, current or completed plan/action, transient location, temporary physical/world state, or scene-specific intention. Concrete events belong in autobiographical memory; a belief is the standing interpretation learned from them.",
+            `Return JSON only. shortTermMemoriesToUpsert entries use existing STM IDs and contain id,topic,summary,importance,retrievalBrief and MAY include optional epistemicSources. shortTermMemoriesToAdd contain topic,summary,importance,retrievalBrief and MAY include optional epistemicSources. stmRepartitions entries contain sourceStmIds and replacementRecords. Each replacement record contains topic,summary,importance,retrievalBrief, MAY include optional epistemicSources, and MAY also contain id only when retaining one supplied source STM ID; at most one replacement per repartition may contain id. Each resulting STM summary independently obeys the ${M.CONFIG.STM_SUMMARY_MAX_CHARS}-character hard limit. Memory importance MUST be a numeric decimal in the inclusive range 0..1 (for example 0.2, 0.5, 0.8); do NOT use a 1..10 scale. beliefEffects contain beliefId,effect(supports|contradicts|ambiguous),strength 0..1. beliefsToAdd contain text,initialConfidence,initialActivation where initialActivation may be null. activatedBeliefIds contains existing IDs made salient by interpretation. Do not invent engine-owned IDs. Do not return the engine-owned protected field; existing protected state is read-only context.`,
             memoryRetrievalBriefGuidance()
         ].join(" ");
     }
@@ -514,6 +615,7 @@
     function ltmSystem() {
         return [
             "You perform auxiliary Mind v3 long-term autobiographical consolidation for exactly one character. You do not take a game turn.",
+            "EPISTEMIC SOURCE PRESERVATION: supplied STM summaries may carry optional epistemicSources. Preserve their epistemic stance semantically in durable summaries: testimony stays attributed (for example, Zlata told Nell that...), own speech stays something the character said rather than proof of its proposition, and directly observed experience may remain firsthand. Consolidation must never increase epistemic certainty merely because material is becoming long-term memory. Do not invent who said something, when/where it was learned, or extra episodic details. Do NOT add persistent epistemicSources fields to LTM records in this candidate; source preservation in LTM is semantic only.",
             "HISTORICAL LTM CONTEXT IS PREFLIGHT-SELECTED. existingLongTermMemories contains only historical LTM whose full contents were selected by a prior high-recall semantic preflight. Unselected historical LTM remains canonical and unchanged but is intentionally not visible here. Never invent, infer the contents of, cite as provenance, or upsert an unselected LTM ID. New LTM creation is not restricted by the selected historical set.",
             M.MODEL_OUTPUT_EFFECT_INVARIANT,
             "LTM IS SUBTRACTIVE DURABLE MEMORY. STM aims to preserve recent experience with high fidelity; LTM keeps the most significant facts that the character should still know after the source STM records are permanently gone. Deliberately discard minor, repetitive, transient, low-value sequencing or conversational filler when losing it would not materially damage the character's future understanding of their past.",
@@ -526,6 +628,7 @@
             "Do not emit unchanged/no-op LTM upserts. Before placing any record in longTermMemoriesToUpsert, compare the effective model-writable result to the supplied existing LTM: if nothing materially changes after normalization, OMIT the upsert. Do not make a cosmetic wording change just to evade this rule. ID SPACES ARE DISTINCT: longTermMemoriesToUpsert may use ONLY IDs from existingLongTermMemories. To promote STM content into new durable memory, create one or more longTermMemoriesToAdd records with temporary refs; never use an STM ID as an LTM ID.",
             "FRESH-EVIDENCE CONTRACT FOR BELIEFS: existing STM, existing LTM, relationships, and existing beliefs are supplied as context. Their mere presence, retrieval, consistency, or relevance is NOT fresh belief evidence. Do NOT iterate through supplied beliefs looking for beliefs that are compatible with the supplied memories. Consistency is NOT new evidence. Do NOT emit supports/contradicts/ambiguous merely because an old or newly durable memory agrees or disagrees with an existing belief; direct event evidence has already had its opportunity to affect beliefs during earlier processing and must not be counted again simply because the same autobiographical material is being consolidated into LTM.",
             "higherOrderBeliefEffects are a sparse semantic channel for a genuinely NEW cross-memory inference created by this LTM consolidation: use one only when combining multiple supplied memories reveals a pattern or implication that is not contained in any constituent memory alone and is not merely a restatement of an existing belief. The field should usually be empty. Do not scan the belief table and do not try to account for every belief. A belief's existence or current confidence is context, never evidence for itself. beliefsToAdd follows the same rule: add a belief only for a genuinely new durable higher-order interpretation, not for rereading, relabeling, or re-counting old evidence.",
+            "For beliefsToAdd, event memory is not belief content. Do not add a belief that merely records a chronological event, temporary scene/world state, current or completed plan/action, transient location, or one-off physical fact. Add only a durable interpretation that remains useful beyond the source memories.",
             "activatedBeliefIds is also sparse. Include only supplied belief IDs whose salience materially shaped this specific consolidation/inference. Do not list beliefs merely because you inspected them, because they were compatible with a memory, or because they appeared in context. It is valid and often preferable for activatedBeliefIds to be empty.",
             M.BELIEF_SEMANTICS,
             `LTM RECORD BOUNDS: every LTM summary MUST be ${M.CONFIG.LTM_SUMMARY_MAX_CHARS} characters or fewer. This is a per-record hard boundary, not a target length and not a compression ratio. A shorter record is appropriate when little durable meaning survives; multiple records are appropriate when multiple distinct durable themes deserve to survive.`,
@@ -541,7 +644,7 @@
             "Use supplied autobiographical STM/LTM evidence. Beliefs may be wrong, biased, redundant, outdated, or mutually contradictory, and cognitive dissonance may deliberately remain unresolved.",
             M.BELIEF_SEMANTICS,
             `Choose only supplied candidate belief IDs and return at most ${M.CONFIG.RECONCILIATION_RESOLUTION_LIMIT} resolutions. beliefIds is ALWAYS an array, including single-belief operations.`,
-            "Allowed outcomes are revise, merge, weaken, reinforce, contextualize, supersede, remove, leave_unresolved. For revise/merge/contextualize/supersede provide replacementText; otherwise replacementText must be null. survivorBeliefId is null unless an outcome keeps one supplied belief as the rewritten survivor. evidenceEffect is supports, contradicts, ambiguous, or null; strength is 0..1 when evidenceEffect is non-null and otherwise null. Confidence is never directly authored: the engine applies evidence math. A belief may be activated even when its confidence falls. Do not change autobiographical memory in this stage.",
+            "Allowed outcomes are revise, merge, weaken, reinforce, contextualize, supersede, remove, leave_unresolved. CONDITIONAL FIELD CONTRACT: revise, merge, contextualize, and supersede REQUIRE a non-empty replacementText string of at most 2000 characters; weaken, reinforce, remove, and leave_unresolved REQUIRE replacementText:null. Do not attach replacementText to an outcome that forbids it. survivorBeliefId is null unless an outcome keeps one supplied belief as the rewritten survivor. evidenceEffect is supports, contradicts, ambiguous, or null; strength is 0..1 when evidenceEffect is non-null and otherwise null. weaken and reinforce require a non-null evidenceEffect. Confidence is never directly authored: the engine applies evidence math. A belief may be activated even when its confidence falls. Do not change autobiographical memory in this stage.",
             'Return exactly one JSON object with this shape and no extra keys: {"resolutions":[{"beliefIds":["supplied_belief_id"],"outcome":"leave_unresolved","survivorBeliefId":null,"replacementText":null,"evidenceEffect":null,"strength":null}],"activatedBeliefIds":[]}. For multi-belief merge/contextualize/supersede, beliefIds must explicitly contain every participating supplied belief ID. Do not use singular beliefId or candidateBeliefId fields.'
         ].join(" ");
     }
@@ -557,10 +660,14 @@
         validateLtmPreflightResponse: validateLtmPreflightResponse,
         validateLtmResponse: validateLtmResponse,
         validateReconciliationResponse: validateReconciliationResponse,
+        validateBeliefClusteringResponse: validateBeliefClusteringResponse,
+        validateBalancedBeliefConsolidationResponse: validateBalancedBeliefConsolidationResponse,
         reconciliationCandidates: reconciliationCandidates,
         stmSystem: stmSystem,
         ltmPreflightSystem: ltmPreflightSystem,
         ltmSystem: ltmSystem,
-        reconciliationSystem: reconciliationSystem
+        reconciliationSystem: reconciliationSystem,
+        beliefClusteringSystem: beliefClusteringSystem,
+        balancedBeliefConsolidationSystem: balancedBeliefConsolidationSystem
     };
 }());

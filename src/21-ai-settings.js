@@ -28,6 +28,9 @@
     const defaultUtilityModelId = requestedUtilityDefault && modelById[requestedUtilityDefault]
         ? requestedUtilityDefault
         : defaultModelId;
+    const defaultFallbackModelIds = catalog.defaultFallbackModelIds && typeof catalog.defaultFallbackModelIds === "object"
+        ? cloneFallbackConfig(catalog.defaultFallbackModelIds)
+        : { character: [], utility: [], narrator: [] };
 
     let apiKey = "";
     let selectedModelId = defaultModelId;
@@ -39,6 +42,20 @@
 
     function clone(value) {
         return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    }
+
+    function cloneFallbackConfig(value) {
+        const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+        const result = { character: [], utility: [], narrator: [] };
+        Object.keys(result).forEach(function (role) {
+            const seen = new Set();
+            result[role] = (Array.isArray(source[role]) ? source[role] : []).map(String).map(function (id) { return id.trim(); }).filter(function (id) {
+                if (!id || seen.has(id)) return false;
+                seen.add(id);
+                return true;
+            });
+        });
+        return result;
     }
 
     function storageOrDefault(storage) {
@@ -57,6 +74,11 @@
 
     function modelsForRole(role) {
         return models.filter(function (model) { return model.roles.includes(role); }).map(clone);
+    }
+
+    function fallbackModelsForRole(role, primaryModelId) {
+        const source = Array.isArray(defaultFallbackModelIds[role]) ? defaultFallbackModelIds[role] : [];
+        return source.filter(function (id) { return id !== primaryModelId && eligible(id, role); });
     }
 
     function clearKeyRejection() {
@@ -280,6 +302,7 @@
         getSelectedModel: getSelectedModel,
         getSelectedNarratorModel: getSelectedNarratorModel,
         getSelectedUtilityModel: getSelectedUtilityModel,
+        getFallbackModelIdsForRole: fallbackModelsForRole,
         getStatus: function () {
             const model = getSelectedModel();
             const narratorModel = getSelectedNarratorModel();
@@ -302,7 +325,12 @@
                 models: clone(models),
                 characterModels: modelsForRole("character"),
                 utilityModels: modelsForRole("utility"),
-                narratorModels: modelsForRole("narrator")
+                narratorModels: modelsForRole("narrator"),
+                fallbackModelIds: {
+                    character: fallbackModelsForRole("character", model.id),
+                    utility: fallbackModelsForRole("utility", utilityModel.id),
+                    narrator: fallbackModelsForRole("narrator", narratorModel.id)
+                }
             };
         },
         readSaved: readSaved,

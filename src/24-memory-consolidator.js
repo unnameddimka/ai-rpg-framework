@@ -20,11 +20,15 @@
     const validateLtmPreflightResponse = P.validateLtmPreflightResponse;
     const validateLtmResponse = P.validateLtmResponse;
     const validateReconciliationResponse = P.validateReconciliationResponse;
+    const validateBeliefClusteringResponse = P.validateBeliefClusteringResponse;
+    const validateBalancedBeliefConsolidationResponse = P.validateBalancedBeliefConsolidationResponse;
     const reconciliationCandidates = P.reconciliationCandidates;
     const stmSystem = P.stmSystem;
     const ltmPreflightSystem = P.ltmPreflightSystem;
     const ltmSystem = P.ltmSystem;
     const reconciliationSystem = P.reconciliationSystem;
+    const beliefClusteringSystem = P.beliefClusteringSystem;
+    const balancedBeliefConsolidationSystem = P.balancedBeliefConsolidationSystem;
 
     function recordTransientResult(result) {
         if (!setup.AITransientDebug) return;
@@ -48,12 +52,12 @@
             mindRevision: Number.isInteger(actor.mindRevision) ? actor.mindRevision : 0,
             mind: mind,
             character: setup.CharacterContext.buildPrivateCharacter(characterId),
+            characterIds: Object.keys(world.entities || {}).filter(function (id) { return world.entities[id] && world.entities[id].type === "character"; }),
             recentDialogue: clone(setup.MindValidators.sanitizeRecentDialogue(actor.recentDialogue, world))
         };
     }
 
     function beliefIds(mind) { return new Set((mind.beliefs || []).map(function (belief) { return belief.id; })); }
-    function memoryIds(mind, partition) { return new Set((mind[partition] || []).map(function (memory) { return memory.id; })); }
 
     async function runJsonRequest(characterId, stage, systemText, payload, validator, client, options) {
         options = options || {};
@@ -202,6 +206,21 @@
         return JSON.stringify(stmCompatibilityProjection(actor.mind)) === JSON.stringify(stmCompatibilityProjection(snapshot.mind));
     }
 
+    function stmProposalFields(proposal) {
+        const fields = {
+            topic: proposal.topic.trim(),
+            summary: proposal.summary.trim(),
+            importance: proposal.importance,
+            retrievalBrief: String(proposal.retrievalBrief || "").trim()
+        };
+        if (Object.prototype.hasOwnProperty.call(proposal, "epistemicSources")) fields.epistemicSources = clone(setup.MindValidators.normalizeEpistemicSources(proposal.epistemicSources));
+        return fields;
+    }
+
+    function newStmRecord(candidate, proposal) {
+        return Object.assign({ id: setup.AIMemory.allocateMemoryId(candidate), protected: false }, stmProposalFields(proposal));
+    }
+
     function applyStmCommit(characterId, snapshot, evictionIds, value, trigger, recoveryContext) {
         const current = setup.Game.getWorld();
         const actor = current.entities[characterId];
@@ -220,11 +239,11 @@
         value.shortTermMemoriesToUpsert.forEach(function (proposal) {
             const index = cActor.mind.shortTermMemories.findIndex(function (memory) { return memory.id === proposal.id; });
             if (index < 0 || cActor.mind.shortTermMemories[index].protected) return;
-            const replacement = Object.assign({}, cActor.mind.shortTermMemories[index], { topic: proposal.topic.trim(), summary: proposal.summary.trim(), importance: proposal.importance, retrievalBrief: String(proposal.retrievalBrief || "").trim() });
+            const replacement = Object.assign({}, cActor.mind.shortTermMemories[index], stmProposalFields(proposal));
             if (JSON.stringify(replacement) !== JSON.stringify(cActor.mind.shortTermMemories[index])) { cActor.mind.shortTermMemories[index] = replacement; changed = true; }
         });
         value.shortTermMemoriesToAdd.forEach(function (proposal) {
-            cActor.mind.shortTermMemories.push({ id: setup.AIMemory.allocateMemoryId(candidate), topic: proposal.topic.trim(), summary: proposal.summary.trim(), importance: proposal.importance, protected: false, retrievalBrief: String(proposal.retrievalBrief || "").trim() });
+            cActor.mind.shortTermMemories.push(newStmRecord(candidate, proposal));
             changed = true;
         });
         value.stmRepartitions.forEach(function (operation) {
@@ -236,9 +255,9 @@
             const replacements = operation.replacementRecords.map(function (proposal) {
                 if (Object.prototype.hasOwnProperty.call(proposal, "id")) {
                     const source = sourceById.get(proposal.id);
-                    return Object.assign({}, source, { topic: proposal.topic.trim(), summary: proposal.summary.trim(), importance: proposal.importance, retrievalBrief: String(proposal.retrievalBrief || "").trim() });
+                    return Object.assign({}, source, stmProposalFields(proposal));
                 }
-                return { id: setup.AIMemory.allocateMemoryId(candidate), topic: proposal.topic.trim(), summary: proposal.summary.trim(), importance: proposal.importance, protected: false, retrievalBrief: String(proposal.retrievalBrief || "").trim() };
+                return newStmRecord(candidate, proposal);
             });
             const survivors = original.filter(function (memory) { return !sourceIds.has(memory.id); });
             survivors.splice.apply(survivors, [insertionIndex, 0].concat(replacements));
@@ -579,13 +598,200 @@
                 activatedBeliefIds: []
             }
         };
-        const result = await runJsonRequest(characterId, "mind-v3-reconciliation", reconciliationSystem(), payload, function (value) { return validateReconciliationResponse(value, snapshot, candidates); }, client, { purpose: options.purpose || "memory-consolidation", concurrent: options.concurrent === true });
+        const result = await runJsonRequest(characterId, "mind-v3-reconciliation", reconciliationSystem(), payload, function (value) { return validateReconciliationResponse(value, snapshot, candidates); }, client, {
+            purpose: options.purpose || "memory-consolidation",
+            concurrent: options.concurrent === true,
+            repairInstruction: "For reconciliation resolutions, use exactly beliefIds,outcome,survivorBeliefId,replacementText,evidenceEffect,strength. replacementText MUST be a non-empty string of at most 2000 characters only for revise, merge, contextualize, or supersede. For weaken, reinforce, remove, or leave_unresolved, replacementText MUST be null. weaken/reinforce require evidenceEffect supports|contradicts|ambiguous; when evidenceEffect is null, strength MUST be null. Return the complete corrected object, not a partial patch."
+        });
         if (!result.ok) return result;
         const trigger = options.trigger || "manual";
         const recoveryContext = options.recoveryContext || recoveryContextFromSnapshot(snapshot, trigger);
         const commit = applyReconciliationCommit(characterId, snapshot, candidates, result.value, trigger, recoveryContext);
         if (!commit.ok) return commit;
-        commit.modelId = result.modelId || null; commit.usage = clone(result.usage || null); return commit;
+        commit.modelId = result.modelId || null; commit.usage = clone(result.usage || null); commit.repaired = result.repaired === true; return commit;
+    }
+
+
+    function balancedClusterTieKey(cluster, beliefById) {
+        const reviewed = cluster.beliefIds.map(function (id) {
+            const belief = beliefById.get(id);
+            return belief && Number.isInteger(belief.lastConsolidatedAt) ? belief.lastConsolidatedAt : 0;
+        });
+        const oldest = reviewed.length ? Math.min.apply(null, reviewed) : 0;
+        return { oldest: oldest, signature: cluster.beliefIds.slice().sort().join("\u0000") };
+    }
+
+    function selectBalancedCluster(clusters, snapshot) {
+        const beliefById = new Map((snapshot.mind.beliefs || []).map(function (belief) { return [belief.id, belief]; }));
+        const ordered = (clusters || []).map(function (cluster) {
+            return { cluster: cluster, tie: balancedClusterTieKey(cluster, beliefById) };
+        }).sort(function (a, b) {
+            return b.cluster.beliefIds.length - a.cluster.beliefIds.length || a.tie.oldest - b.tie.oldest || a.tie.signature.localeCompare(b.tie.signature);
+        });
+        return ordered.length ? ordered[0].cluster : null;
+    }
+
+    function applyBalancedBeliefConsolidationCommit(characterId, snapshot, selectedBeliefs, value, recoveryContext) {
+        const current = setup.Game.getWorld();
+        const actor = current.entities[characterId];
+        if (staleBase(snapshot, actor)) return failure("MIND_V3_STALE", "Mind changed incompatibly while balanced belief consolidation was in flight.");
+        const candidate = clone(current);
+        const cActor = candidate.entities[characterId];
+        const reviewedAt = diagnosticTurn(candidate);
+        let changed = false;
+
+        value.results.forEach(function (operation) {
+            const ids = operation.sourceBeliefIds.slice();
+            if (operation.operation === "remove_as_non_belief") {
+                const remove = new Set(ids);
+                const beforeCount = cActor.mind.beliefs.length;
+                cActor.mind.beliefs = cActor.mind.beliefs.filter(function (belief) { return !remove.has(belief.id); });
+                changed = changed || cActor.mind.beliefs.length !== beforeCount;
+                return;
+            }
+
+            const survivorId = operation.operation === "merge" ? operation.survivorBeliefId : ids[0];
+            const survivor = cActor.mind.beliefs.find(function (belief) { return belief.id === survivorId; });
+            if (!survivor) return;
+
+            if (operation.operation === "revise" || operation.operation === "merge") {
+                const replacementText = operation.replacementText.trim();
+                if (survivor.text !== replacementText) {
+                    survivor.text = replacementText;
+                    changed = true;
+                }
+            }
+            if (survivor.lastConsolidatedAt !== reviewedAt) {
+                survivor.lastConsolidatedAt = reviewedAt;
+                changed = true;
+            }
+
+            if (operation.operation === "merge") {
+                const remove = new Set(ids.filter(function (id) { return id !== survivorId; }));
+                if (remove.size) {
+                    const beforeCount = cActor.mind.beliefs.length;
+                    cActor.mind.beliefs = cActor.mind.beliefs.filter(function (belief) { return !remove.has(belief.id); });
+                    changed = changed || cActor.mind.beliefs.length !== beforeCount;
+                }
+            }
+        });
+
+        if (changed) setup.AIMemory.incrementMindRevision(cActor);
+        const snapshotAdded = appendRecoverySnapshot(cActor, candidate, recoveryContext, changed);
+        const validation = validateCandidateWorld(candidate);
+        if (!validation.ok) return validation;
+        State.variables.world = candidate;
+        if (snapshotAdded && recoveryContext) recoveryContext.persisted = true;
+        return {
+            ok: true,
+            actorId: characterId,
+            committed: true,
+            changed: changed,
+            selectedBeliefIds: selectedBeliefs.map(function (belief) { return belief.id; }),
+            beliefCount: cActor.mind.beliefs.length
+        };
+    }
+
+    async function consolidateBeliefsBalanced(characterId, client, options) {
+        options = options || {};
+        const snapshot = characterSnapshot(characterId);
+        if (!snapshot.ok) return snapshot;
+        const allBeliefs = clone(snapshot.mind.beliefs || []);
+        const minimum = M.CONFIG.BALANCED_CONSOLIDATION_MIN_CLUSTER_SIZE || 5;
+        if (allBeliefs.length < minimum) {
+            return { ok: true, actorId: characterId, skipped: true, reason: "insufficient_total_beliefs", totalBeliefCount: allBeliefs.length, clusterSizes: [] };
+        }
+
+        const catalog = allBeliefs.map(function (belief) {
+            return {
+                id: belief.id,
+                text: belief.text,
+                confidence: belief.confidence,
+                activation: belief.activation,
+                lastConsolidatedAt: Number.isInteger(belief.lastConsolidatedAt) ? belief.lastConsolidatedAt : null
+            };
+        });
+        const clusteringPayload = {
+            stage: "mind-v3-belief-clustering",
+            character: snapshot.character,
+            beliefs: catalog,
+            beliefSemantics: M.BELIEF_SEMANTICS,
+            policy: {
+                readOnly: true,
+                narrowSemanticClusters: true,
+                allCurrentBeliefsEligible: true,
+                minimumConsolidationClusterSize: minimum,
+                unclusteredBeliefsAllowed: true
+            },
+            requiredResponseShape: { clusters: [{ beliefIds: ["supplied_belief_id"] }] }
+        };
+        const preflight = await runJsonRequest(characterId, "mind-v3-belief-clustering", beliefClusteringSystem(), clusteringPayload, function (value) {
+            return validateBeliefClusteringResponse(value, snapshot);
+        }, client, {
+            purpose: options.purpose || "memory-consolidation",
+            concurrent: options.concurrent === true,
+            repairInstruction: "Return only existing supplied belief IDs grouped into narrow semantic clusters. A belief may appear at most once across all clusters. Unclustered beliefs are allowed. Do not rewrite belief text or add any extra fields."
+        });
+        if (!preflight.ok) return preflight;
+        const liveAfterPreflight = setup.Game.getWorld().entities[characterId];
+        if (staleBase(snapshot, liveAfterPreflight)) return failure("MIND_V3_STALE", "Mind changed incompatibly after belief clustering preflight.");
+
+        const clusters = preflight.value.clusters || [];
+        const clusterSizes = clusters.map(function (cluster) { return cluster.beliefIds.length; });
+        const selectedCluster = selectBalancedCluster(clusters, snapshot);
+        if (!selectedCluster || selectedCluster.beliefIds.length < minimum) {
+            return {
+                ok: true,
+                actorId: characterId,
+                skipped: true,
+                reason: "no_cluster_meets_threshold",
+                totalBeliefCount: allBeliefs.length,
+                clusterSizes: clusterSizes,
+                preflightModelId: preflight.modelId || null,
+                preflightUsage: clone(preflight.usage || null),
+                preflightRepaired: preflight.repaired === true
+            };
+        }
+
+        const selectedIdSet = new Set(selectedCluster.beliefIds);
+        const selectedBeliefs = allBeliefs.filter(function (belief) { return selectedIdSet.has(belief.id); });
+        const consolidationPayload = {
+            stage: "mind-v3-belief-balanced-consolidation",
+            character: snapshot.character,
+            selectedBeliefs: clone(selectedBeliefs),
+            beliefSemantics: M.BELIEF_SEMANTICS,
+            policy: {
+                preserveEveryDistinctDurableMeaning: true,
+                targetOutputCount: null,
+                housekeepingIsNotFreshEvidence: true,
+                activationAndConfidenceAreEngineOwned: true,
+                sourceCoverageExactlyOnce: true
+            },
+            requiredResponseShape: {
+                results: [{ operation: "keep", sourceBeliefIds: ["supplied_belief_id"], survivorBeliefId: null, replacementText: null }]
+            }
+        };
+        const result = await runJsonRequest(characterId, "mind-v3-belief-balanced-consolidation", balancedBeliefConsolidationSystem(), consolidationPayload, function (value) {
+            return validateBalancedBeliefConsolidationResponse(value, selectedBeliefs);
+        }, client, {
+            purpose: options.purpose || "memory-consolidation",
+            concurrent: options.concurrent === true,
+            repairInstruction: "Account for every selected source belief exactly once. Allowed operations are keep, remove_as_non_belief, revise, merge. keep uses one source and null survivor/replacement. remove_as_non_belief uses one or more sources and null survivor/replacement. revise uses one source, null survivor, and replacementText up to 2000 characters. merge uses at least two sources, a survivorBeliefId from those sources, and replacementText up to 2000 characters. Do not use IDs outside the selected cluster."
+        });
+        if (!result.ok) return result;
+
+        const recoveryContext = options.recoveryContext || recoveryContextFromSnapshot(snapshot, options.trigger || "timelapse");
+        const commit = applyBalancedBeliefConsolidationCommit(characterId, snapshot, selectedBeliefs, result.value, recoveryContext);
+        if (!commit.ok) return commit;
+        commit.clusterSizes = clusterSizes;
+        commit.selectedClusterSize = selectedBeliefs.length;
+        commit.preflightModelId = preflight.modelId || null;
+        commit.preflightUsage = clone(preflight.usage || null);
+        commit.preflightRepaired = preflight.repaired === true;
+        commit.modelId = result.modelId || null;
+        commit.usage = clone(result.usage || null);
+        commit.repaired = result.repaired === true;
+        return commit;
     }
 
     function decayActivation(characterId, elapsedUnits, trigger, recoveryContext) {
@@ -626,19 +832,31 @@
 
         let ltm = null;
         let reconciliation = null;
+        let balanced = null;
         if (!stm.ok) {
             ltm = recordSkipped("ltm", "skipped_due_to_stm_failure");
             reconciliation = recordSkipped("reconciliation", "skipped_due_to_stm_failure");
+            balanced = recordSkipped("balanced-consolidation", "skipped_due_to_stm_failure");
         } else {
             ltm = await consolidateLTM(characterId, client, { force: true, purpose: "memory-consolidation", trigger: "timelapse", concurrent: options.concurrent === true, recoveryContext: recoveryContext });
             report.stages.push({ stage: "ltm", result: clone(ltm) });
             if (!ltm.ok) {
                 report.errors.push({ stage: "ltm", error: clone(ltm.error) });
                 reconciliation = recordSkipped("reconciliation", "skipped_due_to_ltm_failure");
+                balanced = recordSkipped("balanced-consolidation", "skipped_due_to_ltm_failure");
             } else {
                 reconciliation = await reconcileBeliefs(characterId, client, { purpose: "memory-consolidation", trigger: "timelapse", concurrent: options.concurrent === true, recoveryContext: recoveryContext });
                 report.stages.push({ stage: "reconciliation", result: clone(reconciliation) });
-                if (!reconciliation.ok) report.errors.push({ stage: "reconciliation", error: clone(reconciliation.error) });
+                if (!reconciliation.ok) {
+                    report.errors.push({ stage: "reconciliation", error: clone(reconciliation.error) });
+                    balanced = recordSkipped("balanced-consolidation", "skipped_due_to_reconciliation_failure");
+                } else if (options.mode !== "overnight") {
+                    balanced = recordSkipped("balanced-consolidation", "night_only");
+                } else {
+                    balanced = await consolidateBeliefsBalanced(characterId, client, { purpose: "memory-consolidation", trigger: "timelapse", concurrent: options.concurrent === true, recoveryContext: recoveryContext });
+                    report.stages.push({ stage: "balanced-consolidation", result: clone(balanced) });
+                    if (!balanced.ok) report.errors.push({ stage: "balanced-consolidation", error: clone(balanced.error) });
+                }
             }
         }
 
@@ -691,6 +909,7 @@
         consolidateSTM: consolidateSTM,
         consolidateLTM: consolidateLTM,
         reconcileBeliefs: reconcileBeliefs,
+        consolidateBeliefsBalanced: consolidateBeliefsBalanced,
         decayActivation: decayActivation,
         maintainTimelapse: maintainTimelapse,
         compress: compress,

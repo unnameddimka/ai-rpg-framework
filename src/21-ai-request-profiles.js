@@ -8,6 +8,7 @@
 
     const profiles = Object.freeze({
         "game-decision": Object.freeze({ modelRole: "character", maxTokens: 6000, reasoningMaxTokens: 1500, temperature: 0.4 }),
+        "intimate-anticipations": Object.freeze({ modelRole: "character", maxTokens: 1400, reasoningMaxTokens: 500, temperature: 0.45 }),
         "mind-retrieval-preflight": Object.freeze({ modelRole: "utility", maxTokens: 700, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.1 }),
         "mind-retrieval-brief-backfill": Object.freeze({ modelRole: "utility", maxTokens: 6000, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.1 }),
         "timelapse-plan": Object.freeze({ modelRole: "utility", maxTokens: 1200, reasoningMaxTokens: 0, reasoningEffort: "none", temperature: 0.2 }),
@@ -71,7 +72,10 @@
         const result = clone(profile);
         result.profile = name;
         result.modelId = selectedModelId(profile.modelRole);
-        result.providerSort = "latency";
+        result.fallbackModelIds = setup.AIRuntimeSettings && typeof setup.AIRuntimeSettings.getFallbackModelIdsForRole === "function"
+            ? setup.AIRuntimeSettings.getFallbackModelIdsForRole(profile.modelRole, result.modelId)
+            : [];
+        result.providerSort = profile.modelRole === "character" ? "throughput" : "latency";
         result.allowProviderFallbacks = true;
         result.sessionId = sessionIdFor(name, profile.modelRole, details.actorId || null);
         return result;

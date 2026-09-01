@@ -33,10 +33,10 @@ function mindProtocolResponse(messages){
 }
 
 runtimeFiles.augment([
-"src/00-model-list.js","src/generated/world-data.js","src/07-mind-v3.js","src/08-mind-validators.js","src/10-game-api.js","src/11-save-migration.js",
+"src/00-model-list.js","src/generated/world-data.js","src/07-mind-v3.js","src/08-mind-validators.js","src/09-action-option-validation.js","src/09-world-state-authority.js","src/10-game-00-item-mechanics.js","src/10-game-01-validation.js","src/10-game-02-actions.js","src/10-game-api.js","src/11-save-migration.js",
 "src/12-character-context.js","src/13-character-memory.js","src/13-verbatim-memory.js","src/14-event-perception.js","src/17-runtime-diagnostics.js","src/21-ai-settings.js","src/21-ai-request-profiles.js",
 "src/22-openrouter-client.js","src/23-ai-protocol.js","src/23-world-environment.js","src/24-ai-request-executor.js","src/24-ai-turn-scheduler.js",
-"src/20-controllers.js","src/24-memory-consolidator.js","src/24-mind-aux-executor.js","src/24-timelapse-core.js","src/24-daytime-timelapse.js","src/24-night-timelapse.js","src/25-turn-flow.js"
+"src/20-controllers.js","src/24-memory-consolidator.js","src/24-mind-aux-executor.js","src/23-timelapse-protocol.js","src/24-timelapse-core.js","src/24-daytime-timelapse.js","src/24-night-timelapse.js","src/25-turn-flow.js"
 ]).forEach(load);
 
 setup.AIRuntimeSettings.save("sk-or-v1-test-daytime-key-1234567890", false, storage, Date.now());
@@ -78,6 +78,46 @@ function fakeCharacterClient() {
             throw new Error("Unexpected daytime model request: "+system.slice(0,120));
         }
     };
+}
+
+function farmRewardClient(rewardResponses, onWorkNarration) {
+    let rewardCall = 0;
+    return {
+        async chat(messages) { return this.chatWithOptions(messages); },
+        async chatWithOptions(messages) {
+            const mindResponse=mindProtocolResponse(messages); if(mindResponse) return mindResponse;
+            const system = String(messages && messages[0] && messages[0].content || "");
+            if (system.includes("Generate public world narration for one already-committed")) {
+                if (typeof onWorkNarration === "function") onWorkNarration();
+                return {ok:true,content:"The sponsor keeps the Traveler occupied with practical work around the farm yard.",modelId:"test",usage:{}};
+            }
+            if (system.includes("sponsoring character choosing the reward")) {
+                const index = Math.min(rewardCall++, rewardResponses.length - 1);
+                return {ok:true,content:rewardResponses[index],modelId:"test",usage:{}};
+            }
+            if (system.includes("private post-timelapse reflection")) {
+                return {ok:true,content:JSON.stringify({memoryUpdates:emptyUpdates()}),modelId:"test",usage:{}};
+            }
+            throw new Error("Unexpected farm daytime model request: "+system.slice(0,120));
+        }
+    };
+}
+
+async function runFarmJobFixture(sponsorId, activityId, rewardResponses, onWorkNarration) {
+    let world=fresh(sponsorId);
+    world.environment.timePhase="morning";
+    ok(setup.TimelapseAPI.moveToLocation(sponsorId,"farmYard"),`${sponsorId} should reach farm yard for job fixture`);
+    ok(setup.TimelapseAPI.moveToLocation("player","farmYard"),"Traveler should reach farm yard for job fixture");
+    ok(setup.CharacterAPI.perform(sponsorId,{type:"offer_day_work",activity_id:activityId}),`${sponsorId} should offer ${activityId}`);
+    ok(setup.DaytimeTimelapse.acceptPendingOffer(),`${activityId} should be accepted`);
+    const oldRefresh=setup.WorldEnvironment.refreshWeather;
+    setup.WorldEnvironment.refreshWeather=async()=>({ok:true});
+    try {
+        const result=await setup.DaytimeTimelapse.run(farmRewardClient(rewardResponses,onWorkNarration));
+        return {result:result,world:setup.Game.getWorld()};
+    } finally {
+        setup.WorldEnvironment.refreshWeather=oldRefresh;
+    }
 }
 
 async function main(){
@@ -198,6 +238,51 @@ async function main(){
     const maraRewards=world.inventories[world.entities.player.inventoryId].itemIds.map(id=>world.entities[id]).filter(e=>e&&(e.definitionId==="healingSalve"||e.definitionId==="staminaPotion"));
     assert(maraRewards.filter(e=>e.definitionId==="healingSalve").length===2&&maraRewards.filter(e=>e.definitionId==="staminaPotion").length===1,"Mara should create the sponsor-selected 2 salves + 1 stamina potion reward");
     assert(world.environment.timePhase==="evening","Mara work should end in Evening");
+
+    // Candidate farm rewards use the generic sponsor_items settlement: 2/3 totals, repeated count, validation failure, and no premature reward creation.
+    const farmRewardDefinitions=new Set(["turnip","onion","buckwheatGroats","apple","eggs","farmCheese","breadLoaf"]);
+    let narrationChecks=0;
+    let farmRun=await runFarmJobFixture("radovan","radovanFarmAssistance",['{"items":[{"definitionId":"turnip","count":2}]}'],function(){
+        narrationChecks++;
+        const current=setup.Game.getWorld();
+        const carried=current.inventories[current.entities.player.inventoryId].itemIds.map(id=>current.entities[id]).filter(Boolean);
+        assert(!carried.some(item=>farmRewardDefinitions.has(item.definitionId)),"farm reward items must not exist during the five work narration rounds");
+    });
+    ok(farmRun.result,"Radovan 2-item repeated-count reward should complete");
+    assert(narrationChecks===5,"sponsored farm job should perform five narration rounds before settlement");
+    let farmItems=farmRun.world.inventories[farmRun.world.entities.player.inventoryId].itemIds.map(id=>farmRun.world.entities[id]).filter(item=>item&&farmRewardDefinitions.has(item.definitionId));
+    assert(farmItems.length===2&&farmItems.every(item=>item.definitionId==="turnip"),"one sponsor_items row with count 2 must create two real Turnip instances");
+
+    farmRun=await runFarmJobFixture("bozhena","bozhenaFarmsteadAssistance",['{"items":[{"definitionId":"eggs","count":1},{"definitionId":"farmCheese","count":1},{"definitionId":"breadLoaf","count":1}]}']);
+    ok(farmRun.result,"Bozhena 3-item reward should complete");
+    farmItems=farmRun.world.inventories[farmRun.world.entities.player.inventoryId].itemIds.map(id=>farmRun.world.entities[id]).filter(item=>item&&farmRewardDefinitions.has(item.definitionId));
+    assert(farmItems.length===3&&new Set(farmItems.map(item=>item.definitionId)).size===3,"valid 3-item household reward must create three real allowed item instances");
+
+    setup.AIRequestExecutor.clearExchangeHistory();
+    farmRun=await runFarmJobFixture("radovan","radovanFarmAssistance",['not json','{"items":[{"definitionId":"onion","count":2}]}']);
+    ok(farmRun.result,"malformed sponsor reward followed by one valid repair should complete through StructuredAIRequest");
+    let settlementHistory=setup.AIRequestExecutor.getExchangeHistory().entries.filter(entry=>entry.request&&entry.request.purpose==="daytime-job-settlement");
+    assert(settlementHistory.length===1&&settlementHistory[0].result&&settlementHistory[0].result.repaired===true,"sponsor repair must be one common structured-request execution rather than a second executor lifecycle");
+    assert(settlementHistory[0].result.trace&&settlementHistory[0].result.trace.attempts.length===2&&settlementHistory[0].result.trace.attempts[0].kind==="initial"&&settlementHistory[0].result.trace.attempts[1].kind==="repair","sponsor settlement trace must expose exactly initial + one repair attempt");
+
+    setup.AIRequestExecutor.clearExchangeHistory();
+    const twiceInvalid=await runFarmJobFixture("radovan","radovanFarmAssistance",['not json','still not json']);
+    assert(!twiceInvalid.result.ok&&twiceInvalid.result.error&&twiceInvalid.result.error.code==="DAYTIME_SETTLEMENT_INVALID","two malformed sponsor attempts must fail after the existing one-repair bound");
+    settlementHistory=setup.AIRequestExecutor.getExchangeHistory().entries.filter(entry=>entry.request&&entry.request.purpose==="daytime-job-settlement");
+    assert(settlementHistory.length===1&&settlementHistory[0].result.trace&&settlementHistory[0].result.trace.attempts.length===2,"failed sponsor settlement must still stop after exactly two total attempts");
+    const twiceInvalidCarried=twiceInvalid.world.inventories[twiceInvalid.world.entities.player.inventoryId].itemIds.map(id=>twiceInvalid.world.entities[id]).filter(Boolean);
+    assert(!twiceInvalidCarried.some(item=>farmRewardDefinitions.has(item.definitionId)),"failed structured sponsor settlement must not mutate reward inventory");
+
+    for (const invalidCase of [
+        {label:"disallowed definition",responses:['{"items":[{"definitionId":"healingSalve","count":2}]}','{"items":[{"definitionId":"healingSalve","count":2}]}']},
+        {label:"below minimum",responses:['{"items":[{"definitionId":"onion","count":1}]}','{"items":[{"definitionId":"onion","count":1}]}']},
+        {label:"above maximum",responses:['{"items":[{"definitionId":"onion","count":4}]}','{"items":[{"definitionId":"onion","count":4}]}']}
+    ]) {
+        const failed=await runFarmJobFixture("radovan","radovanFarmAssistance",invalidCase.responses);
+        assert(!failed.result.ok&&failed.result.error&&failed.result.error.code==="DAYTIME_SETTLEMENT_INVALID",`${invalidCase.label} farm reward must fail generic settlement validation after repair`);
+        const carried=failed.world.inventories[failed.world.entities.player.inventoryId].itemIds.map(id=>failed.world.entities[id]).filter(Boolean);
+        assert(!carried.some(item=>farmRewardDefinitions.has(item.definitionId)),`${invalidCase.label} farm reward failure must not create reward items`);
+    }
 
     // Reflection sees canonical grounded character identity, repairs one invalid relationship target,
     // salvages valid mind changes, and maintenance failure does not undo an already committed day.

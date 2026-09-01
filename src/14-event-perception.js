@@ -2,6 +2,7 @@
     "use strict";
 
     const I = setup.GameInternals;
+    const A = setup.WorldStateAuthority;
     const DIALOGUE_LIMIT = setup.MindValidators.RECENT_DIALOGUE_LIMIT;
     const FORBIDDEN_MODEL_KEYS = new Set([
         "recipients", "pendingFor", "processedBy", "sourceControllerId", "controllerId",
@@ -127,6 +128,49 @@
         return data;
     }
 
+    function eventEpistemicParts(event, recipientId) {
+        if (!event || typeof event !== "object") return [];
+        const parts = [];
+        if (event.type === "narrative_input") {
+            const narrative = typeof event.publicNarrative === "string" ? event.publicNarrative.trim() : "";
+            const speech = typeof event.spokenText === "string" ? event.spokenText.trim() : "";
+            if (narrative) parts.push({ type: "direct_observation", actorId: event.actorId || null, text: narrative });
+            if (speech && event.actorId) {
+                parts.push({
+                    type: recipientId === event.actorId ? "own_speech" : "heard_speech",
+                    sourceCharacterId: event.actorId,
+                    text: speech
+                });
+            }
+            return parts;
+        }
+        const text = typeof event.text === "string" ? event.text.trim() : "";
+        if (text) parts.push({ type: "formal_fact", actorId: event.actorId || null, text: text });
+        return parts;
+    }
+
+    function observationEpistemicParts(characterId, observation, world) {
+        if (!observation || typeof observation !== "object") return [];
+        if (Array.isArray(observation.epistemicParts) && observation.epistemicParts.length) return clone(observation.epistemicParts);
+        if (observation.kind === "event" && Number.isInteger(observation.sourceEventId)) {
+            const sourceEvent = (world.events || []).find(function (event) { return event && event.id === observation.sourceEventId; }) || null;
+            if (sourceEvent) return eventEpistemicParts(sourceEvent, characterId);
+        }
+        if (observation.kind === "action_result") {
+            const events = observation.data && Array.isArray(observation.data.events) ? observation.data.events : [];
+            const parts = events.map(function (event) {
+                const text = event && typeof event.text === "string" ? event.text.trim() : "";
+                return text ? { type: "formal_fact", actorId: event.actorId || observation.actorId || null, text: text } : null;
+            }).filter(Boolean);
+            if (parts.length) return parts;
+        }
+        if (observation.kind === "action_result" || observation.kind === "action_feedback") {
+            const text = typeof observation.text === "string" ? observation.text.trim() : "";
+            if (text) return [{ type: "formal_fact", actorId: observation.actorId || null, text: text }];
+        }
+        return [];
+    }
+
     function eventProjectionForRecipient(event, recipientId, world) {
         const projection = {
             id: event.id,
@@ -153,6 +197,14 @@
                 projection.text = event.sourceSideText || event.text || "Someone tried the locked passage.";
             }
         }
+        if (event.type === "narrative_input") {
+            projection.publicNarrative = typeof event.publicNarrative === "string" && event.publicNarrative.trim() ? event.publicNarrative.trim() : null;
+            projection.spokenText = typeof event.spokenText === "string" && event.spokenText.trim() ? event.spokenText.trim() : null;
+            projection.spokenTargetId = event.spokenTargetId || null;
+            projection.spokenLoudness = event.spokenLoudness || null;
+        }
+        const epistemicParts = eventEpistemicParts(Object.assign({}, event, { text: projection.text, actorId: projection.actorId }), recipientId);
+        if (epistemicParts.length) projection.epistemicParts = epistemicParts;
         return projection;
     }
 
@@ -264,6 +316,9 @@
                 targetId: delivered.targetId || null,
                 sourceControllerId: delivered.sourceControllerId || null,
                 text: delivered.text,
+                publicNarrative: delivered.publicNarrative || null,
+                spokenText: delivered.spokenText || null,
+                epistemicParts: clone(delivered.epistemicParts || []),
                 interactionId: event.interactionId || null,
                 data: semanticEventData(delivered)
             }, world);
@@ -365,9 +420,13 @@
         world = worldOrCurrent(world);
         if (!observation || typeof observation !== "object") return null;
         const projected = {};
-        ["id", "kind", "eventType", "actionType", "turn", "actorId", "targetId", "text", "interactionId", "code"].forEach(function (key) {
+        ["id", "kind", "eventType", "actionType", "turn", "actorId", "targetId", "text", "publicNarrative", "spokenText", "interactionId", "code"].forEach(function (key) {
             if (observation[key] !== undefined && observation[key] !== null && observation[key] !== "") projected[key] = clone(observation[key]);
         });
+        const authority = A.forObservation(observation);
+        if (authority) projected.worldStateAuthority = authority;
+        const epistemicParts = observationEpistemicParts(characterId, observation, world);
+        if (epistemicParts.length) projected.epistemicParts = sanitizeSemanticData(epistemicParts);
         if (observation.kind === "event") {
             if (!projected.eventType && observation.data && observation.data.type) projected.eventType = observation.data.type;
             const data = sanitizeSemanticData(observation.data || {});
@@ -402,6 +461,8 @@
         DIALOGUE_LIMIT: DIALOGUE_LIMIT,
         recipientsForEvent: recipientsForEvent,
         eventProjectionForRecipient: eventProjectionForRecipient,
+        eventEpistemicParts: eventEpistemicParts,
+        observationEpistemicParts: observationEpistemicParts,
         enqueueObservation: enqueueObservation,
         routeFeedback: routeFeedback,
         acknowledgeEvent: acknowledgeEvent,

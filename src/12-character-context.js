@@ -24,7 +24,7 @@
             if (schedule) context.weeklySchedule = schedule;
             const awayable = typeof setup.WeeklyRhythm.awayableKnowledge === "function" ? setup.WeeklyRhythm.awayableKnowledge(actor, world) : null;
             if (awayable) context.awayableLifecycle = awayable;
-            const trade = setup.WeeklyRhythm.tradeKnowledge(actor, world);
+            const trade = setup.TradeLifecycle && typeof setup.TradeLifecycle.tradeKnowledge === "function" ? setup.TradeLifecycle.tradeKnowledge(actor, world) : null;
             if (trade) context.tradeKnowledge = trade;
         }
         return context;
@@ -131,7 +131,7 @@
         if (opts.full === true) {
             return {
                 knownFacts: clone(mind.knownFacts || []),
-                beliefs: clone(mind.beliefs || []),
+                beliefs: modelBeliefRecords(mind.beliefs || []),
                 relationships: clone(mind.relationships || []),
                 verbatimObservations: modelVerbatimRecords(mind.verbatimObservations || [], world),
                 shortTermMemories: clone(mind.shortTermMemories || []),
@@ -144,7 +144,7 @@
             : deterministicSelection(actor, world, preparedObservations, opts.view);
         return {
             knownFacts: clone(mind.knownFacts || []),
-            beliefs: clone(byIds(mind.beliefs || [], selection.beliefIds || [], cfg.NORMAL_CONTEXT_BELIEF_LIMIT)),
+            beliefs: modelBeliefRecords(byIds(mind.beliefs || [], selection.beliefIds || [], cfg.NORMAL_CONTEXT_BELIEF_LIMIT)),
             relationships: clone(mind.relationships || []),
             verbatimObservations: modelVerbatimRecords((mind.verbatimObservations || []).slice(-cfg.NORMAL_CONTEXT_VERBATIM_LIMIT), world),
             shortTermMemories: clone(byIds(mind.shortTermMemories || [], selection.stmIds || [], cfg.NORMAL_CONTEXT_STM_LIMIT)),
@@ -154,11 +154,18 @@
 
 
 
+    function modelBeliefRecords(records) {
+        return (Array.isArray(records) ? records : []).map(function (belief) {
+            return { id: belief.id, text: belief.text, confidence: belief.confidence, activation: belief.activation };
+        });
+    }
+
     function recentDialogueContext(actor, world) {
         const records = setup.MindValidators.sanitizeRecentDialogue(actor.recentDialogue, world);
         return records.map(function (record) {
             const speaker = world.entities[record.speakerId];
             return {
+                epistemicStatus: record.speakerId === actor.id ? "own_speech" : "heard_speech",
                 speakerId: record.speakerId,
                 speakerName: speaker && speaker.type === "character" ? speaker.name : record.speakerId || "Unknown speaker",
                 text: record.text
@@ -177,8 +184,16 @@
             schemaVersion: 1,
             view: view,
             relevantMechanics: setup.CharacterAPI.getRelevantMechanics(actorId),
+            worldAuthoredContext: {
+                groundedItemPolicy: typeof world.groundedItemPolicy === "string" ? world.groundedItemPolicy : ""
+            },
             character: privateCharacter(actor, world),
             mind: mindContext(actor, world, preparedObservations, { view: view, selection: options.mindSelection || null }),
+            intimateContexts: setup.AIIntimacy && typeof setup.AIIntimacy.getContextsForCharacter === "function" ? setup.AIIntimacy.getContextsForCharacter(actorId) : {},
+            intimateEligiblePartnerIds: actor.adult === false ? [] : (view && view.location && view.location.characters || []).filter(function (entry) {
+                const target = world.entities[entry.id];
+                return target && target.type === "character" && target.id !== actorId && target.adult !== false;
+            }).map(function (entry) { return entry.id; }),
             continuation: setup.AIWorkingState.getContinuation(actorId),
             recentDialogue: recentDialogueContext(actor, world),
             pendingObservations: preparedObservations
@@ -201,11 +216,15 @@
             actor: { id: actor.id, name: actor.name },
             location: view && view.location ? { id: view.location.id, name: view.location.name, sublocationId: actor.sublocationId || null, positionText: view.self && view.self.position_text || "" } : null,
             presentCharacters: (view && view.location && view.location.characters || []).map(function (entry) { return { id: entry.id, name: entry.name }; }),
-            notableItems: (view && view.location && view.location.items || []).map(compactItem).filter(Boolean).concat((view && view.accessible_inventories || []).flatMap(function (inventory) { return (inventory.items || []).map(compactItem).filter(Boolean); })).slice(0, 40),
+            notableItems: (view && view.location && view.location.items || []).map(compactItem).filter(Boolean)
+                .concat((view && view.accessible_inventories || []).flatMap(function (inventory) { return (inventory.items || []).map(compactItem).filter(Boolean); }))
+                .concat((view && view.visible_inaccessible_inventories || []).flatMap(function (inventory) { return (inventory.items || []).map(compactItem).filter(Boolean); })).slice(0, 40),
             pendingObservations: pending,
             recentDialogue: recentDialogueContext(actor, world),
             recentVerbatimObservations: modelVerbatimRecords((actor.mind && actor.mind.verbatimObservations || []).slice(-setup.MindV3.CONFIG.NORMAL_CONTEXT_VERBATIM_LIMIT), world),
-            continuation: setup.AIWorkingState.getContinuation(actorId)
+            continuation: setup.AIWorkingState.getContinuation(actorId),
+            intimateContexts: setup.AIIntimacy && typeof setup.AIIntimacy.getContextsForCharacter === "function" ? setup.AIIntimacy.getContextsForCharacter(actorId) : {},
+            intimateFocus: options.intimateFocus || null
         });
     }
 

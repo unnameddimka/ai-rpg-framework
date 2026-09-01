@@ -3,6 +3,7 @@ Mallowstead
 
 
 :: StoryInit
+<<run Config.history.controls = false>>
 <<set $health = 10>>
 <<set $maxHealth = 10>>
 <<run setup.Game.bootstrap()>>

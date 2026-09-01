@@ -3,6 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const zlib = require("zlib");
 const root = path.resolve(__dirname, "..");
 
 function storage() {
@@ -21,8 +22,8 @@ function ok(result, message) { assert(result && result.ok, `${message}: ${JSON.s
 
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
-load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js");
+load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-action-option-validation.js"); load("src/09-world-state-authority.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-00-item-mechanics.js"); load("src/10-game-01-validation.js"); load("src/10-game-02-actions.js"); load("src/10-game-api.js"); load("src/10-trade-lifecycle.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -322,8 +323,33 @@ async function main() {
     assert(partialEmergency.sections["game-state.json"] && partialEmergency.sections["ui-runtime.json"].captureError &&
         partialEmergency.captureErrors.some(function (entry) { return entry.section === "ui-runtime.json"; }),
         "one broken diagnostic section must not prevent the rest of an emergency dump from being captured");
-    const zipBytes = setup.EmergencyDiagnostics.buildStoredZip({ "manifest.json": "{}", "game-state.json": "{}" });
-    assert(zipBytes[0] === 0x50 && zipBytes[1] === 0x4b && zipBytes.length > 40, "emergency diagnostic packager should emit a real ZIP container");
+    const storedZipBytes = setup.EmergencyDiagnostics.buildStoredZip({ "starter.json": "{}" });
+    assert(storedZipBytes[0] === 0x50 && storedZipBytes[1] === 0x4b && storedZipBytes.length > 30, "legacy small ZIP helper should remain available for starter-character export compatibility");
+    const sourceZipFiles = { "manifest.json": "{\"kind\":\"manifest\"}", "game-state.json": "{\"world\":true}" };
+    const zipBytes = await setup.EmergencyDiagnostics.buildDeflatedZip(sourceZipFiles);
+    const zipBuffer = Buffer.from(zipBytes);
+    const extracted = {};
+    let zipOffset = 0;
+    let compressedEntries = 0;
+    while (zipOffset + 30 <= zipBuffer.length && zipBuffer.readUInt32LE(zipOffset) === 0x04034b50) {
+        const method = zipBuffer.readUInt16LE(zipOffset + 8);
+        const compressedSize = zipBuffer.readUInt32LE(zipOffset + 18);
+        const uncompressedSize = zipBuffer.readUInt32LE(zipOffset + 22);
+        const nameLength = zipBuffer.readUInt16LE(zipOffset + 26);
+        const extraLength = zipBuffer.readUInt16LE(zipOffset + 28);
+        const nameStart = zipOffset + 30;
+        const dataStart = nameStart + nameLength + extraLength;
+        const name = zipBuffer.subarray(nameStart, nameStart + nameLength).toString("utf8");
+        const compressed = zipBuffer.subarray(dataStart, dataStart + compressedSize);
+        assert(method === 8, "emergency dump ZIP entries must use DEFLATE rather than STORE");
+        const plain = zlib.inflateRawSync(compressed);
+        assert(plain.length === uncompressedSize, "DEFLATE emergency dump entry must preserve its uncompressed length");
+        extracted[name] = plain.toString("utf8");
+        compressedEntries += 1;
+        zipOffset = dataStart + compressedSize;
+    }
+    assert(compressedEntries === 2 && extracted["manifest.json"] === sourceZipFiles["manifest.json"] && extracted["game-state.json"] === sourceZipFiles["game-state.json"],
+        "emergency diagnostic packager should emit a lossless DEFLATE ZIP with all expected files");
 
     console.log("All quality-pass core tests passed.");
 }

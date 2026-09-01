@@ -39,6 +39,10 @@ function validate(document) {
     if (!Array.isArray(document.models) || document.models.length === 0) {
         fail("model_list.json models must be a non-empty array.");
     }
+    if (document.defaultFallbackModelIds !== undefined &&
+        (!document.defaultFallbackModelIds || typeof document.defaultFallbackModelIds !== "object" || Array.isArray(document.defaultFallbackModelIds))) {
+        fail("model_list.json defaultFallbackModelIds must be an object when present.");
+    }
 
     const seen = new Set();
     const models = document.models.map(function (model, index) {
@@ -86,11 +90,25 @@ function validate(document) {
     }
     if (!modelById.get(defaultUtilityModelId).roles.includes("utility")) fail("defaultUtilityModelId must be eligible for the utility role.");
 
+    const fallbackSource = document.defaultFallbackModelIds || {};
+    const defaultFallbackModelIds = {};
+    ["character", "utility", "narrator"].forEach(function (role) {
+        const values = fallbackSource[role] === undefined ? [] : fallbackSource[role];
+        if (!Array.isArray(values)) fail(`defaultFallbackModelIds.${role} must be an array.`);
+        const normalized = values.map(function (value) { return typeof value === "string" ? value.trim() : ""; });
+        if (normalized.some(function (id) { return !id || !seen.has(id) || !modelById.get(id).roles.includes(role); })) {
+            fail(`defaultFallbackModelIds.${role} must contain only model IDs eligible for ${role}.`);
+        }
+        if (new Set(normalized).size !== normalized.length) fail(`defaultFallbackModelIds.${role} must not contain duplicates.`);
+        defaultFallbackModelIds[role] = normalized;
+    });
+
     return {
         schemaVersion: 2,
         defaultModelId: defaultModelId,
         defaultNarratorModelId: defaultNarratorModelId,
         defaultUtilityModelId: defaultUtilityModelId,
+        defaultFallbackModelIds: defaultFallbackModelIds,
         models: models
     };
 }

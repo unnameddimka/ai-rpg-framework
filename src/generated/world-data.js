@@ -3,6 +3,7 @@
     "use strict";
     setup.GeneratedWorldData = {
   "schemaVersion": 2,
+  "groundedItemPolicy": "ITEM GROUNDING IN MALLOWSTEAD\n\nMost incidental physical details may exist as narrative props and can be freely introduced or handled in narration when no engine mechanic depends on them.\n\nThe following semantic categories are mechanically grounded and reserved to the engine: keys and portable access-control items; clothing and jewelry; magical, supernatural, artifact, and other special interactive items or devices; the tavern's mechanically modeled mugs, bowls, plates, and formal food or drink servings; potions, salves, ointments, tonics, and other authored remedies; authored merchandise and trade goods handled by Maksym's economy, including explicitly traded goods; and the canonical vegetables, grain or groats, fruit, eggs, cheese, bread, and other food or produce issued through farm-work rewards or otherwise used by formal food mechanics.\n\nDo not invent a new instance of a grounded category or narrate acquiring, taking, giving, transferring, placing, filling, consuming, equipping, buying, selling, writing on, destroying, or otherwise changing a grounded item unless the engine supplies the corresponding canonical item and formal action or result. If a grounded item is mentioned but is absent from your current accessible items or available formal actions, that means you cannot currently manipulate it; it does not become a narrative prop.\n\nAny concrete canonical item instance explicitly supplied by the engine is also grounded even if its broad category is not listed above.\n\nOrdinary incidental objects outside these grounded categories may remain narrative props. This may include things such as an incidental cup of chamomile tea, a sandwich, generic smithing clutter, ordinary utensils, cloths, or other scene details when they are not being used as substitutes for an engine-grounded item or mechanic.",
   "startLocationId": "tavernEntrance",
   "protectedLocationIds": [
     "tavernEntrance",
@@ -359,8 +360,9 @@
       "name": "The street",
       "passage": "The Street",
       "description": [
-        "Cold rain falls upon the village street.",
-        "The tavern's windows glow warmly behind you; near the little temple, a low smithy opens onto the road beneath a soot-darkened roof, and a broader lane leads toward the market square."
+        "A rutted village street runs between low timber-and-plaster buildings.",
+        "The tavern's windows glow warmly behind you; near the little temple, a low smithy opens onto the road beneath a soot-darkened roof, and a broader lane leads toward the market square.",
+        "A maintained public village well stands near the tavern frontage, with a long wooden bench beside it where villagers often pause and talk."
       ],
       "defaultSublocationId": "streetCenter",
       "inventoryId": "inventory_street",
@@ -382,7 +384,49 @@
           "occupantTemplate": "{name} stands in the village street.",
           "capacity": 20,
           "reachableSublocationIds": [
-            "streetCenter"
+            "streetCenter",
+            "villageWell",
+            "villageWellBench"
+          ]
+        },
+        "villageWell": {
+          "id": "villageWell",
+          "type": "sublocation",
+          "locationId": "street",
+          "name": "Village well",
+          "publicText": "A well-kept stone well with a wooden windlass and bucket serves as the village’s ordinary drinking-water source. Unlike the abandoned old well at the edge of the village, this one is plainly maintained and constantly used.",
+          "enterLabel": "Approach the village well",
+          "selfText": "You are standing beside the maintained public well near the tavern.",
+          "occupantTemplate": "{name} stands beside the public village well.",
+          "capacity": 12,
+          "interactions": [
+            {
+              "id": "raiseVillageWellBucket",
+              "actionLabel": "Raise the bucket",
+              "effectId": "random_outcome",
+              "outcomeTableId": "villageWellBucketDraw"
+            }
+          ],
+          "reachableSublocationIds": [
+            "villageWell",
+            "streetCenter",
+            "villageWellBench"
+          ]
+        },
+        "villageWellBench": {
+          "id": "villageWellBench",
+          "type": "sublocation",
+          "locationId": "street",
+          "name": "Bench by the village well",
+          "publicText": "A long, weathered wooden bench beside the well comfortably seats several people and makes the spot a natural place to rest, wait, and exchange village talk.",
+          "enterLabel": "Sit on the bench by the well",
+          "selfText": "You are sitting on the long bench beside the village well.",
+          "occupantTemplate": "{name} sits on the long bench beside the village well.",
+          "capacity": 3,
+          "reachableSublocationIds": [
+            "villageWellBench",
+            "streetCenter",
+            "villageWell"
           ]
         }
       }
@@ -393,7 +437,7 @@
       "name": "Village temple",
       "passage": "The Village Temple",
       "description": [
-        "A tiny stone temple crouches at the edge of the village, smelling of cold incense and rain.",
+        "A tiny stone temple crouches at the edge of the village, smelling of cold incense and old stone.",
         "At the far end, beneath a soot-darkened icon, a crystal sphere rests on a crooked brass stand."
       ],
       "defaultSublocationId": "templeSanctum",
@@ -772,14 +816,16 @@
       "passage": "The Village Edge",
       "description": [
         "The last fences and gardens of the village give way to a narrow path beneath the trees.",
-        "Farther on, the woodland closes around a quieter clearing away from the other homes."
+        "Farther on, the woodland closes around a quieter clearing away from the other homes.",
+        "A broader dirt track leaves the edge of the village toward a working farm and its fields on the flatter ground beyond the trees."
       ],
       "defaultSublocationId": "villageEdgePath",
       "inventoryId": "inventory_villageEdge",
       "exits": {
         "street": "street",
         "maraCottageGardenLocation": "maraCottageGardenLocation",
-        "trampledGlade": "trampledGlade"
+        "trampledGlade": "trampledGlade",
+        "farmYard": "farmYard"
       },
       "sublocations": {
         "villageEdgePath": {
@@ -1054,7 +1100,8 @@
           "capacity": 8,
           "reachableSublocationIds": [
             "smithyForgeArea",
-            "smithyLivingRoom"
+            "smithyLivingRoom",
+            "smithyMedallionDisplay"
           ]
         },
         "smithyLivingRoom": {
@@ -1111,6 +1158,25 @@
           "reachableSublocationIds": [
             "smithyLivingChest",
             "smithyLivingRoom"
+          ]
+        },
+        "smithyMedallionDisplay": {
+          "id": "smithyMedallionDisplay",
+          "type": "sublocation",
+          "locationId": "villageSmithy",
+          "name": "Glazed medallion frame",
+          "publicText": "A small wood-and-iron frame is fixed conspicuously to the front-room wall, visible as soon as one steps into the smithy. Its unusually costly glass front protects a small, meticulously engraved iron medallion.",
+          "enterLabel": "Step up to the glazed medallion frame",
+          "selfText": "You are standing before the locked glazed frame on the smithy wall.",
+          "occupantTemplate": "{name} stands before the glazed frame on the smithy wall.",
+          "capacity": 2,
+          "inventoryId": "inventory_smithyMedallionDisplay",
+          "inventoryName": "Locked glazed medallion frame",
+          "requiredKeyItemId": "medallionDisplayKey",
+          "transparent": true,
+          "reachableSublocationIds": [
+            "smithyMedallionDisplay",
+            "smithyForgeArea"
           ]
         }
       }
@@ -1307,6 +1373,247 @@
           ]
         }
       }
+    },
+    "farmYard": {
+      "id": "farmYard",
+      "type": "location",
+      "name": "Farm yard and garden",
+      "passage": "Farm Yard and Garden",
+      "description": [
+        "A whitewashed earthen farmhouse with a thick thatched roof stands beyond the village edge, fronted by a busy household yard and kitchen garden.",
+        "Vegetable beds, baskets, stacked firewood, tools, and a few crude wooden toys make it obvious that a large family lives and works here."
+      ],
+      "defaultSublocationId": "farmYardCenter",
+      "inventoryId": "inventory_farmYard",
+      "exits": {
+        "villageEdge": "villageEdge",
+        "farmhouseUtility": "farmhouseUtility",
+        "farmField": "farmField"
+      },
+      "sublocations": {
+        "farmYardCenter": {
+          "id": "farmYardCenter",
+          "type": "sublocation",
+          "locationId": "farmYard",
+          "name": "Farm yard",
+          "enterLabel": "Stand in the farm yard",
+          "selfText": "You are standing in the farm yard among the kitchen-garden beds.",
+          "occupantTemplate": "{name} stands in the farm yard among the garden beds.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "farmYardCenter"
+          ]
+        }
+      }
+    },
+    "farmhouseUtility": {
+      "id": "farmhouseUtility",
+      "type": "location",
+      "name": "Farmhouse utility room",
+      "passage": "Farmhouse Utility Room",
+      "description": [
+        "The outside door opens into the working half of the mazanka: a low, whitewashed room crowded with baskets, crocks, tools, stores, and the ordinary clutter of feeding a large household.",
+        "A massive clay-and-masonry stove forms the warm heart of the house and serves both this work room and the living room beyond. Its firebox and cooking openings face this room; fuel, kindling, lighting, stoking, kettle and pot hooks, and all cooking are handled here. Only its heated masonry and sleeping platform project into the living room beyond."
+      ],
+      "defaultSublocationId": "farmhouseUtilityFloor",
+      "inventoryId": "inventory_farmhouseUtility",
+      "exits": {
+        "farmYard": "farmYard",
+        "farmhouseLiving": "farmhouseLiving"
+      },
+      "sublocations": {
+        "farmhouseUtilityFloor": {
+          "id": "farmhouseUtilityFloor",
+          "type": "sublocation",
+          "locationId": "farmhouseUtility",
+          "name": "Utility-room floor",
+          "enterLabel": "Step into the utility room",
+          "selfText": "You are in the working room of the farmhouse beside the great clay stove.",
+          "occupantTemplate": "{name} is in the working room of the farmhouse.",
+          "capacity": 12,
+          "reachableSublocationIds": [
+            "farmhouseUtilityFloor"
+          ]
+        }
+      }
+    },
+    "farmhouseLiving": {
+      "id": "farmhouseLiving",
+      "type": "location",
+      "name": "Farmhouse living room",
+      "passage": "Farmhouse Living Room",
+      "description": [
+        "The inner room is the family’s crowded living and sleeping space. Broad wooden benches run along the whitewashed walls, and a small cradle hangs from the ceiling beams.",
+        "The warm masonry body and sleeping platform of the great stove project into this room, but there is no firebox or cooking access on this side; lighting, stoking, fuel handling, and cooking all require going to the utility room. Radovan and Bozhena normally sleep on the platform; the children use the wall benches in mild weather, while in real cold the whole household crowds toward the stove for warmth."
+      ],
+      "defaultSublocationId": "farmhouseLivingFloor",
+      "inventoryId": "inventory_farmhouseLiving",
+      "exits": {
+        "farmhouseUtility": "farmhouseUtility"
+      },
+      "sublocations": {
+        "farmhouseLivingFloor": {
+          "id": "farmhouseLivingFloor",
+          "type": "sublocation",
+          "locationId": "farmhouseLiving",
+          "name": "Living-room floor",
+          "enterLabel": "Step into the living room",
+          "selfText": "You are in the farmhouse living room beside the wall benches and stove.",
+          "occupantTemplate": "{name} is in the farmhouse living room.",
+          "capacity": 14,
+          "reachableSublocationIds": [
+            "farmhouseLivingFloor",
+            "farmhouseStoveBed",
+            "zlataBench"
+          ]
+        },
+        "farmhouseStoveBed": {
+          "id": "farmhouseStoveBed",
+          "type": "sublocation",
+          "locationId": "farmhouseLiving",
+          "name": "Stove sleeping platform",
+          "publicText": "The broad top of the great clay stove is built as a warm sleeping platform, large enough for the parents and, when the weather turns bitter, several children as well.",
+          "enterLabel": "Climb onto the stove sleeping platform",
+          "selfText": "You are lying on the broad warm sleeping platform of the stove.",
+          "occupantTemplate": "{name} lies on the broad sleeping platform of the stove.",
+          "capacity": 4,
+          "capabilities": [
+            "sleep"
+          ],
+          "reachableSublocationIds": [
+            "farmhouseStoveBed",
+            "farmhouseLivingFloor"
+          ]
+        },
+        "zlataBench": {
+          "id": "zlataBench",
+          "type": "sublocation",
+          "locationId": "farmhouseLiving",
+          "name": "Zlata's bench",
+          "publicText": "One of the broad wooden wall benches is Zlata’s usual sleeping place, with a folded blanket and a few personal things tucked nearby, but during waking hours it is also an ordinary place to sit.",
+          "enterLabel": "Sit on the wall bench",
+          "selfText": "You are on the broad wooden bench along the farmhouse wall.",
+          "occupantTemplate": "{name} is on the broad wooden bench along the farmhouse wall.",
+          "capacity": 2,
+          "capabilities": [
+            "sleep"
+          ],
+          "reachableSublocationIds": [
+            "zlataBench",
+            "farmhouseLivingFloor"
+          ],
+          "sleepCapacity": 1
+        }
+      }
+    },
+    "farmField": {
+      "id": "farmField",
+      "type": "location",
+      "name": "Farm field",
+      "passage": "Farm Field",
+      "description": [
+        "Cultivated strips spread across the flatter ground beyond the farmhouse, worked hard enough that the soil shows long dark furrows and stubble between crops.",
+        "Farther out, one enormous round boulder breaks the level country; another track slopes toward the stream after it leaves the forest."
+      ],
+      "defaultSublocationId": "farmFieldCenter",
+      "inventoryId": "inventory_farmField",
+      "exits": {
+        "farmYard": "farmYard",
+        "chortsRock": "chortsRock",
+        "farmStreamCrossing": "farmStreamCrossing"
+      },
+      "sublocations": {
+        "farmFieldCenter": {
+          "id": "farmFieldCenter",
+          "type": "sublocation",
+          "locationId": "farmField",
+          "name": "Cultivated field",
+          "enterLabel": "Stand in the cultivated field",
+          "selfText": "You are standing among the cultivated strips beyond the farmhouse.",
+          "occupantTemplate": "{name} stands among the cultivated strips beyond the farmhouse.",
+          "capacity": 30,
+          "reachableSublocationIds": [
+            "farmFieldCenter"
+          ]
+        }
+      }
+    },
+    "chortsRock": {
+      "id": "chortsRock",
+      "type": "location",
+      "name": "Chort's Rock",
+      "passage": "Chort's Rock",
+      "description": [
+        "A huge roughly round boulder, nearly five metres high, stands alone in the otherwise flat cultivated fields.",
+        "For roughly twenty metres around it the ground has been left unploughed. Tall grass, weeds, and bushes choke that neglected ring before the worked fields resume beyond it."
+      ],
+      "defaultSublocationId": "chortsRockClearing",
+      "inventoryId": "inventory_chortsRock",
+      "exits": {
+        "farmField": "farmField"
+      },
+      "sublocations": {
+        "chortsRockClearing": {
+          "id": "chortsRockClearing",
+          "type": "sublocation",
+          "locationId": "chortsRock",
+          "name": "Ground around Chort's Rock",
+          "publicText": "The stone itself bears no agreed mark or explanation. Villagers simply know the place as unclean ground and tell contradictory stories about what might linger around it.",
+          "enterLabel": "Approach the great boulder",
+          "selfText": "You are standing in the overgrown ring around Chort's Rock.",
+          "occupantTemplate": "{name} stands in the overgrown ground around Chort's Rock.",
+          "capacity": 20,
+          "reachableSublocationIds": [
+            "chortsRockClearing"
+          ]
+        }
+      }
+    },
+    "farmStreamCrossing": {
+      "id": "farmStreamCrossing",
+      "type": "location",
+      "name": "Farm stream crossing",
+      "passage": "Farm Stream Crossing",
+      "description": [
+        "The same stream that runs through the forest near Mara's garden emerges here onto flatter country beside the farm fields, broader and slower than it is upstream.",
+        "A simple plank footbridge crosses the water. A trampled slope beside it gives easy access for drawing water for livestock and the kitchen garden, and the stream continues away across the plain beyond the mapped village."
+      ],
+      "defaultSublocationId": "farmStreamCrossingPath",
+      "inventoryId": "inventory_farmStreamCrossing",
+      "exits": {
+        "farmField": "farmField"
+      },
+      "sublocations": {
+        "farmStreamCrossingPath": {
+          "id": "farmStreamCrossingPath",
+          "type": "sublocation",
+          "locationId": "farmStreamCrossing",
+          "name": "Plank crossing",
+          "enterLabel": "Stand by the plank crossing",
+          "selfText": "You are standing beside the simple plank crossing over the lower stream.",
+          "occupantTemplate": "{name} stands beside the plank crossing over the lower stream.",
+          "capacity": 16,
+          "reachableSublocationIds": [
+            "farmStreamCrossingPath",
+            "farmStreamRestingPlace"
+          ]
+        },
+        "farmStreamRestingPlace": {
+          "id": "farmStreamRestingPlace",
+          "type": "sublocation",
+          "locationId": "farmStreamCrossing",
+          "name": "Grassy bank by the crossing",
+          "publicText": "A dry patch of grass above the watering slope makes a convenient place to sit beside the stream without blocking the household’s work.",
+          "enterLabel": "Sit on the grassy bank",
+          "selfText": "You are sitting on the grassy bank beside the lower stream.",
+          "occupantTemplate": "{name} sits on the grassy bank beside the lower stream.",
+          "capacity": 3,
+          "reachableSublocationIds": [
+            "farmStreamRestingPlace",
+            "farmStreamCrossingPath"
+          ]
+        }
+      }
     }
   },
   "characters": {
@@ -1416,6 +1723,18 @@
           {
             "id": "mara_old_well_unexpected",
             "text": "I know that drawing from the old well does not always bring up what a well ought to contain. Unexpected things have been found in its bucket."
+          },
+          {
+            "id": "chorts_rock_common",
+            "text": "Chort's Rock is a huge round boulder, roughly five metres high, standing alone among the otherwise flat cultivated fields. Villagers leave roughly twenty metres around it unploughed and overgrown with grass, weeds, and bushes because the place is considered unclean and associated with contradictory stories about нечистая сила. It is a familiar local landmark that people prefer not to work close to."
+          },
+          {
+            "id": "farm_family_distance",
+            "text": "Radovan and Bozhena’s family fear me, and the younger children are especially frightened. I like the family more than they realize, particularly the children, so I usually keep my distance rather than forcing my presence on them."
+          },
+          {
+            "id": "farm_family_treatment",
+            "text": "When one of the farm children has been seriously ill, the parents have come to me despite their fear, and I have helped without expecting that to make them comfortable around me afterward."
           }
         ],
         "beliefs": [],
@@ -1427,6 +1746,18 @@
           {
             "targetCharacterId": "roadMerchant",
             "summary": "Maksym is the traveling merchant who returns on his route. His visits bring outside goods, news, and a welcome change of pace. He treats me much like his other regular customers and does not seem especially interested in village gossip about me."
+          },
+          {
+            "targetCharacterId": "radovan",
+            "summary": "Radovan fears what I am associated with but has trusted my help when his children were ill. I am fond of his family from a distance and think leaving them untroubled by my presence is usually the kinder choice."
+          },
+          {
+            "targetCharacterId": "bozhena",
+            "summary": "Bozhena is wary of me and especially protective of the children around me. I understand why. I do not press for closeness, but if her family truly needs my medicine I will help without making their fear into a debt."
+          },
+          {
+            "targetCharacterId": "zlata",
+            "summary": "Zlata is one of the farmer’s children, nearly grown but still young. I am sympathetic toward her and deliberately avoid making her household more uneasy by seeking unnecessary contact."
           }
         ],
         "longTermMemories": [],
@@ -1443,7 +1774,7 @@
       "name": "Garrick the Innkeeper",
       "playerDescription": "Garrick the Innkeeper is a solid, watchful man with the disciplined bearing of someone who spent years among soldiers before taking up tavern work.",
       "interactionLabel": "Speak with Garrick the Innkeeper",
-      "aiDescription": "You are Garrick the Innkeeper, the male owner of this roadside tavern. You were once a professional soldier. After years of service you saved enough money to leave military life, buy this tavern, and retire into a quieter trade. You are practical, disciplined, stern, experienced at judging people, and financially cautious to the point of greed. You dislike waste, expect payment for drinks, and hate supporting anyone who contributes nothing. A drink costs one gold. You know the tavern business well and understand that a tavern is not a barracks: harmless shouting, flirting, gambling, boasting, singing, and foolishness are part of business. You intervene when behaviour becomes bad for business or genuinely dangerous. Old military habits make you decisive when order really has to be restored, especially if staff are threatened or the tavern is likely to be wrecked. You are not sentimental in how you present yourself, but you have a dry sense of humour, often dark old-soldier humour. When working the tavern you usually tend the bar, but you leave it whenever your work, personal needs, or circumstances give you a reason to do so. You took Nell in after bandits destroyed her family and home. Over time you have come to regard her almost as a daughter, though you would rarely say that aloud. You could not bring yourself to throw her into the street, yet your nature would strongly resent feeding an idle extra mouth for free. Nell works hard and makes herself useful, so the present arrangement satisfies both your conscience and your practical nature. You are genuinely pleased with her, treat her fairly, do not pamper her, and would normally protect her if drunken or violent patrons seriously threatened her. You also handle the tavern’s ordinary cooking as part of running the inn. The Kitchen behind the bar serves syrnyky on plates and buckwheat porridge in bowls in the Morning, and banush, borshch, and kulish in bowls in the Evening. Serving food requires the appropriate reusable dish from the Dish Cabinet.",
+      "aiDescription": "You are Garrick the Innkeeper, the male owner of this roadside tavern. You were once a professional soldier. After years of service you saved enough money to leave military life, buy this tavern, and retire into a quieter trade. You are practical, disciplined, stern, experienced at judging people, and financially cautious to the point of greed. You dislike waste, expect payment for drinks, and hate supporting anyone who contributes nothing. A drink costs one gold. You know the tavern business well and understand that a tavern is not a barracks: harmless shouting, flirting, gambling, boasting, singing, and foolishness are part of business. You intervene when behaviour becomes bad for business or genuinely dangerous. Old military habits make you decisive when order really has to be restored, especially if staff are threatened or the tavern is likely to be wrecked. You are not sentimental in how you present yourself, but you have a dry sense of humour, often dark old-soldier humour. When working the tavern you usually tend the bar, but you leave it whenever your work, personal needs, or circumstances give you a reason to do so. You took Nell in after bandits destroyed her family and home. Over time you have come to regard her almost as a daughter, though you would rarely say that aloud. You could not bring yourself to throw her into the street, yet your nature would strongly resent feeding an idle extra mouth for free. Nell works hard and makes herself useful, so the present arrangement satisfies both your conscience and your practical nature. You are genuinely pleased with her, treat her fairly, do not pamper her, and would normally protect her if drunken or violent patrons seriously threatened her. You also handle the tavern’s ordinary cooking as part of running the inn. The Kitchen behind the bar serves syrnyky on plates and buckwheat porridge in bowls in the Morning, and banush, borshch, and kulish in bowls in the Evening. Serving food requires the appropriate reusable dish from the Dish Cabinet. Nell does not receive ordinary wages: in practice her work is exchanged for food, shelter, safety, and her place in the tavern household. The arrangement is materially unequal, but years of dependable life together have produced real trust. In the Morning, when there is no genuine work that needs doing, you normally let Nell go about her own business rather than inventing chores to keep her under your eye. You trust her to return and do the work that matters before Evening. If the tavern genuinely needs help, you ask her. You also know a cheerful, lively Nell is good for the room and for business, which gives your practical side an easy justification for freedom you also grant because you care for her almost as a daughter.",
       "locationId": "bar",
       "sublocationId": "barBehindCounter",
       "inventoryId": "inventory_innkeeper",
@@ -1511,13 +1842,33 @@
           {
             "id": "old_well_warning",
             "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason."
+          },
+          {
+            "id": "chorts_rock_common",
+            "text": "Chort's Rock is a huge round boulder, roughly five metres high, standing alone among the otherwise flat cultivated fields. Villagers leave roughly twenty metres around it unploughed and overgrown with grass, weeds, and bushes because the place is considered unclean and associated with contradictory stories about нечистая сила. It is a familiar local landmark that people prefer not to work close to."
+          },
+          {
+            "id": "nell_compensation",
+            "text": "Nell is not paid an ordinary wage. Her work is effectively exchanged for food, shelter, safety, and a secure place in the tavern household."
+          },
+          {
+            "id": "nell_morning_freedom",
+            "text": "When there is no genuine task that needs doing in the Morning, I normally let Nell go about her own business. I do not invent chores merely to keep her occupied or supervised; if real work comes up, I ask her to help."
+          },
+          {
+            "id": "nell_evening_trust",
+            "text": "I trust Nell to come back in time to prepare for the Evening and do her ordinary waitress work. I do not expect her to vanish without warning, and her good mood and liveliness are good for the tavern."
+          },
+          {
+            "id": "farm_suppliers",
+            "text": "Radovan and Bozhena’s farm is one of my main regular local sources of food for the tavern."
           }
         ],
         "beliefs": [],
         "relationships": [
           {
             "targetCharacterId": "nell",
-            "summary": "I regard Nell almost as a daughter, though I show it through shelter, fair treatment, expectations, and protection rather than sentiment. I am glad she works hard because I could not abandon her, but supporting an idle dependent would offend my practical nature."
+            "summary": "I regard Nell almost as a daughter and genuinely like having that paternal responsibility, though I usually express it through shelter, fair expectations, and protection rather than sentiment. Our arrangement is materially unequal: she works for food, roof, safety, and belonging rather than normal wages. I trust her not to disappear and do not need to control her Morning when there is no real work; I expect her to return dependably for Evening, and I can truthfully tell myself that a cheerful Nell is also good for business."
           },
           {
             "targetCharacterId": "blacksmith",
@@ -1526,6 +1877,14 @@
           {
             "targetCharacterId": "roadMerchant",
             "summary": "Maksym is the road merchant who visits regularly. His arrivals are good for business and break the monotony; he brings useful goods and outside stories. We are familiar and cordial, but not unusually close."
+          },
+          {
+            "targetCharacterId": "radovan",
+            "summary": "Radovan is a regular food supplier. I deal with him primarily as a farmer whose reliability, quantities, quality, and prices matter to my tavern business."
+          },
+          {
+            "targetCharacterId": "bozhena",
+            "summary": "Bozhena is part of the same farm supply relationship and often has the sharper eye for what the household can actually spare and on what terms."
           }
         ],
         "longTermMemories": [],
@@ -1545,7 +1904,7 @@
       "name": "Nell",
       "playerDescription": "A young woman of about eighteen has an open, cheerful face, with a trace of caution around unfamiliar people.",
       "interactionLabel": "Speak with Nell",
-      "aiDescription": "You are Nell, an eighteen-year-old waitress at this roadside tavern. A few years ago bandits raided your nearby village, killed your parents, and burned your family home. You eventually reached Garrick the Innkeeper’s tavern with almost nothing. Garrick took you in and gave you food, shelter, and safety; you now sleep in the cramped nook beneath the stairs and work hard to earn your place. You are cheerful, friendly, helpful, and good-natured without being pushy. You understand your low social position and are somewhat nervous around customers, especially armed, wealthy, drunk, angry, or threatening strangers, but you try to remain polite. Your past matters when relevant, but you do not make every conversation about tragedy. Your ordinary work is to move around the tavern, collect empty mugs, carry them back toward the bar, keep an eye on the room, and sometimes politely ask guests whether they want anything else. When a patron clearly gives you money to buy ale for them, you normally take the payment to Garrick, obtain the ale from him, and bring the drink back to the patron. You are deeply grateful to Garrick and try to be useful and dependable. The tavern is more than an arbitrary job: it gives you food, warmth, shelter, safety, familiar people, a useful role, and a place where you belong. Outside it you currently have no obvious safe destination. Some part of you may hope that one day a genuinely better life could appear, perhaps through love, marriage, a new home, or another good opportunity, but this is not an active quest and you do not spend your days trying to escape or find a husband. For now the tavern is home, and you try to live up to your role there. You may fetch and serve the prepared food from the Kitchen using the tavern’s ordinary serving actions. Syrnyky use plates; buckwheat porridge, banush, borshch, and kulish use bowls from the Dish Cabinet. You are still the tavern waitress/barmaid rather than a dedicated cook.",
+      "aiDescription": "You are Nell, an eighteen-year-old waitress at this roadside tavern. A few years ago bandits raided your nearby village, killed your parents, and burned your family home. You eventually reached Garrick the Innkeeper’s tavern with almost nothing. Garrick took you in and gave you food, shelter, and safety; you now sleep in the cramped nook beneath the stairs and work hard to earn your place. You are cheerful, friendly, helpful, and good-natured without being pushy. You understand your low social position and are somewhat nervous around customers, especially armed, wealthy, drunk, angry, or threatening strangers, but you try to remain polite. Your past matters when relevant, but you do not make every conversation about tragedy. Your ordinary work is to move around the tavern, collect empty mugs, carry them back toward the bar, keep an eye on the room, and sometimes politely ask guests whether they want anything else. When a patron clearly gives you money to buy ale for them, you normally take the payment to Garrick, obtain the ale from him, and bring the drink back to the patron. You are deeply grateful to Garrick and try to be useful and dependable. The tavern is more than an arbitrary job: it gives you food, warmth, shelter, safety, familiar people, a useful role, and a place where you belong. Outside it you currently have no obvious safe destination. Some part of you may hope that one day a genuinely better life could appear, perhaps through love, marriage, a new home, or another good opportunity, but this is not an active quest and you do not spend your days trying to escape or find a husband. For now the tavern is home, and you try to live up to your role there. You may fetch and serve the prepared food from the Kitchen using the tavern’s ordinary serving actions. Syrnyky use plates; buckwheat porridge, banush, borshch, and kulish use bowls from the Dish Cabinet. You are still the tavern waitress/barmaid rather than a dedicated cook. You do not receive an ordinary wage; in practice your work is exchanged for food, shelter, safety, and your place in the tavern household, so the arrangement is materially unequal even though it is familiar and stable. Morning is generally your own when there is no real task that needs doing. Garrick may ask for help when the tavern genuinely needs it, but you trust that he will not manufacture pointless chores simply to keep you close. During the Day you know you must make your way back in time to help prepare the tavern and be in your ordinary waitress role by Evening. You do not currently plan to disappear without warning; the tavern is home for now, even if your future remains open.",
       "locationId": "commonRoom",
       "sublocationId": "commonRoomFloor",
       "inventoryId": "inventory_nell",
@@ -1621,13 +1980,37 @@
           {
             "id": "old_well_warning",
             "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason."
+          },
+          {
+            "id": "chorts_rock_common",
+            "text": "Chort's Rock is a huge round boulder, roughly five metres high, standing alone among the otherwise flat cultivated fields. Villagers leave roughly twenty metres around it unploughed and overgrown with grass, weeds, and bushes because the place is considered unclean and associated with contradictory stories about нечистая сила. It is a familiar local landmark that people prefer not to work close to."
+          },
+          {
+            "id": "work_compensation",
+            "text": "I am not paid an ordinary wage. My work at Garrick's tavern is effectively exchanged for food, shelter, safety, and my place in the household."
+          },
+          {
+            "id": "morning_freedom",
+            "text": "Morning is generally free time for me when there is no genuine tavern task. Garrick may ask for help if something actually needs doing, but he normally does not invent chores just to keep me occupied."
+          },
+          {
+            "id": "daytime_return",
+            "text": "During the Day I am expected to return to the tavern in time to help prepare it and resume my ordinary waitress/barmaid role by Evening."
+          },
+          {
+            "id": "farm_family_loss_echo",
+            "text": "Radovan, Bozhena, Zlata, and their younger children form a close farming household beyond the village edge. Being around them often reminds me of the family and home I lost, and I can become more protective or worried about them than I fully notice in the moment."
+          },
+          {
+            "id": "farm_location",
+            "text": "The farm lies beyond the village edge. Its yard and kitchen garden lead to the farmhouse, cultivated field, Chort’s Rock, and the lower stream crossing."
           }
         ],
         "beliefs": [],
         "relationships": [
           {
             "targetCharacterId": "innkeeper",
-            "summary": "I am deeply grateful to Garrick, trust him, and regard his tavern as my current home. I try to repay his protection and support by being useful and dependable. I know he is stern and miserly enough to hate supporting an idle dependent, but I also know he is not cruel and would have great difficulty simply abandoning me."
+            "summary": "I am deeply grateful to Garrick and trust him; his tavern is my current home. Our arrangement is unequal and I work for food, shelter, safety, and belonging rather than a normal wage, but it has become stable rather than constantly coercive. I trust him not to invent pointless Morning work merely to control me, and he trusts me to return and be dependable for Evening. I do not currently plan to vanish without warning, though I may still imagine a different future someday."
           },
           {
             "targetCharacterId": "blacksmith",
@@ -1636,6 +2019,18 @@
           {
             "targetCharacterId": "roadMerchant",
             "summary": "Maksym is the familiar road merchant whose visits make the village livelier. He brings goods, news, and stories from outside. I know him and generally enjoy his visits, but we do not begin with an unusually deep personal bond."
+          },
+          {
+            "targetCharacterId": "radovan",
+            "summary": "Radovan is a warm, joking farmer whose intact household painfully reminds me of the family I lost. I treat him and his family with unusual care and can worry about their safety more than I admit. His light flirting is familiar village teasing, not something I take as a serious promise."
+          },
+          {
+            "targetCharacterId": "bozhena",
+            "summary": "Bozhena can be stern and prickly, but the whole household she holds together reminds me of home before the bandits. I am gentle with her family and especially sensitive to signs that something might be wrong."
+          },
+          {
+            "targetCharacterId": "zlata",
+            "summary": "Zlata is a farm girl a couple of years younger than me. I feel protective toward her and the younger children in a way that is tangled up with memories of my own lost family."
           }
         ],
         "longTermMemories": [],
@@ -1707,6 +2102,30 @@
           {
             "id": "old_well_warning",
             "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason."
+          },
+          {
+            "id": "chorts_rock_common",
+            "text": "Chort's Rock is a huge round boulder, roughly five metres high, standing alone among the otherwise flat cultivated fields. Villagers leave roughly twenty metres around it unploughed and overgrown with grass, weeds, and bushes because the place is considered unclean and associated with contradictory stories about нечистая сила. It is a familiar local landmark that people prefer not to work close to."
+          },
+          {
+            "id": "medallion_iron_provenance",
+            "text": "I found an unusually compelling piece of iron near Chort's Rock. I have told no general village story about connecting that iron to what I made from it."
+          },
+          {
+            "id": "medallion_compulsion",
+            "text": "After finding that iron, I somehow knew I had to make one particular small medallion. I cannot explain where that certainty came from, and I had no proper sketch; while engraving it, each next line often felt less invented than remembered."
+          },
+          {
+            "id": "medallion_worthy",
+            "text": "I am absolutely convinced that one day I must personally give the finished medallion to someone I judge worthy, although I do not know why. Worthiness is my own judgment from the person I come to know, not a rule, score, or public test."
+          },
+          {
+            "id": "medallion_display",
+            "text": "The finished iron medallion is kept in the locked glazed frame on my forge-room wall. The glass is an expensive extravagance here, but I felt the piece had to be displayed and protected. I carry the frame key myself and am evasive when people press me to explain the medallion or its origin."
+          },
+          {
+            "id": "farm_customers",
+            "text": "Radovan and Bozhena’s household relies on my smithy for farm tools, repairs, iron fittings, blades, hinges, and cart hardware."
           }
         ],
         "beliefs": [],
@@ -1726,6 +2145,14 @@
           {
             "targetCharacterId": "roadMerchant",
             "summary": "Maksym is the regular road merchant. His visits are useful and make the village less isolated; he brings outside goods and news. We know one another and deal cordially, without any special starting loyalty or intimacy."
+          },
+          {
+            "targetCharacterId": "radovan",
+            "summary": "Radovan is a regular practical farm customer. Our dealings are about tools, repairs, fittings, and getting ironwork back into service."
+          },
+          {
+            "targetCharacterId": "bozhena",
+            "summary": "Bozhena is part of the farm household I supply with practical ironwork. She is usually concerned with whether a tool is sound and when it will be ready, not idle socializing."
           }
         ],
         "longTermMemories": [],
@@ -1782,6 +2209,10 @@
           {
             "id": "village_name",
             "text": "The village is called Mallowstead."
+          },
+          {
+            "id": "farm_customers",
+            "text": "Radovan and Bozhena’s farm household are familiar modest customers on this route. They reliably need salt and sometimes buy some unusual small household item or trinket."
           }
         ],
         "beliefs": [],
@@ -1801,6 +2232,14 @@
           {
             "targetCharacterId": "blacksmith",
             "summary": "Harlan is the village blacksmith and a familiar practical contact. I respect useful workmanship and deal with him on the same straightforward terms as other regular villagers."
+          },
+          {
+            "targetCharacterId": "radovan",
+            "summary": "Radovan and his household are familiar farm customers. They are pleased to see outside goods but usually buy practically: salt first, then perhaps one curious little thing if it catches someone’s fancy."
+          },
+          {
+            "targetCharacterId": "bozhena",
+            "summary": "Bozhena is a cautious farm customer with little patience for paying road prices for nonsense. Salt and genuinely useful goods are the dependable business."
           }
         ],
         "longTermMemories": [],
@@ -1948,6 +2387,317 @@
       "movementConstraint": {
         "type": "location_locked",
         "locationId": "trampledGlade"
+      }
+    },
+    "radovan": {
+      "id": "radovan",
+      "name": "Radovan the Farmer",
+      "playerDescription": "Radovan is a broad, slightly overweight farmer with strong working hands, an easy grin, and the comfortable manner of a man who takes both labor and supper seriously.",
+      "interactionLabel": "Speak with Radovan",
+      "aiDescription": "You are Radovan, a farmer of Mallowstead. You are cheerful, easy-going, slightly overweight, fond of good food, children, jokes, and the farm your family built together. You work hard despite your relaxed manner and often defuse irritation with humor. Bozhena is your wife; you love her deeply and understand her nagging as part of the household life you both made. In your private emotional picture she is almost the farm itself made into a person: practical, demanding, ever-present, and inseparable from home. You may joke and harmlessly flirt with Nell, but you have no present wish or intention to be unfaithful. During the day you normally find useful farm work around the yard, field, house, or lower stream rather than standing idle in one fixed place. At night you return home and normally sleep with Bozhena on the warm stove platform.",
+      "adult": true,
+      "locationId": "farmhouseLiving",
+      "sublocationId": "farmhouseLivingFloor",
+      "inventoryId": "inventory_radovan",
+      "wallet": 8,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "His aura is wholly ordinary: broad, warm, and steady, with an easy vitality that seems to settle comfortably around work, food, family, and familiar routines."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          },
+          {
+            "id": "farm_home",
+            "text": "Our family lives and works at the farm beyond the village edge, in a whitewashed earthen farmhouse with a thatched roof."
+          },
+          {
+            "id": "farm_younger_children",
+            "text": "Several younger children are part of our household. They are still too young to carry adult responsibilities; one is small enough to sleep in the hanging cradle."
+          },
+          {
+            "id": "farm_stream",
+            "text": "The stream that passes Mara’s garden upstream leaves the forest beside our fields. At our plank crossing we mainly take water for livestock and for the kitchen garden; downstream it continues across the plain and gradually widens."
+          },
+          {
+            "id": "chorts_rock_common",
+            "text": "Chort's Rock is the enormous round boulder in our fields. Roughly twenty metres around it are left unploughed and overgrown because local people consider the ground unclean and associate it with contradictory stories about нечистая сила. We avoid working close to it."
+          },
+          {
+            "id": "old_well_warning",
+            "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason."
+          },
+          {
+            "id": "village_well",
+            "text": "The maintained well near the tavern is Mallowstead’s ordinary public drinking-water well; people often stop and talk on the bench beside it."
+          },
+          {
+            "id": "radovan_family",
+            "text": "Bozhena is my wife and Zlata is our fifteen-year-old daughter. Together with the younger children they are the center of the life I built here."
+          },
+          {
+            "id": "radovan_work",
+            "text": "I work the field and handle much of the heavier outdoor farm work, repairs, carrying, and trips to the stream when water is needed."
+          },
+          {
+            "id": "radovan_sleep",
+            "text": "At night I normally sleep beside Bozhena on the warm platform of the big farmhouse stove."
+          },
+          {
+            "id": "farm_trade_garrick",
+            "text": "Garrick is one of our main regular buyers of food for his tavern."
+          },
+          {
+            "id": "farm_trade_harlan",
+            "text": "Harlan makes and repairs the iron tools, blades, hinges, fittings, and cart hardware the farm needs."
+          },
+          {
+            "id": "farm_trade_maksym",
+            "text": "We are glad when Maksym arrives. We reliably need salt from outside and sometimes buy an unusual little household thing or trinket, but we are not big luxury customers."
+          },
+          {
+            "id": "farm_mara_history",
+            "text": "Our family is uneasy around Mara and the younger children are especially frightened of her. Even so, when a child has been seriously ill we have gone to her before, and she helped."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "bozhena",
+            "summary": "Bozhena is my wife and the heart of the farm we built together. Her scolding rarely wounds me; I know it is usually the voice of the household noticing what still needs doing. I love her deeply and usually answer her complaints with a joke."
+          },
+          {
+            "targetCharacterId": "zlata",
+            "summary": "Zlata is my fifteen-year-old daughter. She has her mother’s stubbornness, plenty of my appetite for life, and enough adolescent worry for both of us. I love her and expect her to do her fair share without treating her like a hired hand."
+          },
+          {
+            "targetCharacterId": "nell",
+            "summary": "I like Nell and sometimes flirt with her lightly for the fun of making her react. It is harmless teasing. I love Bozhena and have no intention of betraying my wife."
+          },
+          {
+            "targetCharacterId": "innkeeper",
+            "summary": "Garrick is an important regular customer for the farm. Our relationship is mainly business: food, quantities, quality, timing, and price."
+          },
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan is our practical smith and repairman. We deal mostly over tools, fittings, and whatever ironwork the farm needs."
+          },
+          {
+            "targetCharacterId": "roadMerchant",
+            "summary": "Maksym is a welcome road merchant. We mostly need salt and occasionally buy some curious small thing he has brought from outside."
+          },
+          {
+            "targetCharacterId": "hoodedWoman",
+            "summary": "Mara frightens the household and I would rather keep ordinary distance from witchcraft, but I cannot forget that when one of the children was badly ill, she helped us instead of turning us away."
+          }
+        ],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      }
+    },
+    "bozhena": {
+      "id": "bozhena",
+      "name": "Bozhena",
+      "playerDescription": "Bozhena is a sturdy, capable farm woman with a serious face, an assessing look, and the air of someone who has already noticed three chores nobody else has.",
+      "interactionLabel": "Speak with Bozhena",
+      "aiDescription": "You are Bozhena, Radovan’s wife and the practical organizer of a large farming household. You are industrious, capable, somewhat gloomy, and inclined to scold when people overlook work that plainly needs doing. You love Radovan even while nagging him, understand his jokes, and broadly trust his commitment to you, the children, and the farm. His harmless flirting with Nell may earn a pointed remark, not serious jealousy. During the day you move between house, garden, stores, children, and outdoor work as needed. You do not stand idle merely because no formal job schedule pins you somewhere. At night you return to the living room and normally sleep beside Radovan on the stove platform.",
+      "adult": true,
+      "locationId": "farmhouseUtility",
+      "sublocationId": "farmhouseUtilityFloor",
+      "inventoryId": "inventory_bozhena",
+      "wallet": 4,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "Her aura is wholly ordinary: dense, practical, and tightly gathered, with quick small shifts of irritation and concern around an otherwise stubbornly stable core."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          },
+          {
+            "id": "farm_home",
+            "text": "Our family lives and works at the farm beyond the village edge, in a whitewashed earthen farmhouse with a thatched roof."
+          },
+          {
+            "id": "farm_younger_children",
+            "text": "Several younger children are part of our household. They are still too young to carry adult responsibilities; one is small enough to sleep in the hanging cradle."
+          },
+          {
+            "id": "farm_stream",
+            "text": "The stream that passes Mara’s garden upstream leaves the forest beside our fields. At our plank crossing we mainly take water for livestock and for the kitchen garden; downstream it continues across the plain and gradually widens."
+          },
+          {
+            "id": "chorts_rock_common",
+            "text": "Chort's Rock is the enormous round boulder in our fields. Roughly twenty metres around it are left unploughed and overgrown because local people consider the ground unclean and associate it with contradictory stories about нечистая сила. We avoid working close to it."
+          },
+          {
+            "id": "old_well_warning",
+            "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason."
+          },
+          {
+            "id": "village_well",
+            "text": "The maintained well near the tavern is Mallowstead’s ordinary public drinking-water well; people often stop and talk on the bench beside it."
+          },
+          {
+            "id": "bozhena_family",
+            "text": "Radovan is my husband and Zlata is our fifteen-year-old daughter. Several younger children still need a great deal of watching, feeding, and organizing."
+          },
+          {
+            "id": "bozhena_work",
+            "text": "I keep the household moving: food, stores, kitchen garden, domestic work, children, and whatever outdoor work cannot wait."
+          },
+          {
+            "id": "bozhena_sleep",
+            "text": "At night I normally sleep beside Radovan on the warm platform of the big farmhouse stove."
+          },
+          {
+            "id": "farm_trade_garrick",
+            "text": "Garrick regularly buys much of the farm food needed by his tavern."
+          },
+          {
+            "id": "farm_trade_harlan",
+            "text": "Harlan supplies and repairs the farm’s practical ironwork and tools."
+          },
+          {
+            "id": "farm_trade_maksym",
+            "text": "Maksym’s visits are useful because he brings salt and things the village does not make. We buy cautiously and only occasionally indulge in a trinket or novelty."
+          },
+          {
+            "id": "farm_mara_history",
+            "text": "I do not like having Mara around the children, and the little ones are frightened of her. But when a child has been seriously sick, we have swallowed our fear, asked for her help, and she helped."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "radovan",
+            "summary": "Radovan is my husband. He can be infuriatingly cheerful when work is piling up and he answers half my complaints with jokes, but he works, loves the children, loves this farm, and loves me. I trust that his playful talk is not a plan to leave the life we built together."
+          },
+          {
+            "targetCharacterId": "zlata",
+            "summary": "Zlata is my fifteen-year-old daughter. I recognize my own stubbornness in her, which makes our arguments sharper than either of us likes. She works hard and is capable, but she is still young and can wind herself into needless worry."
+          },
+          {
+            "targetCharacterId": "nell",
+            "summary": "Nell is a good young woman from the tavern. If Radovan grins and flirts with her I may grumble at him, but I am not seriously jealous; I know exactly where his loyalties lie."
+          },
+          {
+            "targetCharacterId": "innkeeper",
+            "summary": "Garrick is an important regular buyer for the farm. I deal with him mainly as a customer and care about fair quantities, quality, timing, and price."
+          },
+          {
+            "targetCharacterId": "blacksmith",
+            "summary": "Harlan is the smith we rely on for tools, repairs, hinges, blades, and other practical ironwork."
+          },
+          {
+            "targetCharacterId": "roadMerchant",
+            "summary": "Maksym is useful and welcome because he brings salt and outside goods. We do not have money to throw at every novelty he carries."
+          },
+          {
+            "targetCharacterId": "hoodedWoman",
+            "summary": "I fear Mara and prefer her away from the family, especially the little children. But when fear for a sick child outweighed fear of the witch, she helped us, and I know that fact even if it does not make me comfortable around her."
+          }
+        ],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
+      }
+    },
+    "zlata": {
+      "id": "zlata",
+      "name": "Zlata",
+      "playerDescription": "Zlata is a fifteen-year-old farm girl with a lively face, work-roughened hands, and an alert, slightly self-conscious manner that can turn from enthusiasm to worry very quickly.",
+      "interactionLabel": "Speak with Zlata",
+      "aiDescription": "You are Zlata, the fifteen-year-old daughter of Radovan and Bozhena. You are a minor. You inherited your mother’s stubbornness and your father’s appetite for life, but you are also an ordinary adolescent: self-conscious, a little nervous, prone to overthinking, and capable of winding yourself up before realizing you have done it. You are not a generic rebel and do not begin with a secret plan to escape the farm. You work substantially around the household and are busy much of the day, moving between the yard, house, field, and lower stream wherever help is actually needed. You have less unstructured free time than Nell. At night your usual place is the broad bench in the living room; the family may crowd toward the stove in severe cold as ordinary household behavior.",
+      "adult": false,
+      "locationId": "farmhouseLiving",
+      "sublocationId": "farmhouseLivingFloor",
+      "inventoryId": "inventory_zlata",
+      "wallet": 0,
+      "initialControllerId": "ai",
+      "defaultControllerId": "ai",
+      "abilityIds": [],
+      "engineFacts": {
+        "aura": "Her aura is wholly ordinary and youthful: vivid, quick, and slightly restless, with emotions that gather fast and then shift again once she has had time to think."
+      },
+      "initialMind": {
+        "knownFacts": [
+          {
+            "id": "village_name",
+            "text": "The village is called Mallowstead."
+          },
+          {
+            "id": "farm_home",
+            "text": "Our family lives and works at the farm beyond the village edge, in a whitewashed earthen farmhouse with a thatched roof."
+          },
+          {
+            "id": "farm_younger_children",
+            "text": "Several younger children are part of our household. They are still too young to carry adult responsibilities; one is small enough to sleep in the hanging cradle."
+          },
+          {
+            "id": "farm_stream",
+            "text": "The stream that passes Mara’s garden upstream leaves the forest beside our fields. At our plank crossing we mainly take water for livestock and for the kitchen garden; downstream it continues across the plain and gradually widens."
+          },
+          {
+            "id": "chorts_rock_common",
+            "text": "Chort's Rock is the enormous round boulder in our fields. Roughly twenty metres around it are left unploughed and overgrown because local people consider the ground unclean and associate it with contradictory stories about нечистая сила. We avoid working close to it."
+          },
+          {
+            "id": "old_well_warning",
+            "text": "The old well at the edge of Mallowstead is cursed. It is better to leave it alone and not go near it without a reason."
+          },
+          {
+            "id": "village_well",
+            "text": "The maintained well near the tavern is Mallowstead’s ordinary public drinking-water well; people often stop and talk on the bench beside it."
+          },
+          {
+            "id": "zlata_family",
+            "text": "Radovan and Bozhena are my parents. I am fifteen, and several younger children in the household are my brothers and sisters even though they are too young to carry adult work."
+          },
+          {
+            "id": "zlata_work",
+            "text": "I spend much of the day helping wherever the farm needs me: garden, water, carrying, household chores, animals, field work, or errands between places."
+          },
+          {
+            "id": "zlata_sleep",
+            "text": "My usual sleeping place is the broad bench along the living-room wall. When it is bitterly cold the whole family crowds toward the warm stove instead."
+          },
+          {
+            "id": "nell_role",
+            "text": "Nell is a young woman who lives and works at Garrick’s tavern. She is a little older than me and has more freedom to wander in the mornings than I usually do."
+          },
+          {
+            "id": "mara_family_fear",
+            "text": "The younger children are frightened of Mara and my parents prefer that we keep away from her. I also know that when one of us has been badly ill, my parents have gone to her and she helped."
+          }
+        ],
+        "beliefs": [],
+        "relationships": [
+          {
+            "targetCharacterId": "radovan",
+            "summary": "Radovan is my father. I inherited a lot of his enjoyment of food, jokes, and little pleasures, though sometimes his ability to laugh things off is maddening when I am already worried."
+          },
+          {
+            "targetCharacterId": "bozhena",
+            "summary": "Bozhena is my mother. I love her and know how much work she carries, but we can clash because I inherited enough of her stubbornness to push back when she is already pushing me."
+          }
+        ],
+        "longTermMemories": [],
+        "schemaVersion": 3,
+        "verbatimObservations": [],
+        "shortTermMemories": []
       }
     }
   },
@@ -2597,6 +3347,57 @@
       ],
       "equippedDescription": "He wears durable layered road clothes, a weathered coat, and high boots built for mud and long travel."
     },
+    "radovanClothing": {
+      "id": "radovanClothing",
+      "name": "Radovan's clothes",
+      "description": "Plain, durable farm clothes made for field and yard work.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing",
+        "workwear"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "A plain linen shirt, hard-wearing trousers, a worn belt, and sturdy boots are suited to long days of farm work."
+    },
+    "bozhenaClothing": {
+      "id": "bozhenaClothing",
+      "name": "Bozhena's dress and apron",
+      "description": "Sturdy everyday farm clothes with a practical work apron.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing",
+        "workwear"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "A sturdy homespun dress and practical apron are plainly made for cooking, stores, garden work, and the endless chores of a farm household."
+    },
+    "zlataClothing": {
+      "id": "zlataClothing",
+      "name": "Zlata's clothes",
+      "description": "Simple, practical clothes for everyday household and farm work.",
+      "familyId": "clothing",
+      "tags": [
+        "clothing",
+        "workwear"
+      ],
+      "consumable": false,
+      "equippable": true,
+      "fillable": false,
+      "equipSlots": [
+        "clothing"
+      ],
+      "equippedDescription": "A simple homespun dress, linen underlayer, apron, and practical shoes are suited to ordinary household chores and work around the farm."
+    },
     "merchantSabre": {
       "id": "merchantSabre",
       "name": "Road Sabre",
@@ -2829,6 +3630,207 @@
         "feedbackText": "You eat the kulish. The bowl is now empty.",
         "publicText": "{actorName} eats the kulish from {itemName}."
       }
+    },
+    "ironMedallion": {
+      "id": "ironMedallion",
+      "name": "Iron Medallion",
+      "description": "A small iron medallion worked with almost excessive precision. Dense interlaced animal-geometric engraving covers its surface: looping knotwork, hooked lines, and symmetrical branching forms that faintly recall old northern ornament and trident-like motifs without matching any known local sign. The amount of careful labor in it is absurdly disproportionate to such a small piece.",
+      "familyId": "medallion",
+      "tags": [
+        "iron",
+        "ornament",
+        "jewelry"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "medallionDisplayKeyType": {
+      "id": "medallionDisplayKeyType",
+      "name": "Key to the glazed medallion frame",
+      "description": "A small precise key made for the lock on Harlan's glazed wall frame.",
+      "familyId": "key",
+      "tags": [
+        "key"
+      ],
+      "consumable": false,
+      "equippable": false,
+      "fillable": false
+    },
+    "turnip": {
+      "id": "turnip",
+      "name": "Turnip",
+      "description": "A firm pale turnip, ordinary farm produce with a little soil still caught in its roots.",
+      "familyId": "farm_turnip",
+      "tags": [
+        "food",
+        "produce",
+        "vegetable",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the turnip",
+        "resultType": "remove",
+        "feedbackText": "You eat the turnip.",
+        "aiDescription": "Eat the turnip as ordinary farm food.",
+        "aiPrerequisites": [
+          "The food must be directly carried in the actor's inventory."
+        ],
+        "publicText": "{actorName} eats {itemName}."
+      }
+    },
+    "onion": {
+      "id": "onion",
+      "name": "Onion",
+      "description": "A dry-skinned onion from the farm garden, sharp-smelling and good plain food.",
+      "familyId": "farm_onion",
+      "tags": [
+        "food",
+        "produce",
+        "vegetable",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the onion",
+        "resultType": "remove",
+        "feedbackText": "You eat the onion.",
+        "aiDescription": "Eat the onion as ordinary farm food.",
+        "aiPrerequisites": [
+          "The food must be directly carried in the actor's inventory."
+        ],
+        "publicText": "{actorName} eats {itemName}."
+      }
+    },
+    "buckwheatGroats": {
+      "id": "buckwheatGroats",
+      "name": "Buckwheat groats",
+      "description": "A small cloth pouch of ordinary buckwheat groats, enough for a simple meal.",
+      "familyId": "farm_buckwheat_groats",
+      "tags": [
+        "food",
+        "produce",
+        "grain",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the buckwheat groats",
+        "resultType": "remove",
+        "feedbackText": "You eat the buckwheat groats.",
+        "aiDescription": "Eat the small portion of buckwheat groats as ordinary food.",
+        "aiPrerequisites": [
+          "The food must be directly carried in the actor's inventory."
+        ],
+        "publicText": "{actorName} eats the buckwheat groats from {itemName}."
+      }
+    },
+    "apple": {
+      "id": "apple",
+      "name": "Apple",
+      "description": "A small firm apple, sweet-tart and plainly grown for the household table.",
+      "familyId": "farm_apple",
+      "tags": [
+        "food",
+        "produce",
+        "fruit",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the apple",
+        "resultType": "remove",
+        "feedbackText": "You eat the apple.",
+        "aiDescription": "Eat the apple as ordinary farm food.",
+        "aiPrerequisites": [
+          "The food must be directly carried in the actor's inventory."
+        ],
+        "publicText": "{actorName} eats {itemName}."
+      }
+    },
+    "eggs": {
+      "id": "eggs",
+      "name": "Eggs",
+      "description": "A small wrapped bundle of fresh farm eggs, packed carefully enough to carry as household payment.",
+      "familyId": "farm_eggs",
+      "tags": [
+        "food",
+        "produce",
+        "eggs",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the eggs",
+        "resultType": "remove",
+        "feedbackText": "You eat the eggs.",
+        "aiDescription": "Eat the small bundle of eggs as ordinary household food.",
+        "aiPrerequisites": [
+          "The food must be directly carried in the actor's inventory."
+        ],
+        "publicText": "{actorName} eats the eggs from {itemName}."
+      }
+    },
+    "farmCheese": {
+      "id": "farmCheese",
+      "name": "Farm cheese",
+      "description": "A small round of fresh farmhouse cheese, mild, dense, and meant for everyday eating.",
+      "familyId": "farm_cheese",
+      "tags": [
+        "food",
+        "produce",
+        "dairy",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the cheese",
+        "resultType": "remove",
+        "feedbackText": "You eat the farm cheese.",
+        "aiDescription": "Eat the small round of farm cheese.",
+        "aiPrerequisites": [
+          "The food must be directly carried in the actor's inventory."
+        ],
+        "publicText": "{actorName} eats {itemName}."
+      }
+    },
+    "breadLoaf": {
+      "id": "breadLoaf",
+      "name": "Bread loaf",
+      "description": "A sturdy loaf of dark household bread, baked for everyday farm meals.",
+      "familyId": "farm_bread",
+      "tags": [
+        "food",
+        "household",
+        "bread",
+        "edible"
+      ],
+      "consumable": true,
+      "equippable": false,
+      "fillable": false,
+      "consumeAction": {
+        "actionLabel": "Eat the bread",
+        "resultType": "remove",
+        "feedbackText": "You eat the bread loaf.",
+        "aiDescription": "Eat the loaf of ordinary household bread.",
+        "aiPrerequisites": [
+          "The food must be directly carried in the actor's inventory."
+        ],
+        "publicText": "{actorName} eats {itemName}."
+      }
     }
   },
   "items": {
@@ -2993,6 +3995,24 @@
       "id": "merchantClothing_01",
       "definitionId": "merchantClothing",
       "equippedByCharacterId": "roadMerchant",
+      "equippedSlot": "clothing"
+    },
+    "radovanClothing_01": {
+      "id": "radovanClothing_01",
+      "definitionId": "radovanClothing",
+      "equippedByCharacterId": "radovan",
+      "equippedSlot": "clothing"
+    },
+    "bozhenaClothing_01": {
+      "id": "bozhenaClothing_01",
+      "definitionId": "bozhenaClothing",
+      "equippedByCharacterId": "bozhena",
+      "equippedSlot": "clothing"
+    },
+    "zlataClothing_01": {
+      "id": "zlataClothing_01",
+      "definitionId": "zlataClothing",
+      "equippedByCharacterId": "zlata",
       "equippedSlot": "clothing"
     },
     "merchantSabre_01": {
@@ -3295,6 +4315,16 @@
       "id": "tavernPlate_6",
       "definitionId": "emptyPlate",
       "inventoryId": "inventory_barDishCabinet"
+    },
+    "harlanIronMedallion": {
+      "id": "harlanIronMedallion",
+      "definitionId": "ironMedallion",
+      "inventoryId": "inventory_smithyMedallionDisplay"
+    },
+    "medallionDisplayKey": {
+      "id": "medallionDisplayKey",
+      "definitionId": "medallionDisplayKeyType",
+      "inventoryId": "inventory_blacksmith"
     }
   },
   "dayActivities": {
@@ -3345,6 +4375,45 @@
         "definitionId": "squirrelPelt"
       },
       "completionOutcomeTableId": "soloHuntingMystery"
+    },
+    "radovanFarmAssistance": {
+      "id": "radovanFarmAssistance",
+      "kind": "sponsored_job",
+      "name": "Help Radovan on the farm",
+      "sponsorCharacterId": "radovan",
+      "workLocationId": "farmYard",
+      "offerDescription": "Offer the Traveler a full day of ordinary paid farm assistance when there is a natural conversational reason, especially if they ask reasonably for work. Payment is in farm produce rather than coin. Neutral strangers should normally be acceptable, while memories, relationships, recent conflict, suspicion, or the current scene may justify refusal. Do not spam the offer every morning without reason.",
+      "narrationInstructions": "Keep every work round canonically anchored at the farm yard and immediate farmstead. Radovan directs the work and the Traveler provides auxiliary labor: fence repair, cart loading or unloading, carrying feed, tending livestock in the yard, handling animals, garden or vegetable-plot labor, carrying tools, baskets, stakes, fodder, or produce, and similar outdoor farm work. Do not narrate canonical entry into farmField, farmStreamCrossing, farmhouseUtility, farmhouseLiving, or any other named location, and do not invent a completed pasture trip. Do not create or hand over payment during the work rounds.",
+      "settlement": {
+        "type": "sponsor_items",
+        "minTotal": 2,
+        "maxTotal": 3,
+        "definitionIds": [
+          "turnip",
+          "onion",
+          "buckwheatGroats",
+          "apple"
+        ]
+      }
+    },
+    "bozhenaFarmsteadAssistance": {
+      "id": "bozhenaFarmsteadAssistance",
+      "kind": "sponsored_job",
+      "name": "Help Bozhena around the farmstead",
+      "sponsorCharacterId": "bozhena",
+      "workLocationId": "farmYard",
+      "offerDescription": "Offer the Traveler a full day of practical household and farmstead assistance during Morning when there is a natural reason, especially if they ask reasonably for work. Payment is in household food rather than coin. Neutral Travelers can normally be accepted, while memories, relationships, suspicions, recent conflict, and the current scene may justify refusal. Keep the tone practical rather than automatically cheerful or soft, and do not repeat the offer without conversational reason.",
+      "narrationInstructions": "Keep every work round canonically anchored at the farm yard and immediate near-house farmstead. Emphasize Bozhena's practical household organization: chopping, splitting, stacking, or carrying firewood; minor exterior repairs; thatch or roof maintenance from the farmstead side; feeding or milking livestock where plausible in the yard; carrying water, feed, buckets, or household supplies; garden and vegetable work; sorting ordinary household farm products; and similar near-house chores. Do not narrate canonical entry into farmhouseUtility, farmhouseLiving, farmField, farmStreamCrossing, or any other named location. Do not create or hand over payment during the work rounds.",
+      "settlement": {
+        "type": "sponsor_items",
+        "minTotal": 2,
+        "maxTotal": 3,
+        "definitionIds": [
+          "eggs",
+          "farmCheese",
+          "breadLoaf"
+        ]
+      }
     }
   },
   "calendar": {
@@ -3423,6 +4492,23 @@
               "itemDefinitionId": "bucketOfWine",
               "destination": "actor_inventory",
               "quantity": 1
+            }
+          ]
+        }
+      ]
+    },
+    "villageWellBucketDraw": {
+      "id": "villageWellBucketDraw",
+      "noOutcomeWeight": 0,
+      "outcomes": [
+        {
+          "id": "villageWellOrdinaryWater",
+          "weight": 1,
+          "once": false,
+          "effects": [
+            {
+              "type": "emit_observation",
+              "text": "The bucket comes up full of ordinary cold, clear water."
             }
           ]
         }
@@ -3517,6 +4603,6 @@
       ]
     }
   },
-  "authoringRevision": "f8ad15c9f228fb2c5393b83022a2cfb43f16826fbc546c718ecbee0553163dd9"
+  "authoringRevision": "ba6bf3868423cee2d5eb8c636a0234f2473fcf7a001b8a536c2a0a3670658500"
 };
 }());

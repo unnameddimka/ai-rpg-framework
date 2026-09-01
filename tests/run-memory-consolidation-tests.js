@@ -82,7 +82,7 @@ function scriptedClient(handler, seen, options) {
 }
 
 runtimeFiles.augment([
-"src/00-model-list.js","src/generated/world-data.js","src/07-mind-v3.js","src/08-mind-validators.js","src/10-game-api.js","src/11-save-migration.js",
+"src/00-model-list.js","src/generated/world-data.js","src/07-mind-v3.js","src/08-mind-validators.js","src/09-action-option-validation.js","src/09-world-state-authority.js","src/10-game-00-item-mechanics.js","src/10-game-01-validation.js","src/10-game-02-actions.js","src/10-game-api.js","src/11-save-migration.js",
 "src/12-character-context.js","src/13-character-memory.js","src/13-verbatim-memory.js","src/14-event-perception.js","src/21-ai-settings.js","src/21-ai-request-profiles.js",
 "src/22-openrouter-client.js","src/23-ai-protocol.js","src/24-ai-request-executor.js","src/24-ai-turn-scheduler.js","src/20-controllers.js","src/24-memory-consolidator.js","src/24-mind-aux-executor.js"
 ]).forEach(load);
@@ -956,7 +956,22 @@ async function main() {
     const aliasSeen=[];
     result=await setup.MemoryConsolidator.reconcileBeliefs("hoodedWoman",scriptedClient(()=>emptyReconciliation({resolutions:[{beliefId:"belief_alias",outcome:"leave_unresolved",survivorBeliefId:null,replacementText:null,evidenceEffect:null,strength:null}]}),aliasSeen));
     ok(result,"singular beliefId reconciliation adapter");
-    assert(aliasSeen[0].messages[0].content.includes("beliefIds is ALWAYS an array")&&aliasSeen[0].payload.reconciliationPolicy.maxResolutions===setup.MindV3.CONFIG.RECONCILIATION_RESOLUTION_LIMIT,"reconciliation prompt and payload must expose the canonical array-ID contract");
+    assert(aliasSeen[0].messages[0].content.includes("beliefIds is ALWAYS an array")&&
+        aliasSeen[0].messages[0].content.includes("revise, merge, contextualize, and supersede REQUIRE a non-empty replacementText string")&&
+        aliasSeen[0].messages[0].content.includes("weaken, reinforce, remove, and leave_unresolved REQUIRE replacementText:null")&&
+        aliasSeen[0].payload.reconciliationPolicy.maxResolutions===setup.MindV3.CONFIG.RECONCILIATION_RESOLUTION_LIMIT,
+        "reconciliation prompt and payload must expose the canonical array-ID and conditional replacementText contract");
+
+    fixture=resetMind(); fixture.actor.mind.beliefs=[belief("belief_repair_conditional","One belief needs exact conditional repair.",0.6,0.9)]; fixture.actor.mind.shortTermMemories=[stm("memory_ai_5500b","Evidence","Relevant autobiographical evidence.",0.7,false)];
+    const conditionalRepairSeen=[]; let conditionalRepairCalls=0;
+    result=await setup.MemoryConsolidator.reconcileBeliefs("hoodedWoman",scriptedClient(()=>{
+        conditionalRepairCalls++;
+        if(conditionalRepairCalls===1) return emptyReconciliation({resolutions:[{beliefIds:["belief_repair_conditional"],outcome:"leave_unresolved",survivorBeliefId:null,replacementText:"This field is forbidden for leave_unresolved.",evidenceEffect:null,strength:null}]});
+        return emptyReconciliation({resolutions:[{beliefIds:["belief_repair_conditional"],outcome:"leave_unresolved",survivorBeliefId:null,replacementText:null,evidenceEffect:null,strength:null}]});
+    },conditionalRepairSeen));
+    ok(result,"reconciliation conditional-field repair");
+    assert(conditionalRepairCalls===2&&result.repaired===true&&conditionalRepairSeen[1].messages.some(function(m){return m.role==="user"&&m.content.includes("replacementText MUST be a non-empty string of at most 2000 characters only for revise, merge, contextualize, or supersede")&&m.content.includes("For weaken, reinforce, remove, or leave_unresolved, replacementText MUST be null");}),
+        "reconciliation repair must repeat the exact outcome-dependent replacementText contract rather than vaguely asking for valid fields");
 
     fixture=resetMind(); fixture.actor.mind.beliefs=[belief("belief_candidate_alias","Candidate alias needs reflection.",0.6,0.9)]; fixture.actor.mind.shortTermMemories=[stm("memory_ai_5501","Evidence","Relevant evidence.",0.7,false)];
     result=await setup.MemoryConsolidator.reconcileBeliefs("hoodedWoman",scriptedClient(()=>emptyReconciliation({resolutions:[{candidateBeliefId:"belief_candidate_alias",outcome:"leave_unresolved",survivorBeliefId:null,replacementText:null,evidenceEffect:null,strength:null}]})));

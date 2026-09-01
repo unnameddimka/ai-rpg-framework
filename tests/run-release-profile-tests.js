@@ -43,7 +43,7 @@ catch (error) { missingPrivateRejected = /Private build requires local data\/wor
 assert(missingPrivateRejected, "a missing private world should fail with an actionable private-build error");
 
 const product = json(path.join(root, "data", "product.json"));
-assert(product.productName === "Mallowstead" && product.version === "0.1.3-public" && product.author === "Dmytro Turovskiy" &&
+assert(product.productName === "Mallowstead" && product.version === "0.1.4f-playtest1" && product.author === "Dmytro Turovskiy" &&
     product.currentSaveId === "mallowstead" && product.legacySaveIds.includes("ai-rpg-framework-mvp") && product.legacySaveIds.includes("ai-rpg-framework-poc"),
     "shared product metadata should define Mallowstead identity, author, version, and legacy save aliases");
 const models = json(path.join(root, "data", "model_list.json"));
@@ -66,18 +66,18 @@ if (fs.existsSync(privateWorldPath)) {
 }
 
 const fixedBuildInfo = BuildInfo.buildInfo("private", "2026-08-21T00:00:00.000Z");
-assert(fixedBuildInfo.productName === "Mallowstead" && fixedBuildInfo.version === "0.1.3-public" && fixedBuildInfo.author === "Dmytro Turovskiy" &&
+assert(fixedBuildInfo.productName === "Mallowstead" && fixedBuildInfo.version === "0.1.4f-playtest1" && fixedBuildInfo.author === "Dmytro Turovskiy" &&
     fixedBuildInfo.profile === "private" && typeof fixedBuildInfo.commit === "string" && fixedBuildInfo.builtAt === "2026-08-21T00:00:00.000Z",
     "build metadata should expose product/version/author/profile/commit/builtAt");
 
 function loadGame(profile) {
     const context = vm.createContext({
-        setup: { BuildInfo: { profile: profile, productName: "Mallowstead", version: "0.1.3-public", publicDisclosureVersion: 1 } },
+        setup: { BuildInfo: { profile: profile, productName: "Mallowstead", version: "0.1.4f-playtest1", publicDisclosureVersion: 1 } },
         State: { variables: {}, passage: "The Tavern" },
         Engine: { play: function () {}, show: function () {} },
         console: console
     });
-    ["src/generated/world-data.js", "src/07-mind-v3.js", "src/08-mind-validators.js", "src/09-passage-rules.js", "src/09-world-derived-state.js", "src/10-game-api.js", "src/11-save-migration.js"]
+    ["src/generated/world-data.js", "src/07-mind-v3.js", "src/08-mind-validators.js","src/09-action-option-validation.js","src/09-world-state-authority.js", "src/09-passage-rules.js", "src/09-world-derived-state.js", "src/10-game-00-item-mechanics.js","src/10-game-01-validation.js","src/10-game-02-actions.js","src/10-game-api.js", "src/11-save-migration.js"]
         .forEach(function (file) { vm.runInContext(fs.readFileSync(path.join(root, file), "utf8"), context, { filename: file }); });
     context.setup.Game.resetWorld();
     return context;

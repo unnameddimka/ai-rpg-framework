@@ -25,6 +25,20 @@
       "roles": [
         "narrator"
       ]
+    },
+    {
+      "id": "sao10k/l3.1-euryale-70b",
+      "name": "Llama 3.1 Euryale 70B",
+      "roles": [
+        "narrator"
+      ]
     }
-  ]
+  ],
+  "defaultFallbackModelIds": {
+    "character": [],
+    "utility": [],
+    "narrator": [
+      "sao10k/l3.1-euryale-70b"
+    ]
+  }
 }

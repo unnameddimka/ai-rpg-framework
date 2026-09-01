@@ -36,7 +36,7 @@ function queueHooded() {
     return world;
 }
 
-load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js"); load("src/10-triggered-events.js");
+load("src/00-model-list.js"); load("src/generated/world-data.js"); load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-action-option-validation.js"); load("src/09-world-state-authority.js"); load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-00-item-mechanics.js"); load("src/10-game-01-validation.js"); load("src/10-game-02-actions.js"); load("src/10-game-api.js"); load("src/10-trade-lifecycle.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js"); load("src/10-triggered-events.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -301,15 +301,18 @@ async function main() {
     assert(modelIds.join(",") === [
         "deepseek/deepseek-v4-pro",
         "deepseek/deepseek-v4-flash",
-        "sao10k/l3.3-euryale-70b:nitro"
+        "sao10k/l3.3-euryale-70b:nitro",
+        "sao10k/l3.1-euryale-70b"
     ].join(",") &&
         setup.AIRuntimeSettings.getDefaultModelId() === "deepseek/deepseek-v4-flash" &&
         setup.AIRuntimeSettings.getSelectedModelId() === "deepseek/deepseek-v4-flash" &&
         setup.AIRuntimeSettings.getStatus().characterModels.map(function (model) { return model.id; }).join(",") === "deepseek/deepseek-v4-pro,deepseek/deepseek-v4-flash",
         "generated model list should expose only the current role-aware candidates and select DeepSeek V4 Flash for characters by default");
     assert(setup.AIRuntimeSettings.getDefaultNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro" &&
-        setup.AIRuntimeSettings.getSelectedNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro",
-        "narrator model selection should start from its independently authored default");
+        setup.AIRuntimeSettings.getSelectedNarratorModelId() === "sao10k/l3.3-euryale-70b:nitro" &&
+        setup.AIRuntimeSettings.getStatus().narratorModels.map(function (model) { return model.id; }).join(",") === "sao10k/l3.3-euryale-70b:nitro,sao10k/l3.1-euryale-70b" &&
+        setup.AIRuntimeSettings.getFallbackModelIdsForRole("narrator", "sao10k/l3.3-euryale-70b:nitro").join(",") === "sao10k/l3.1-euryale-70b",
+        "narrator model selection should start from Euryale 3.3 and expose the independently authored Euryale 3.1 fallback chain");
     assert(setup.AIRuntimeSettings.getDefaultUtilityModelId() === "deepseek/deepseek-v4-flash" &&
         setup.AIRuntimeSettings.getSelectedUtilityModelId() === "deepseek/deepseek-v4-flash",
         "utility model selection should start from the independently authored DeepSeek V4 Flash default");
@@ -344,8 +347,10 @@ async function main() {
     assert(clientOk.ok && captured.url === setup.OpenRouterClient.ENDPOINT && captured.options.headers.Authorization === `Bearer ${sentinel}` &&
         requestBody.model === flashId && setup.OpenRouterClient.MODEL === flashId && requestBody.stream === false &&
         requestBody.max_tokens === 6000 && requestBody.reasoning && requestBody.reasoning.max_tokens === 1500 &&
-        requestBody.provider && requestBody.provider.sort === "latency" && requestBody.provider.allow_fallbacks === true,
-        "client should use the selected model, Bearer key, non-streaming transport, explicit completion/reasoning headroom, and latency-first provider routing");
+        requestBody.provider && requestBody.provider.sort === "latency" && requestBody.provider.allow_fallbacks === true &&
+        Array.isArray(requestBody.provider.ignore) && requestBody.provider.ignore.includes("alibaba") &&
+        Array.isArray(setup.OpenRouterClient.PROVIDER_BLACKLIST) && setup.OpenRouterClient.PROVIDER_BLACKLIST.includes("alibaba"),
+        "client should use the selected model, Bearer key, non-streaming transport, explicit completion/reasoning headroom, latency-first provider routing, and the provider blacklist");
     setup.RuntimeDiagnostics.clear();
     const diagnosticTransportClient = {
         enforceRequestTiming:false,
@@ -377,6 +382,16 @@ async function main() {
     const failedTransportEntry=transportLog.entries.slice(-1)[0];
     assert(failedTransportEntry.ok===false&&failedTransportEntry.error.code==="NETWORK_ERROR"&&failedTransportEntry.providerResponse.networkError.message.includes("socket diagnostic failure"),
         "low-level AI transport log should retain pre-response network failures");
+    const narratorFallbackProfile = setup.AIRequestProfiles.resolve("weather-narration", { actorId: null });
+    let fallbackCaptured = null;
+    const fallbackResult = await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "weather" }], narratorFallbackProfile, async function (url, options) {
+        fallbackCaptured = JSON.parse(options.body);
+        return { ok: true, status: 200, json: async function () { return { model: "sao10k/l3.1-euryale-70b", provider: "DeepInfra", choices: [{ message: { content: "clear and cool" } }], usage: { total_tokens: 7 } }; } };
+    });
+    assert(fallbackCaptured.model === "sao10k/l3.3-euryale-70b:nitro" && Array.isArray(fallbackCaptured.models) && fallbackCaptured.models.join(",") === "sao10k/l3.1-euryale-70b" &&
+        fallbackCaptured.provider.allow_fallbacks === true && fallbackResult.ok && fallbackResult.modelId === "sao10k/l3.1-euryale-70b" && fallbackResult.selectedProvider === "DeepInfra",
+        "Narrator requests should use native OpenRouter model fallback after same-model provider fallback and report the actual selected model/provider");
+
     const boundedClientOk = await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "structured" }], {
         maxTokens: 1200, reasoningEffort: "none", temperature: 0.2
     }, fetchOk);
@@ -404,8 +419,16 @@ async function main() {
     await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "profiled" }], utilityProfile, fetchOk);
     const profiledBody = JSON.parse(captured.options.body);
     assert(profiledBody.model === setup.AIRuntimeSettings.getSelectedUtilityModelId() &&
-        profiledBody.provider.sort === "latency" && profiledBody.session_id === utilityProfile.sessionId,
-        "profiled OpenRouter requests should carry the resolved utility model, latency provider sort, and session_id");
+        profiledBody.provider.sort === "latency" && Array.isArray(profiledBody.provider.ignore) && profiledBody.provider.ignore.includes("alibaba") &&
+        profiledBody.session_id === utilityProfile.sessionId,
+        "profiled OpenRouter requests should carry the resolved utility model, latency provider sort, provider blacklist, and session_id");
+
+    await setup.OpenRouterClient.chatWithOptions([{ role: "user", content: "blacklist" }], {
+        providerBlacklist: ["DeepInfra", "ALIBABA", "deepinfra"]
+    }, fetchOk);
+    const blacklistBody = JSON.parse(captured.options.body);
+    assert(blacklistBody.provider.ignore.length === 2 && blacklistBody.provider.ignore[0] === "alibaba" && blacklistBody.provider.ignore[1] === "DeepInfra",
+        "per-request provider blacklist additions should merge with the global blacklist without case-insensitive duplicates");
 
     world = fresh();
     ok(setup.CharacterAPI.perform("player", { type: "move", destination_id: "street" }), "item utility fixture reaches street");
@@ -590,9 +613,9 @@ async function main() {
     assert(decisionPrompt.includes("ongoing role-playing scene") &&
         decisionPrompt.includes("publicNarrative is brief visible behavior or atmosphere") &&
         decisionPrompt.includes("Use spokenText for dialogue in the character's own voice") &&
-        decisionPrompt.includes("ordinary text is spoken dialogue") &&
-        decisionPrompt.includes("paired single asterisks") &&
-        decisionPrompt.includes("spokenText may include short *inline narration*") &&
+        decisionPrompt.includes("spokenText contains spoken words only") &&
+        decisionPrompt.includes("MUST NOT contain paired-asterisk narration") &&
+        decisionPrompt.includes("Human free-form RP may be normalized by a separate engine parser") &&
         decisionPrompt.includes("Narrated behavior never mutates canonical state") &&
         decisionPrompt.includes("generic assistant-like NPC replies") &&
         decisionPrompt.includes("formal action in this response is only an attempt") &&

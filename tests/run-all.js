@@ -36,7 +36,15 @@ const TEST_FILES = [
     "tests/run-transaction-presence-hardening-tests.js",
     "tests/run-awayable-tests.js",
     "tests/run-weekly-merchant-tests.js",
-    "tests/run-release-profile-tests.js"
+    "tests/run-release-profile-tests.js",
+    "tests/run-014a-medallion-intimacy-tests.js",
+    "tests/run-014b-anticipation-tests.js",
+    "tests/run-014c-farmers-tests.js",
+    "tests/run-014d-cognitive-tests.js",
+    "tests/run-014e-candidate1-tests.js",
+    "tests/run-014e-candidate2-tests.js",
+    "tests/run-014e-candidate3-tests.js",
+    "tests/run-014f-playtest1-tests.js"
 ];
 
 function run(relativePath, announce) {

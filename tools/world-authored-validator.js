@@ -193,6 +193,8 @@ function validateMind(mind, characterId) {
 function validateWorld(document) {
     requireCondition(isObject(document), "world.json must contain a JSON object.");
     requireCondition(document.schemaVersion === 2, "Unsupported world schemaVersion. Expected 2.");
+    requireCondition(document.groundedItemPolicy === undefined || typeof document.groundedItemPolicy === "string",
+        "groundedItemPolicy must be text when present.");
     requireCondition(isObject(document.locations) && isObject(document.characters) && isObject(document.abilities) &&
         isObject(document.itemDefinitions) && isObject(document.items) && isObject(document.dayActivities),
         "world.json must contain locations, characters, abilities, itemDefinitions, items, and dayActivities objects.");
@@ -320,6 +322,12 @@ function validateWorld(document) {
                 presenceOwnerRefs.push({ locationId: id, sublocationId: sublocationId, characterId: String(sublocation.presenceOwnerCharacterId) });
             }
             validatePresenceFallback(sublocation, `Sublocation ${sublocationId}`, document);
+            if (own(sublocation, "transparent")) {
+                requireCondition(nonBlank(String(sublocation.inventoryId || "")),
+                    `Sublocation ${sublocationId} cannot be transparent without an inventory.`);
+                requireCondition(typeof sublocation.transparent === "boolean",
+                    `Sublocation ${sublocationId} transparent must be Boolean.`);
+            }
             if (own(sublocation, "requiredKeyItemId")) {
                 requireCondition(nonBlank(String(sublocation.inventoryId || "")),
                     `Sublocation ${sublocationId} cannot require a key without an inventory.`);
@@ -370,7 +378,15 @@ function validateWorld(document) {
                     `Sublocation ${sublocationId} serving action ${serving.id} requires an invalid reusable dish definition.`);
             });
 
+            requireCondition(Number.isInteger(sublocation.capacity) && sublocation.capacity > 0,
+                `Sublocation ${sublocationId} capacity must be a positive integer.`);
             const capabilities = Array.isArray(sublocation.capabilities) ? sublocation.capabilities : [];
+            if (own(sublocation, "sleepCapacity")) {
+                requireCondition(Number.isInteger(sublocation.sleepCapacity) && sublocation.sleepCapacity > 0 && sublocation.sleepCapacity <= sublocation.capacity,
+                    `Sublocation ${sublocationId} sleepCapacity must be a positive integer no greater than capacity.`);
+                requireCondition(capabilities.includes("sleep"),
+                    `Sublocation ${sublocationId} sleepCapacity is meaningful only with sleep capability.`);
+            }
             for (const capability of capabilities) {
                 const action = String(capability || "");
                 if (nonBlank(action)) {
@@ -944,7 +960,7 @@ function validateWorld(document) {
     }
 
     function createEmptyWorld() {
-        return { schemaVersion: 2, calendar: { weekdayNames: ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"], initialWeekdayIndex: 1 }, startLocationId: "", protectedLocationIds: [], protectedSublocationIds: [], protectedCharacterIds: [], protectedAbilityIds: [], locations: {}, characters: {}, abilities: {}, itemDefinitions: {}, items: {}, dayActivities: {}, secrets: {}, randomOutcomeTables: {}, triggeredEvents: {} };
+        return { schemaVersion: 2, groundedItemPolicy: "", calendar: { weekdayNames: ["Sunday", "Monday", "Flamesday", "Flowday", "Woodsday", "Goldsday", "Earthsday"], initialWeekdayIndex: 1 }, startLocationId: "", protectedLocationIds: [], protectedSublocationIds: [], protectedCharacterIds: [], protectedAbilityIds: [], locations: {}, characters: {}, abilities: {}, itemDefinitions: {}, items: {}, dayActivities: {}, secrets: {}, randomOutcomeTables: {}, triggeredEvents: {} };
     }
 
     return {

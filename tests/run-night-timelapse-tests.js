@@ -34,8 +34,8 @@ function emptyLtmResult(overrides) { return Object.assign({ longTermMemoriesToUp
 
 load("src/00-model-list.js");
 load("src/generated/world-data.js");
-load("src/07-mind-v3.js"); load("src/08-mind-validators.js");
-load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-api.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js");
+load("src/07-mind-v3.js"); load("src/08-mind-validators.js"); load("src/09-action-option-validation.js"); load("src/09-world-state-authority.js");
+load("src/09-passage-rules.js"); load("src/09-world-derived-state.js"); load("src/10-game-00-item-mechanics.js"); load("src/10-game-01-validation.js"); load("src/10-game-02-actions.js"); load("src/10-game-api.js"); load("src/10-trade-lifecycle.js"); load("src/10-weekly-rhythm.js"); load("src/10-presence.js"); load("src/10-authored-effects.js");
 load("src/11-save-migration.js");
 load("src/12-character-context.js");
 load("src/13-character-memory.js"); load("src/13-verbatim-memory.js");
@@ -48,19 +48,20 @@ load("src/24-ai-request-executor.js");
 load("src/24-ai-turn-scheduler.js");
 load("src/20-controllers.js");
 load("src/24-memory-consolidator.js"); load("src/24-mind-aux-executor.js");
-load("src/24-timelapse-core.js");
+load("src/23-timelapse-protocol.js"); load("src/24-timelapse-core.js");
 load("src/24-night-timelapse.js");
 load("src/25-turn-flow.js");
 const timelapseCoreSource = fs.readFileSync(path.join(root, "src/24-timelapse-core.js"), "utf8");
+const timelapseProtocolSource = fs.readFileSync(path.join(root, "src/23-timelapse-protocol.js"), "utf8");
 assert(!timelapseCoreSource.includes("The current mode is overnight") && !timelapseCoreSource.includes("end-of-day reflection"),
     "generic timelapse core must not hard-code overnight-only prompt semantics");
-assert(timelapseCoreSource.includes("updates.activatedBeliefIds.length > 10") && timelapseCoreSource.includes("existingBeliefIds, existingRelationships"),
-    "reflection must retain deterministic activation bounds and validate activated IDs against the supplied belief landscape");
+assert(timelapseProtocolSource.includes("updates.activatedBeliefIds.length > 10") && timelapseProtocolSource.includes("existingBeliefIds, existingRelationships"),
+    "reflection protocol must retain deterministic activation bounds and validate activated IDs against the supplied belief landscape");
 
 function fresh() {
     setup.Game.resetWorld(); setup.Game.acceptPlayerDisclaimer(); setup.Game.acknowledgeAISetup(); setup.Game.finalizePlayerSetup({ mode: "generic" });
     // Keep the traveling merchant out of unrelated overnight fixtures; Harlan replaces the private-only cast member.
-    setup.Game.assignNonHumanController("roadMerchant", "dummy");
+    ["roadMerchant", "radovan", "bozhena", "zlata"].forEach(function (id) { setup.Game.assignNonHumanController(id, "dummy"); });
     setup.Game.getWorld().environment.timePhase = "evening";
     setup.AITurnQueue.repair();
     setup.AIRequestExecutor.clearExchangeHistory();
@@ -538,6 +539,7 @@ async function main() {
 
     // Live regression: only Harlan needs an active night plan, while all AI minds may reflect/maintain in one concurrent prepare batch.
     setup.Game.resetWorld(); setup.Game.acceptPlayerDisclaimer(); setup.Game.acknowledgeAISetup(); setup.Game.finalizePlayerSetup({ mode: "generic" });
+    ["radovan", "bozhena", "zlata"].forEach(function (id) { setup.Game.assignNonHumanController(id, "dummy"); });
     setup.Game.assignNonHumanController("roadMerchant", "ai");
     setup.Game.assignNonHumanController("blacksmith", "ai");
     setup.AITurnQueue.repair();

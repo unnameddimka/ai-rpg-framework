@@ -38,9 +38,9 @@ editor/world-editor.html
 
 and load `data/world.json`.
 
-`data/world.json` is the authoritative authored source. Generated files under `src/generated/` are build products and must not be edited manually.
+`data/world.json` is the authoritative authored source. Generated files under `src/generated/` are build products and must not be edited manually. Worlds may author a top-level `groundedItemPolicy`: free-form Character-facing rules reserving semantic item categories to formal engine mechanics while leaving other incidental objects available as narrative props.
 
-The editor is standalone/offline and can author locations, sublocations, characters, public/private descriptions, abilities, item definitions, stable item instances and initial placement, passage locks/keys, key-gated sublocation containers (`requiredKeyItemId`), initial mind data, and minimally surfaced daytime activity/job entities. Item `useAction` authoring includes deterministic effects, the deterministic text-input `abstract_study` effect, and the generic model-backed `utility_query` information-source effect with bounded reader text input, an authored Utility-model source prompt, and an optional per-item output-token cap. The editor visibility invariant is stronger than its current editing UX: every authored entity type must be visible even when its dedicated controls are intentionally crude.
+The editor is standalone/offline and can author world settings including the grounded-item policy, locations, sublocations, characters, public/private descriptions, abilities, item definitions, stable item instances and initial placement, passage locks/keys, key-gated sublocation containers (`requiredKeyItemId`), initial mind data, and minimally surfaced daytime activity/job entities. Item `useAction` authoring includes deterministic effects, the deterministic text-input `abstract_study` effect, and the generic model-backed `utility_query` information-source effect with bounded reader text input, an authored Utility-model source prompt, and an optional per-item output-token cap. The editor visibility invariant is stronger than its current editing UX: every authored entity type must be visible even when its dedicated controls are intentionally crude.
 
 ## Build and test
 
@@ -88,11 +88,11 @@ Global environment state now exposes coarse time (`Evening`, `Night`, `Morning`,
 
 Key-gated containers deliberately use a simpler rule than doors. A sublocation inventory may reference one concrete ordinary key item instance through `requiredKeyItemId`; only direct possession in the actor's normal inventory reveals/enables protected contents. The key can be transferred with ordinary item mechanics, and there is no separate chest open/closed/lock/unlock state. The authored world now uses this for Garrick's private chest, Harlan's private chest, and Mara's new cottage chest; Mara's Slab begins in her chest. Mara also carries a separate ordinary key for the now-lockable cottage entrance.
 
-Daytime activities are authored in `data/world.json` under `dayActivities`. The initial set is Mara assistance, Harlan forge assistance, and solo squirrel hunting. Sponsors decide whether to offer work through the AI-only formal `offer_day_work` action; the Human resolves a blocking in-game Accept/Decline overlay. Completed jobs settle only after all five rounds: Mara chooses 1-3 Healing Salve/Stamina Potion items, Harlan chooses 3-7 minted salary gold, and hunting produces 1-5 Squirrel Pelts by engine RNG. Maksym provides a narrow merchant loop: selected goods have explicit external-sale values, characters negotiate in dialogue, and exchanges commit through ordinary grounded item and gold transfers. There is still no universal village price model, dedicated shop UI, or atomic `Trade` action.
+Daytime activities are authored in `data/world.json` under `dayActivities`. The current set is Mara assistance, Harlan forge assistance, Radovan farm assistance, Bozhena farmstead assistance, and solo squirrel hunting. Sponsors decide whether to offer work through the AI-only formal `offer_day_work` action; the Human resolves a blocking in-game Accept/Decline overlay. Completed jobs settle only after all five rounds: Mara chooses 1-3 Healing Salve/Stamina Potion items, Harlan chooses 3-7 minted salary gold, Radovan chooses 2-3 produce items from turnip/onion/buckwheat groats/apple, Bozhena chooses 2-3 household-food items from eggs/farm cheese/bread, and hunting produces 1-5 Squirrel Pelts by engine RNG. Maksym provides a narrow merchant loop: selected goods have explicit external-sale values, characters negotiate in dialogue, and exchanges commit through ordinary grounded item and gold transfers. There is still no universal village price model, dedicated shop UI, or atomic `Trade` action.
 
 ## AI request behavior
 
-Production model calls resolve through named request profiles. OpenRouter requests prefer providers sorted by latency, keep provider fallbacks enabled, and use stable non-secret `session_id` values to improve sticky routing/cache locality where supported.
+Production model calls resolve through named request profiles. OpenRouter Character-role requests prefer providers sorted by throughput; Utility and Narrator requests remain latency-sorted. Provider fallbacks stay enabled, and stable non-secret `session_id` values improve sticky routing/cache locality where supported.
 
 The shared executor intentionally leaves at least one second between live transport calls, applies a hard 180-second timeout to every OpenRouter transport (including response-body reads), and honors `Retry-After` after HTTP 429. Provider 429 cooldown is shared across request roles; optional static/end-of-turn narrator requests skip immediately to deterministic/raw presentation while that cooldown is active, while canonical character reactions remain queued for a later attempt. Safe timelapse maintenance prepare/model work may execute concurrently, but canonical maintenance commits are sequential after the batch barrier; ordinary causal character reactions do not run in parallel.
 
@@ -103,43 +103,57 @@ Authored item interactions may also use the Utility role after a deterministic `
 ## Repository map
 
 ```text
-data/world.json                 Authored world source
+data/world.json                 Committed public authored world source
+data/world.private.json         Optional ignored developer-only private authored profile
 data/model_list.json            Supported model catalog/defaults
-editor/world-editor.html        Standalone world editor
+editor/world-editor.html        Standalone offline authored-world editor
 dist/mallowstead.html           Public standalone playable build
 
-src/08-mind-validators.js       Shared canonical mind/dialogue record validators
-src/10-game-api.js              Main deterministic GameAPI facade/action engine
-src/11-save-migration.js        Fresh-world + runtime-overlay migration
-src/12-character-context.js     Canonical character view/context construction
-src/13-character-memory.js      Runtime mind/continuation + maintenance helpers
-src/14-event-perception.js       Canonical event routing/perception/observation/dialogue projection
-src/15-ai-admin.js              Safe admin cleanup for pending AI activity
-src/16-emergency-diagnostics.js Emergency ZIP capture and always-available diagnostics
-src/17-runtime-diagnostics.js   Low-level AI transport + external network diagnostic rings
-src/20-controllers.js           Human/Dummy/AI controllers
-src/21-ai-request-profiles.js   Purpose-specific AI request profiles/model roles
-src/21-ai-settings.js           API key + Character/Utility/Narrator model settings
-src/22-openrouter-client.js     Browser OpenRouter transport/routing + low-level attempt logging
-src/23-ai-protocol.js           Ordinary character JSON protocol/validation
-src/23-world-environment.js     Canonical global time + real-weather rendering state
-src/24-ai-request-executor.js   Pacing, serialization/concurrency boundary, semantic exchange log + diagnostic metadata propagation
-src/24-item-model-effects.js    Deferred non-character Utility item information requests
-src/24-ai-turn-scheduler.js     Causal AI reaction-wave scheduler
-src/24-timelapse-core.js        Generic coarse-time planning/encounter/reflection core
-src/24-daytime-timelapse.js     Day jobs/hunting/settlement wrapper and policy
-src/24-night-timelapse.js       Overnight wrapper/policy
-src/24-memory-consolidator.js   Transactional mind maintenance/consolidation
-src/24-prompt-lab.js            Crystal-sphere debug/prompt tools
-src/25-turn-flow.js             Human tick orchestration/progressive committed output
+src/07-mind-v3.js              Canonical Mind v3 semantics/config/math
+src/08-mind-validators.js      Shared mind/dialogue validators
+src/09-persistence.js          Save-state synchronization helpers
+src/09-world-state-authority.js Shared structured world-state-authority mapping
+src/09-action-option-validation.js Shared pure action-option/cross-field validation
+src/09-passage-rules.js        Passage/lock/key rules
+src/09-world-derived-state.js  Derived item-placement synchronization
+src/10-game-api.js             Stable setup.Game facade + intent/transaction orchestration
+src/10-game-00-item-mechanics.js Generic runtime item/inventory primitives
+src/10-game-01-validation.js    Runtime world/invariant validation
+src/10-game-02-actions.js       Action registry/AI metadata/affordance projection
+src/10-trade-lifecycle.js       Merchant stock/provenance/restock/settlement
+src/10-presence.js             Neutral local-presence authority
+src/10-weekly-rhythm.js        Calendar/schedule/awayable lifecycle policy
+src/10-triggered-events.js     Authored triggered-event execution
+src/10-authored-effects.js     Authored effect execution
+src/11-save-migration.js       Fresh-world + runtime-overlay migration
+src/12-character-context.js    Restricted view/model-context construction
+src/13-character-memory.js     Mind/continuation/portable-mind helpers
+src/13-verbatim-memory.js      Committed-experience capture
+src/14-event-perception.js     Event routing/perception/observation/dialogue projection
+src/20-controllers.js          Human/Dummy/AI controllers
+src/21-ai-request-profiles.js  Purpose-specific model roles/request profiles
+src/21-ai-settings.js          API key/model settings
+src/22-openrouter-client.js    Browser OpenRouter transport/routing
+src/23-ai-protocol.js          Ordinary Character JSON protocol
+src/23-structured-ai-request.js Shared structured parse/validate/repair lifecycle
+src/23-timelapse-protocol.js   Timelapse planner/interaction/reflection protocol
+src/23-world-environment.js    Canonical global time/weather
+src/24-ai-request-executor.js  Shared request executor/pacing/concurrency boundary
+src/24-ai-turn-scheduler.js    Causal AI reaction-wave scheduler
+src/24-timelapse-core.js       Transactional coarse-time execution/rollback core
+src/24-daytime-timelapse.js    Day jobs/hunting/settlement policy
+src/24-night-timelapse.js      Overnight policy
+src/24-memory-consolidator.js  Transactional Mind maintenance
+src/25-turn-flow.js            Human tick orchestration/progressive committed output
 src/26-presentation-narrator.js Optional presentation narrator
-src/30-game-ui.js               Browser UI
-src/generated/                  Generated source inputs; do not edit manually
+src/30-game-ui.js              Browser UI
+src/generated/                 Generated source inputs; do not edit manually
 
-tests/                          Automated suites
-docs/architecture.md            Canonical architecture
-docs/status.md                  Current implementation status/limitations
-AGENTS.md                       Coding-agent invariants/workflow
+tests/                         Automated suites
+tools/                         Build/generation/developer helpers
+docs/architecture.md           Canonical architecture
+docs/status.md                 Canonical current implementation status/limitations
+AGENTS.md                      Coding-agent invariants/workflow
 ```
 
 For implementation details, read `docs/architecture.md`. For what exists right now and what is deferred, read `docs/status.md`.

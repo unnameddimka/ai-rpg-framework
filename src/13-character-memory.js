@@ -255,7 +255,7 @@
             const memoryIds = new Set();
             for (const key of ["shortTermMemories", "longTermMemories"]) for (const memory of document.mind[key]) {
                 const maxSummaryLength = key === "shortTermMemories" ? M.CONFIG.STM_SUMMARY_MAX_CHARS : M.CONFIG.LTM_SUMMARY_MAX_CHARS;
-                if (!V.validateMemoryRecord(memory, { maxSummaryLength: maxSummaryLength }).ok || memoryIds.has(memory.id)) return fail("CHARACTER_MIND_IMPORT_INVALID", "Mind v3 contains an invalid or duplicate memory.");
+                if (!V.validateMemoryRecord(memory, { maxSummaryLength: maxSummaryLength, allowEpistemicSources: key === "shortTermMemories" }).ok || memoryIds.has(memory.id)) return fail("CHARACTER_MIND_IMPORT_INVALID", "Mind v3 contains an invalid or duplicate memory.");
                 memoryIds.add(memory.id);
             }
             const verbatimIds = new Set();
@@ -384,6 +384,96 @@
         return ok();
     }
 
+
+    function ensureIntimateState(world) {
+        if (!world.ai || typeof world.ai !== "object" || Array.isArray(world.ai)) world.ai = { turnQueue: [], continuations: {}, intimateContexts: {} };
+        if (!world.ai.intimateContexts || typeof world.ai.intimateContexts !== "object" || Array.isArray(world.ai.intimateContexts)) world.ai.intimateContexts = {};
+        return world.ai.intimateContexts;
+    }
+
+    function normalizeIntimateMotivation(value) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+        const keys = Object.keys(value).sort();
+        if (keys.length !== 3 || keys[0] !== "imaginedMoments" || keys[1] !== "impulse" || keys[2] !== "openAnticipations") return null;
+        const impulse = typeof value.impulse === "string" ? value.impulse.trim() : "";
+        if (!impulse || impulse.length > 400) return null;
+        function pair(entries) {
+            if (!Array.isArray(entries) || entries.length !== 2) return null;
+            const normalized = entries.map(function (entry) { return typeof entry === "string" ? entry.trim() : ""; });
+            if (normalized.some(function (entry) { return !entry || entry.length > 400; })) return null;
+            return normalized;
+        }
+        const imaginedMoments = pair(value.imaginedMoments);
+        const openAnticipations = pair(value.openAnticipations);
+        if (!imaginedMoments || !openAnticipations) return null;
+        return { impulse: impulse, imaginedMoments: imaginedMoments, openAnticipations: openAnticipations };
+    }
+
+    function intimateParticipantsAreAdult(actorId, partnerId, world) {
+        const actor = I.getCharacter(actorId, world);
+        const partner = I.getCharacter(partnerId, world);
+        return Boolean(actor && partner && actorId !== partnerId && actor.adult !== false && partner.adult !== false);
+    }
+
+    function getIntimateContextsForCharacter(actorId) {
+        const pair = worldAndActor(actorId);
+        if (!pair.actor) return {};
+        const state = ensureIntimateState(pair.world);
+        const contexts = state[actorId] && typeof state[actorId] === "object" && !Array.isArray(state[actorId]) ? state[actorId] : {};
+        const result = {};
+        Object.entries(contexts).forEach(function (entry) {
+            const partnerId = entry[0], record = entry[1];
+            const partner = I.getCharacter(partnerId, pair.world);
+            const motivation = normalizeIntimateMotivation(record);
+            if (!partner || !motivation || !intimateParticipantsAreAdult(actorId, partnerId, pair.world)) return;
+            result[partnerId] = {
+                partnerId: partnerId,
+                partnerName: partner.name,
+                impulse: motivation.impulse,
+                imaginedMoments: motivation.imaginedMoments,
+                openAnticipations: motivation.openAnticipations
+            };
+        });
+        return clone(result);
+    }
+
+    function applyIntimateUpdates(actorId, updates, generatedByPartnerId) {
+        const pair = worldAndActor(actorId);
+        if (!pair.actor) return fail("ACTOR_NOT_FOUND", "Actor character does not exist.");
+        const state = ensureIntimateState(pair.world);
+        const current = state[actorId] && typeof state[actorId] === "object" && !Array.isArray(state[actorId]) ? state[actorId] : {};
+        const next = clone(current);
+        const request = updates && typeof updates === "object" && !Array.isArray(updates) ? updates : {};
+        const disables = Array.isArray(request.disablePartnerIds) ? request.disablePartnerIds : [];
+        const replacements = Array.isArray(request.anticipationReplacements) ? request.anticipationReplacements : [];
+        const enables = Array.isArray(request.enablePartnerIds) ? request.enablePartnerIds : [];
+        if (pair.actor.adult === false && enables.length) return fail("INTIMATE_MINOR_NOT_ALLOWED", "Intimate mode cannot be enabled for a minor character.");
+        for (const partnerId of enables) {
+            if (!intimateParticipantsAreAdult(actorId, partnerId, pair.world)) {
+                return fail("INTIMATE_MINOR_NOT_ALLOWED", "Intimate mode requires both characters to be adults.");
+            }
+        }
+        disables.forEach(function (partnerId) { delete next[partnerId]; });
+        replacements.forEach(function (record) {
+            const motivation = normalizeIntimateMotivation(record && record.motivation);
+            if (!record || typeof record.partnerId !== "string" || !next[record.partnerId] || !motivation || !intimateParticipantsAreAdult(actorId, record.partnerId, pair.world)) return;
+            next[record.partnerId] = motivation;
+        });
+        enables.forEach(function (partnerId) {
+            const motivation = normalizeIntimateMotivation(generatedByPartnerId && generatedByPartnerId[partnerId]);
+            if (motivation && intimateParticipantsAreAdult(actorId, partnerId, pair.world)) next[partnerId] = motivation;
+        });
+        if (Object.keys(next).length) state[actorId] = next; else delete state[actorId];
+        return ok({ actorId: actorId, contexts: getIntimateContextsForCharacter(actorId) });
+    }
+
+    function clearAllIntimateContexts(world) {
+        world = world || setup.Game.getWorld();
+        if (!world.ai || typeof world.ai !== "object") world.ai = {};
+        world.ai.intimateContexts = {};
+        return ok();
+    }
+
     setup.AIMemory = {
         MAINTENANCE_SNAPSHOT_LIMIT: MAINTENANCE_SNAPSHOT_LIMIT,
         applyUpdates: applyUpdates,
@@ -411,4 +501,10 @@
     };
 
     setup.AIWorkingState = { getContinuation: getContinuation, setContinuation: setContinuation };
+    setup.AIIntimacy = {
+        getContextsForCharacter: getIntimateContextsForCharacter,
+        applyUpdates: applyIntimateUpdates,
+        clearAll: clearAllIntimateContexts,
+        normalizeMotivation: normalizeIntimateMotivation
+    };
 }());

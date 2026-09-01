@@ -109,11 +109,11 @@
                 if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 belief: ${validation.error.message}`);
             });
             shortTermMemories.forEach(function (record) {
-                const validation = setup.MindValidators.validateMemoryRecord(record, { maxSummaryLength: setup.MindV3.CONFIG.STM_SUMMARY_MAX_CHARS });
+                const validation = setup.MindValidators.validateMemoryRecord(record, { maxSummaryLength: setup.MindV3.CONFIG.STM_SUMMARY_MAX_CHARS, allowEpistemicSources: true });
                 if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 STM: ${validation.error.message}`);
             });
             longTermMemories.forEach(function (record) {
-                const validation = setup.MindValidators.validateMemoryRecord(record, { maxSummaryLength: setup.MindV3.CONFIG.LTM_SUMMARY_MAX_CHARS });
+                const validation = setup.MindValidators.validateMemoryRecord(record, { maxSummaryLength: setup.MindV3.CONFIG.LTM_SUMMARY_MAX_CHARS, allowEpistemicSources: false });
                 if (!validation.ok) throw new Error(`Character ${savedCharacter.id} has invalid Mind v3 LTM: ${validation.error.message}`);
             });
             verbatimObservations.forEach(function (record) {
@@ -524,6 +524,7 @@
             candidate.events = [];
             candidate.ai.turnQueue = [];
             candidate.ai.continuations = {};
+            candidate.ai.intimateContexts = {};
             if (source.ai && typeof source.ai.inferenceSessionId === "string" && source.ai.inferenceSessionId.trim()) {
                 candidate.ai.inferenceSessionId = source.ai.inferenceSessionId.trim().slice(0, 160);
             }
@@ -680,6 +681,21 @@
                 const continuation = source.ai && source.ai.continuations && source.ai.continuations[character.id];
                 if (typeof continuation === "string" && continuation.length <= 2000) {
                     candidate.ai.continuations[character.id] = continuation;
+                }
+                const savedIntimate = source.ai && source.ai.intimateContexts && source.ai.intimateContexts[character.id];
+                if (savedIntimate && typeof savedIntimate === "object" && !Array.isArray(savedIntimate) && character.adult !== false) {
+                    const restored = {};
+                    Object.entries(savedIntimate).forEach(function (entry) {
+                        const partnerId = entry[0], record = entry[1];
+                        const partner = candidate.entities[partnerId];
+                        // Intimate Motivation v2 is structurally restorable. Legacy flat-five
+                        // anticipation records are intentionally discarded rather than inferred.
+                        const motivation = setup.AIIntimacy && typeof setup.AIIntimacy.normalizeMotivation === "function"
+                            ? setup.AIIntimacy.normalizeMotivation(record) : null;
+                        if (!partner || partner.type !== "character" || partnerId === character.id || partner.adult === false || !motivation) return;
+                        restored[partnerId] = motivation;
+                    });
+                    if (Object.keys(restored).length) candidate.ai.intimateContexts[character.id] = restored;
                 }
             });
 
